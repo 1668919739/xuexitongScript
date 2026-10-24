@@ -1,5 +1,31 @@
 # 学习通自动刷课脚本 V4.1
 
+> 本仓库 Fork 自 [chaolucky18/xuexitongScript](https://github.com/chaolucky18/xuexitongScript)，在原作者 V3 的基础上修复了视频卡住、"暂停-播放"反复拉扯等问题。
+
+## 🚀 快速安装
+
+**方式一：油猴一键安装（推荐）**
+
+1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
+2. 点击下面任一链接，在弹出的页面中点「安装」：
+   - 👉 [GitHub 安装链接](https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js)
+   - 👉 [国内备用链接（jsDelivr）](https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js)
+3. 打开学习通课程播放页（刷新一次），脚本会自动开始运行
+
+> 新版 Chrome / Edge 如果装好后不运行：进入 `chrome://extensions`，打开右上角「开发者模式」，再在 Tampermonkey 的「详情」里打开「允许运行用户脚本」。
+
+**方式二：控制台运行（不装扩展）**
+
+1. 打开学习通课程播放页，按 `F12`，切到 `Console`（控制台）
+2. 打开 [v3_optimized.js](v3_optimized.js)，点右上角复制按钮复制全部内容
+3. 粘贴到控制台并回车
+
+**常用命令**（在控制台输入）：`app.status()` 查看状态 · `app.stop()` 暂停 · `app.run()` 继续 · `app.nextUnit()` 跳到下一节
+
+**注意**：遇到视频内弹题、验证框时需要手动处理，处理完脚本会自动继续；课程页建议放在单独窗口，不要最小化。
+
+---
+
 当前版本以 `v3_optimized.js` 为唯一源码，油猴版由构建脚本生成。它聚焦于稳定播放与课程导航：
 
 - 自动播放视频
