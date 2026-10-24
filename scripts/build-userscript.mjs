@@ -6,12 +6,14 @@ const source = readFileSync(resolve(root, 'v3_optimized.js'), 'utf8').replace(/^
 const metadata = `// ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.1.3
-// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、自动切换下一节，并在页面结构异常时安全停止
+// @version      4.2.0
+// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
+// @match        *://zhibo.chaoxing.com/*
+// @noframes
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==

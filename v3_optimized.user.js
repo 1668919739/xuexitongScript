@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.1.3
-// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、自动切换下一节，并在页面结构异常时安全停止
+// @version      4.2.0
+// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
+// @match        *://zhibo.chaoxing.com/*
+// @noframes
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -42,7 +44,17 @@
     function waitForCoursePage() {
         const $ = window.jQuery;
         let attempts = 0;
+        const isLive = /(^|\.)zhibo\.chaoxing\.com$/i.test(location.hostname);
         window[BOOT_TIMER_KEY] = setInterval(() => {
+            if (isLive && document.body) {
+                clearInterval(window[BOOT_TIMER_KEY]);
+                window[BOOT_TIMER_KEY] = null;
+                const app = createApp($);
+                window.app = app;
+                window[APP_KEY] = app;
+                app.startLive();
+                return;
+            }
             if ($('#coursetree').length > 0) {
                 clearInterval(window[BOOT_TIMER_KEY]);
                 window[BOOT_TIMER_KEY] = null;
@@ -55,7 +67,7 @@
             if (++attempts >= 20) {
                 clearInterval(window[BOOT_TIMER_KEY]);
                 window[BOOT_TIMER_KEY] = null;
-                console.error('%c脚本启动超时：未检测到课程目录（#coursetree）。请确认当前处于课程播放页。', 'color:#F44336;font-weight:bold');
+                console.error('%c脚本启动超时：未检测到课程目录（#coursetree）。请确认当前处于课程播放页或直播回放页。', 'color:#F44336;font-weight:bold');
             }
         }, 1000);
     }
@@ -82,6 +94,10 @@
             debugPause: false,          // 开启后打印每次 pause() 的调用栈，用于定位是谁暂停了视频
             showPanel: true,            // 页面左下角显示运行状态浮窗
             completedPageDwellMs: 2000, // 无视频且已完成的小节，停留多久后进入下一小节
+            readDocs: true,             // 自动翻看课件（PPT/PDF/文档）任务点：逐步滚动到底部
+            docStepMs: 700,             // 课件每次滚动的间隔
+            docMaxSteps: 400,           // 每份课件最多滚动次数
+            liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -129,6 +145,9 @@
             _rateGaveUp: false,
             _note: '',
             _noVideoWait: false,
+            _mode: 'course',
+            _docsDone: false,
+            _docProgress: null,
             _panel: null,
             _panelCollapsed: false,
             _panelKey: '',
@@ -217,7 +236,8 @@
             },
 
             _tickInner() {
-                if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle') return;
+                if (this._mode === 'live') { this._liveTick(); return; }
+                if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle' || this._state === 'reading') return;
                 try {
                     if (!this._isValid(this._video)) {
                         if (this._video) {
@@ -241,6 +261,7 @@
                 const { item, total } = this._pickVideo();
                 if (item) { this._attachVideo(item); return; }
                 if (total > 0) {
+                    if (this._startReadingDocs()) return;
                     log('本页视频均已完成，进入下一小节', '#4CAF50');
                     this._scheduleAdvance(800);
                     return;
@@ -249,6 +270,7 @@
                 const noVideoWait = this._state === 'waiting' && this._noVideoWait;
                 if (this._state === 'waiting' && !noVideoWait) return;
                 if (elapsed < 3000) return;
+                if (!noVideoWait && this._startReadingDocs()) return;
 
                 // 纯文字/资料页：没有视频，进入后平台自动把任务点标记为完成 → 直接进入下一小节
                 if (this._activeNodeCompleted()) {
@@ -542,6 +564,8 @@
                 this._quizNotified = false;
                 this._note = '';
                 this._noVideoWait = false;
+                this._docsDone = false;
+                this._docProgress = null;
                 document.title = this._origTitle;
             },
 
@@ -749,6 +773,193 @@
                 } catch (e) { /* ignore */ }
             },
 
+            // ================= 课件（PPT/PDF/文档）任务点 =================
+            // 学习通课件在页面中以 iframe 嵌入，滚动到课件底部后平台自动标记任务点完成
+            _sameOriginDocs() {
+                const docs = [];
+                const walk = (doc, depth) => {
+                    if (!doc || depth > 4) return;
+                    docs.push(doc);
+                    let frames = [];
+                    try { frames = doc.querySelectorAll('iframe'); } catch (e) { return; }
+                    for (const f of frames) {
+                        let fd = null;
+                        try { fd = f.contentDocument; } catch (e) { fd = null; }
+                        if (fd) walk(fd, depth + 1);
+                    }
+                };
+                walk(document, 0);
+                return docs;
+            },
+
+            _scrollablesIn(doc) {
+                const out = [];
+                const walk = (d, depth) => {
+                    if (!d || depth > 3) return;
+                    const se = d.scrollingElement;
+                    if (se && se.scrollHeight > se.clientHeight + 40) out.push(se);
+                    let els = [];
+                    try { els = d.querySelectorAll('div,section,main,article'); } catch (e) { return; }
+                    for (const el of els) {
+                        if (el.clientHeight < 100 || el.scrollHeight <= el.clientHeight + 40) continue;
+                        const oy = d.defaultView.getComputedStyle(el).overflowY;
+                        if (oy === 'auto' || oy === 'scroll') out.push(el);
+                        if (out.length >= 6) break;
+                    }
+                    for (const f of d.querySelectorAll('iframe')) {
+                        let fd = null;
+                        try { fd = f.contentDocument; } catch (e) { fd = null; }
+                        if (fd) walk(fd, depth + 1);
+                    }
+                };
+                walk(doc, 0);
+                return out;
+            },
+
+            _collectPendingDocs() {
+                const list = [];
+                for (const doc of this._sameOriginDocs()) {
+                    let wraps = [];
+                    try { wraps = doc.querySelectorAll('.ans-attach-ct'); } catch (e) { continue; }
+                    for (const wrap of wraps) {
+                        if (wrap.classList.contains('ans-job-finished')) continue;
+                        const frame = wrap.querySelector('iframe');
+                        let fd = null;
+                        try { fd = frame && frame.contentDocument; } catch (e) { fd = null; }
+                        if (!fd) continue;
+                        if (fd.querySelector('video')) continue;              // 视频任务点由播放逻辑处理
+                        if (!this._scrollablesIn(fd).length) continue;        // 不可滚动的（直播卡片、讨论等）跳过
+                        list.push({ wrap, frame, doc: fd });
+                    }
+                }
+                return list;
+            },
+
+            _startReadingDocs() {
+                if (!C.readDocs || this._docsDone || this._state === 'reading') return false;
+                const docs = this._collectPendingDocs();
+                if (!docs.length) { this._docsDone = true; return false; }
+                this._state = 'reading';
+                log(`发现 ${docs.length} 份未完成的课件，开始自动翻看`, '#2196F3');
+                const token = this._token;
+                this._readDocs(docs, token).catch((e) => log('翻看课件出错：' + e.message, '#F44336', 'warn')).finally(() => {
+                    if (token !== this._token || this._state !== 'reading') return;
+                    this._docsDone = true;
+                    this._docProgress = null;
+                    this._state = 'loading';
+                    this._unitStartTs = Date.now() - 3000;
+                });
+                return true;
+            },
+
+            async _readDocs(docs, token) {
+                const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                for (let i = 0; i < docs.length; i++) {
+                    const d = docs[i];
+                    this._docProgress = { i: i + 1, n: docs.length, pct: 0 };
+                    let bottomRounds = 0;
+                    for (let step = 0; step < C.docMaxSteps; step++) {
+                        if (token !== this._token || this._state !== 'reading') return;
+                        if (d.wrap.classList.contains('ans-job-finished')) break;
+                        const els = this._scrollablesIn(d.doc);
+                        if (!els.length) break;
+                        let atBottom = true, pctSum = 0;
+                        for (const el of els) {
+                            const max = el.scrollHeight - el.clientHeight;
+                            if (el.scrollTop < max - 5) {
+                                atBottom = false;
+                                el.scrollTop = Math.min(max, el.scrollTop + Math.max(200, el.clientHeight * 0.6));
+                                const target = el === el.ownerDocument.scrollingElement ? el.ownerDocument : el;
+                                target.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            }
+                            pctSum += max > 0 ? Math.min(1, el.scrollTop / max) : 1;
+                        }
+                        this._docProgress.pct = Math.round((pctSum / els.length) * 100);
+                        if (atBottom) {
+                            if (++bottomRounds >= 4) break;   // 到底后再等几秒，让平台记录完成
+                        } else {
+                            bottomRounds = 0;
+                        }
+                        await sleep(C.docStepMs);
+                    }
+                    log(`课件 ${i + 1}/${docs.length} ${d.wrap.classList.contains('ans-job-finished') ? '已完成' : '已翻到底部'}`, '#4CAF50');
+                }
+            },
+
+            // ================= 直播回放（zhibo.chaoxing.com）=================
+            // 回放在新标签页打开，任务点按“观看时长达到总时长的一定比例”计算，所以保持 1 倍速持续播放
+            startLive() {
+                this._mode = 'live';
+                log('=== 学习通 V4.1 直播回放模式启动 ===', '#4CAF50');
+                const m = /[?&]rt=([\d.]+)/.exec(location.search);
+                this._liveRequired = m ? Math.round(parseFloat(m[1]) * 100) : 90;
+                this._timer = setInterval(() => this._tick(), C.tickMs);
+                this._state = 'loading';
+                this._renderPanel();
+            },
+
+            _findLiveVideo() {
+                let best = null;
+                for (const doc of this._sameOriginDocs()) {
+                    for (const v of doc.querySelectorAll('video')) {
+                        const d = isFinite(v.duration) ? v.duration : 0;
+                        if (!best || d > (isFinite(best.duration) ? best.duration : 0)) best = v;
+                    }
+                }
+                return best;
+            },
+
+            _liveTick() {
+                if (this._state === 'stopped') return;
+                const now = Date.now();
+                if (!this._isValid(this._video)) {
+                    const v = this._findLiveVideo();
+                    if (!v) { this._state = 'loading'; return; }
+                    this._video = v;
+                    this._state = 'playing';
+                    this._lastTime = v.currentTime || 0;
+                    this._lastProgressTs = now;
+                    this._lastResumeTs = 0;
+                    this._guardChain(v.ownerDocument.defaultView);
+                    if (C.muted) v.muted = true;
+                    log(`接管直播回放，需观看满总时长的 ${this._liveRequired}%`, '#4CAF50');
+                    this._resume('live-start');
+                    return;
+                }
+                const v = this._video;
+                if (v.ended || this._nearEnd(v)) {
+                    this._state = 'stopped';
+                    this._note = '🎉 回放已播放完，任务点约 5 分钟内更新，之后可关闭此页';
+                    log(this._note, '#4CAF50');
+                    return;
+                }
+                const ct = v.currentTime || 0;
+                if (Math.abs(ct - this._lastTime) > 0.05) {
+                    this._lastTime = ct;
+                    this._lastProgressTs = now;
+                    return;
+                }
+                if (v.paused) { this._resume('live-paused'); return; }
+                if (now - this._lastProgressTs >= C.liveStallMs) {
+                    log('回放卡住，回退 1 秒重新缓冲', '#FF5722');
+                    this._lastProgressTs = now;
+                    try { v.currentTime = Math.max(0, ct - 1); } catch (e) { /* ignore */ }
+                    this._lastResumeTs = 0;
+                    this._resume('live-stall');
+                }
+            },
+
+            _livePanelStatus(fmt, c) {
+                const v = this._video;
+                if (this._state === 'stopped') return { color: c.GREEN, label: '已完成', text: this._note };
+                if (!v) return { color: c.BLUE, label: '加载中', text: '正在查找回放播放器…' };
+                const pct = isFinite(v.duration) && v.duration > 0 ? Math.round((v.currentTime / v.duration) * 100) : 0;
+                const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · 进度 ${pct}%（需观看满 ${this._liveRequired}%）`;
+                if (v.paused) return { color: c.ORANGE, label: '恢复中', text: '正在恢复回放播放…', sub };
+                if (v.readyState < 3) return { color: c.ORANGE, label: '缓冲中', text: '回放缓冲中…', sub };
+                return { color: c.GREEN, label: '回放中', text: '正在观看直播回放，请勿最小化此窗口', sub };
+            },
+
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -760,7 +971,12 @@
                     return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
                 };
                 const GREEN = '#22B573', ORANGE = '#F5A524', RED = '#E5484D', BLUE = '#3B82F6', GREY = '#9CA3AF';
+                if (this._mode === 'live') return this._livePanelStatus(fmt, { GREEN, ORANGE, RED, BLUE, GREY });
                 switch (this._state) {
+                    case 'reading': {
+                        const d = this._docProgress || { i: 1, n: 1, pct: 0 };
+                        return { color: BLUE, label: '阅读中', text: `正在翻看课件 ${d.i}/${d.n}`, sub: `本份已翻到 ${d.pct}%` };
+                    }
                     case 'stopped':
                         if (this._note.startsWith('🎉')) return { color: GREEN, label: '已完成', text: this._note };
                         return { color: GREY, label: '已停止', text: this._note || '脚本已停止，执行 app.run() 继续' };
