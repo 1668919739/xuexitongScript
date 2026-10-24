@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.1.2
+// @version      4.1.3
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -81,6 +81,7 @@
             guardFocus: true,           // 让各层页面认为窗口始终可见/有焦点
             debugPause: false,          // 开启后打印每次 pause() 的调用栈，用于定位是谁暂停了视频
             showPanel: true,            // 页面左下角显示运行状态浮窗
+            completedPageDwellMs: 2000, // 无视频且已完成的小节，停留多久后进入下一小节
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -127,6 +128,7 @@
             _rateResets: 0,
             _rateGaveUp: false,
             _note: '',
+            _noVideoWait: false,
             _panel: null,
             _panelCollapsed: false,
             _panelKey: '',
@@ -243,10 +245,18 @@
                     this._scheduleAdvance(800);
                     return;
                 }
-                if (this._state === 'waiting') return;
-
                 const elapsed = Date.now() - this._unitStartTs;
+                const noVideoWait = this._state === 'waiting' && this._noVideoWait;
+                if (this._state === 'waiting' && !noVideoWait) return;
                 if (elapsed < 3000) return;
+
+                // 纯文字/资料页：没有视频，进入后平台自动把任务点标记为完成 → 直接进入下一小节
+                if (this._activeNodeCompleted()) {
+                    log('本节没有视频，任务点已完成，进入下一小节', '#4CAF50');
+                    this._scheduleAdvance(C.completedPageDwellMs);
+                    return;
+                }
+                if (noVideoWait) return;
 
                 const step = this._stepTitle();
                 if (step === '章节测验') { this._advanceChapterTest(); return; }
@@ -260,7 +270,8 @@
                         this._scheduleAdvance(500);
                     } else {
                         this._state = 'waiting';
-                        this._note = '当前小节没有视频，可手动切换小节或执行 app.nextUnit()';
+                        this._noVideoWait = true;
+                        this._note = '当前小节没有视频且任务点未完成，请手动查看，完成后自动继续';
                         log('当前小节未发现视频，已暂停。确认无需完成后执行 app.nextUnit()，或手动切换小节，脚本会自动接管。', '#FF9800', 'warn');
                     }
                 }
@@ -530,6 +541,7 @@
                 if (reason === 'next' || reason === 'manual' || reason === 'start') this._testAdvanceTimes = 0;
                 this._quizNotified = false;
                 this._note = '';
+                this._noVideoWait = false;
                 document.title = this._origTitle;
             },
 
@@ -846,6 +858,13 @@
                 let nodes = $('#coursetree').children('ul').children('li').find('.posCatalog_select:not(.firstLayer)');
                 if (!nodes.length) nodes = $('#coursetree .posCatalog_select:not(.firstLayer)');
                 return nodes;
+            },
+
+            // 当前目录节点是否已显示“已完成”（绿色对勾）
+            _activeNodeCompleted() {
+                const node = this._nodes().filter('.posCatalog_active').first();
+                if (!node.length) return false;
+                return node.find('.icon_Completed, [class*="icon_Completed"], [class*="icon_complete"]').length > 0;
             },
 
             _currentIndex() {
