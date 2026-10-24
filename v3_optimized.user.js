@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.0
+// @version      4.2.1
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -857,6 +857,9 @@
                 for (let i = 0; i < docs.length; i++) {
                     const d = docs[i];
                     this._docProgress = { i: i + 1, n: docs.length, pct: 0 };
+                    // 先把课件滚动到可视区域：课件图片按可见性懒加载，不在视野里可能不加载
+                    try { d.wrap.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ }
+                    await sleep(1000);
                     let bottomRounds = 0;
                     for (let step = 0; step < C.docMaxSteps; step++) {
                         if (token !== this._token || this._state !== 'reading') return;
