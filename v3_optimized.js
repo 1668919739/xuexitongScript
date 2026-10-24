@@ -985,10 +985,28 @@
                 return { color: BLUE, label: '加载中', text: '正在加载视频…' };
             },
 
+            // 当前所在章节：如“2 第一单元 · 第 2/10 节”
+            _chapterLine() {
+                try {
+                    const nodes = this._nodes();
+                    const idx = this._currentIndex();
+                    if (idx < 0) return '';
+                    const node = $(nodes.get(idx));
+                    let chapter = '';
+                    const cell = node.closest('#coursetree > ul > li');
+                    const head = cell.find('.firstLayer .posCatalog_name, .firstLayer .posCatalog_title').first();
+                    if (head.length) chapter = (head.attr('title') || head.text() || '').trim();
+                    return `${chapter ? chapter + ' · ' : ''}第 ${idx + 1} / ${nodes.length} 节`;
+                } catch (e) {
+                    return '';
+                }
+            },
+
             _renderPanel() {
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${this._panelCollapsed}`;
+                if (this._mode !== 'live') st.chap = this._chapterLine();
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -998,6 +1016,8 @@
                 q('text').textContent = st.text;
                 q('sub').textContent = st.sub || '';
                 q('sub').style.display = st.sub ? 'block' : 'none';
+                q('chap').textContent = st.chap ? '📖 ' + st.chap : '';
+                q('chap').style.display = st.chap ? 'block' : 'none';
                 q('box').style.borderLeftColor = st.color === '#22B573' ? '#A7C7F2' : st.color;
                 q('box').style.display = this._panelCollapsed ? 'none' : 'block';
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
@@ -1035,6 +1055,7 @@
                       '<span data-k="toggle" style="align-self:flex-start;cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
                     '</div>' +
                     '<div data-k="box" style="margin-top:14px;padding:11px 14px;border-radius:10px;background:#F6F8FB;border-left:3px solid #A7C7F2">' +
+                      '<div data-k="chap" style="margin-bottom:4px;font-size:12px;color:#6B7280;word-break:break-all"></div>' +
                       '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                     '</div>';
