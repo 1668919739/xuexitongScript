@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.1.0
-// @description  自动播放、卡顿分级恢复、防暂停拉扯、自动切换下一节，并在页面结构异常时安全停止
+// @version      4.1.1
+// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
@@ -80,6 +80,7 @@
             skipFinishedVideos: true,   // 跳过已完成任务点的视频
             guardFocus: true,           // 让各层页面认为窗口始终可见/有焦点
             debugPause: false,          // 开启后打印每次 pause() 的调用栈，用于定位是谁暂停了视频
+            showPanel: true,            // 页面左下角显示运行状态浮窗
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -125,6 +126,10 @@
             _rate: C.playbackRate,
             _rateResets: 0,
             _rateGaveUp: false,
+            _note: '',
+            _panel: null,
+            _panelCollapsed: false,
+            _panelKey: '',
 
             // ================= 公共方法 =================
             start() {
@@ -132,6 +137,7 @@
                 this._bindPageEvents();
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._enterLoading('start');
+                this._renderPanel();
             },
             run() {
                 if (!this._timer) this._timer = setInterval(() => this._tick(), C.tickMs);
@@ -140,6 +146,7 @@
             },
             stop() {
                 this._stop();
+                this._note = '脚本已暂停，执行 app.run() 继续';
                 log('脚本已暂停，执行 app.run() 可继续', '#FF9800');
             },
             nextUnit() {
@@ -147,6 +154,7 @@
                 if (idx < 0) {
                     log('未找到当前激活的小节，请手动点击一个小节，脚本会自动接管', '#FF9800', 'warn');
                     this._state = 'waiting';
+                    this._note = '未找到当前小节，请手动点击一个小节';
                     return;
                 }
                 this._goToNode(idx + 1);
@@ -178,6 +186,7 @@
                     try { t.proto.pause = t.orig; } catch (e) { /* ignore */ }
                 }
                 this._pauseTracers = [];
+                this._removePanel();
                 document.title = this._origTitle;
             },
 
@@ -198,6 +207,14 @@
 
             // ================= 主循环 =================
             _tick() {
+                try {
+                    this._tickInner();
+                } finally {
+                    this._renderPanel();
+                }
+            },
+
+            _tickInner() {
                 if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle') return;
                 try {
                     if (!this._isValid(this._video)) {
@@ -243,6 +260,7 @@
                         this._scheduleAdvance(500);
                     } else {
                         this._state = 'waiting';
+                        this._note = '当前小节没有视频，可手动切换小节或执行 app.nextUnit()';
                         log('当前小节未发现视频，已暂停。确认无需完成后执行 app.nextUnit()，或手动切换小节，脚本会自动接管。', '#FF9800', 'warn');
                     }
                 }
@@ -448,6 +466,7 @@
                 if (this._reloadCount > C.maxReloadPerUnit) {
                     log(`${why}，本节已重载 ${C.maxReloadPerUnit} 次仍失败，已停止。请检查网络或刷新页面后重新运行脚本。`, '#F44336', 'error');
                     this._stop();
+                    this._note = '视频多次加载失败，已停止，请刷新页面';
                     return;
                 }
                 log(`${why}，重新加载视频 (${this._reloadCount}/${C.maxReloadPerUnit})`, '#FF5722', 'warn');
@@ -510,6 +529,7 @@
                 if (reason !== 'reload') this._reloadCount = 0;
                 if (reason === 'next' || reason === 'manual' || reason === 'start') this._testAdvanceTimes = 0;
                 this._quizNotified = false;
+                this._note = '';
                 document.title = this._origTitle;
             },
 
@@ -717,6 +737,96 @@
                 } catch (e) { /* ignore */ }
             },
 
+            // ================= 运行状态浮窗 =================
+            _panelStatus() {
+                const v = this._video;
+                const fmt = (t) => {
+                    if (!isFinite(t) || t < 0) return '--:--';
+                    t = Math.floor(t);
+                    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+                    const pad = (n) => String(n).padStart(2, '0');
+                    return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+                };
+                switch (this._state) {
+                    case 'stopped':
+                        return { color: this._note.startsWith('🎉') ? '#4CAF50' : '#9E9E9E', text: this._note || '脚本已停止，执行 app.run() 继续' };
+                    case 'advancing':
+                        return { color: '#42A5F5', text: '即将进入下一小节…' };
+                    case 'waiting':
+                        return { color: '#FFA726', text: this._note || '等待中…' };
+                    case 'playing': {
+                        if (!v) break;
+                        if (this._quizNotified) return { color: '#EF5350', text: '检测到视频内弹题，请手动作答，答完自动继续' };
+                        if (this._blocked) return { color: '#EF5350', text: '页面暂停了视频，请手动处理后点击播放' };
+                        const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · ${v.playbackRate}x`;
+                        if (!v.paused && (v.readyState < 3 || this._waiting)) return { color: '#FFA726', text: '网络缓冲中…', sub };
+                        if (v.paused) return { color: '#FFA726', text: '正在恢复播放…', sub };
+                        return { color: '#66BB6A', text: `正在播放：${this._title}`, sub };
+                    }
+                }
+                return { color: '#42A5F5', text: '正在加载视频…' };
+            },
+
+            _renderPanel() {
+                if (!C.showPanel) { this._removePanel(); return; }
+                const st = this._panelStatus();
+                const key = `${st.color}|${st.text}|${st.sub || ''}|${this._panelCollapsed}`;
+                const el = this._ensurePanel();
+                if (!el || key === this._panelKey) return;
+                this._panelKey = key;
+                el.querySelector('[data-k="dot"]').style.background = st.color;
+                el.querySelector('[data-k="text"]').textContent = st.text;
+                const sub = el.querySelector('[data-k="sub"]');
+                sub.textContent = st.sub || '';
+                el.querySelector('[data-k="body"]').style.display = this._panelCollapsed ? 'none' : 'block';
+                sub.style.display = st.sub ? 'block' : 'none';
+            },
+
+            _ensurePanel() {
+                if (this._panel && this._panel.isConnected) return this._panel;
+                if (!document.body) return null;
+                const el = document.createElement('div');
+                el.id = 'xxt-v41-panel';
+                el.style.cssText = [
+                    'position:fixed', 'left:20px', 'bottom:20px', 'z-index:2147483647',
+                    'max-width:300px', 'padding:12px 16px', 'border-radius:12px',
+                    'background:#1E4D6B', 'color:#fff', 'box-shadow:0 4px 16px rgba(0,0,0,.25)',
+                    'font:14px/1.6 -apple-system,"Microsoft YaHei","PingFang SC",sans-serif',
+                    'cursor:pointer', 'user-select:none', 'opacity:.95',
+                ].join(';');
+                el.title = '点击折叠/展开';
+                el.innerHTML =
+                    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px">' +
+                    '<span data-k="dot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>' +
+                    '<span style="flex:1">学习通 V4.1 自动播放</span>' +
+                    '<span data-k="close" title="关闭浮窗" style="opacity:.6;font-size:16px;line-height:1;padding:0 2px">×</span></div>' +
+                    '<div data-k="body"><div data-k="text" style="margin-top:4px;word-break:break-all"></div>' +
+                    '<div data-k="sub" style="margin-top:2px;font-size:12px;opacity:.75"></div></div>';
+                el.addEventListener('click', (e) => {
+                    if (e.target && e.target.getAttribute('data-k') === 'close') {
+                        C.showPanel = false;
+                        this._removePanel();
+                        log('状态浮窗已关闭，执行 app.configs.showPanel = true 可重新显示', '#607D8B');
+                        return;
+                    }
+                    this._panelCollapsed = !this._panelCollapsed;
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
+                document.body.appendChild(el);
+                this._panel = el;
+                this._panelKey = '';
+                return el;
+            },
+
+            _removePanel() {
+                if (this._panel) {
+                    try { this._panel.remove(); } catch (e) { /* ignore */ }
+                }
+                this._panel = null;
+                this._panelKey = '';
+            },
+
             // ================= 目录与学习步骤 =================
             _nodes() {
                 let nodes = $('#coursetree').children('ul').children('li').find('.posCatalog_select:not(.firstLayer)');
@@ -742,6 +852,7 @@
                 if (idx >= nodes.length) {
                     log('============== 本课程学习完成了 ==============', '#4CAF50');
                     this._stop();
+                    this._note = '🎉 本课程已全部学习完成';
                     return;
                 }
                 const span = $(nodes.get(idx)).find('.posCatalog_name');
@@ -750,6 +861,7 @@
                 if (!this._clickNode(idx)) {
                     log('找不到可点击的课程节点，已停止', '#F44336', 'error');
                     this._stop();
+                    this._note = '找不到课程节点，已停止';
                 }
             },
 
@@ -781,12 +893,14 @@
                 if (Date.now() - this._lastStepClickTs < 4000) return;
                 if (this._testAdvanceTimes >= 3) {
                     this._state = 'waiting';
+                    this._note = '章节测验页跳转失败，请手动处理后切换小节';
                     log('章节测验页连续跳转失败，已暂停，请手动处理后切换小节', '#F44336', 'warn');
                     return;
                 }
                 const btn = $('#prevNextFocusNext:visible, #right1:visible, .nextChapter:visible').first().get(0);
                 if (!btn) {
                     this._state = 'waiting';
+                    this._note = '章节测验页未找到下一步按钮，请手动处理';
                     log('未找到章节测验的下一步按钮，已暂停', '#FF9800', 'warn');
                     return;
                 }
@@ -818,6 +932,7 @@
                             log('检测到手动切换到视频页签，准备接管', '#607D8B');
                         } else {
                             this._state = 'waiting';
+                            this._note = '已切到非视频页签，切回视频或切换小节后自动继续';
                             log('已切到非视频页签，脚本暂停接管；切回视频页签或切换小节后自动继续', '#607D8B');
                         }
                     });

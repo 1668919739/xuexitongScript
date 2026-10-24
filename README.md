@@ -88,6 +88,7 @@ configs: {
     skipFinishedVideos: true,   // 跳过已完成任务点的视频
     guardFocus: true,           // 让各层页面认为窗口始终可见
     debugPause: false,          // 打印每次 pause() 的调用栈，用于排查
+    showPanel: true,            // 左下角显示运行状态浮窗（点击折叠，× 关闭）
 }
 ```
 
