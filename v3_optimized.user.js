@@ -1,20 +1,24 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.2
+// @version      4.2.3
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
 // @match        *://zhibo.chaoxing.com/*
-// @noframes
+// @include      /^https?:\/\/live[\w-]*\.chaoxing\.com\//
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // 只在顶层页面运行；唯一例外是直播回放页里跨域嵌入的播放器（live*.chaoxing.com）
+    const IS_LIVE_PLAYER = /^live[\w-]*\.chaoxing\.com$/i.test(location.hostname);
+    if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     const APP_KEY = '__xuexitongPlayerV4';
     const BOOT_TIMER_KEY = '__xuexitongPlayerV4BootTimer';
@@ -44,7 +48,7 @@
     function waitForCoursePage() {
         const $ = window.jQuery;
         let attempts = 0;
-        const isLive = /(^|\.)zhibo\.chaoxing\.com$/i.test(location.hostname);
+        const isLive = /(^|\.)zhibo\.chaoxing\.com$/i.test(location.hostname) || IS_LIVE_PLAYER;
         window[BOOT_TIMER_KEY] = setInterval(() => {
             if (isLive && document.body) {
                 clearInterval(window[BOOT_TIMER_KEY]);
@@ -52,7 +56,7 @@
                 const app = createApp($);
                 window.app = app;
                 window[APP_KEY] = app;
-                app.startLive();
+                app.startLive(IS_LIVE_PLAYER);
                 return;
             }
             if ($('#coursetree').length > 0) {
@@ -208,6 +212,7 @@
                 }
                 this._pauseTracers = [];
                 this._removePanel();
+                if (this._onLiveMessage) window.removeEventListener('message', this._onLiveMessage);
                 document.title = this._origTitle;
             },
 
@@ -891,14 +896,57 @@
 
             // ================= 直播回放（zhibo.chaoxing.com）=================
             // 回放在新标签页打开，任务点按“观看时长达到总时长的一定比例”计算，所以保持 1 倍速持续播放
-            startLive() {
+            startLive(playerOnly) {
                 this._mode = 'live';
-                log('=== 学习通 V4.1 直播回放模式启动 ===', '#4CAF50');
+                this._livePlayerOnly = !!playerOnly;
+                if (playerOnly) C.showPanel = false;   // 嵌在回放页里的播放器框架：只负责保持播放，浮窗由外层页面显示
+                log(playerOnly ? '=== 学习通 V4.1 回放播放器保活已启动 ===' : '=== 学习通 V4.1 直播回放模式启动 ===', '#4CAF50');
+                this._liveMsg = null;
+                this._onLiveMessage = (e) => this._handleLiveMessage(e);
+                window.addEventListener('message', this._onLiveMessage);
                 const m = /[?&]rt=([\d.]+)/.exec(location.search);
                 this._liveRequired = m ? Math.round(parseFloat(m[1]) * 100) : 90;
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._state = 'loading';
                 this._renderPanel();
+            },
+
+            // 回放播放器在跨域 iframe（如 live-rk.chaoxing.com）里，会用 postMessage 向回放页汇报观看时长
+            _handleLiveMessage(e) {
+                try {
+                    if (!/(^|\.)chaoxing\.com$/i.test(new URL(e.origin).hostname)) return;
+                } catch (err) {
+                    return;
+                }
+                let data = e.data;
+                if (typeof data === 'string') {
+                    if (!/time|duration/i.test(data)) return;
+                    try { data = JSON.parse(data); } catch (err) { return; }
+                }
+                if (!data || typeof data !== 'object') return;
+                let watch = null, duration = null;
+                const scan = (o, depth) => {
+                    if (!o || typeof o !== 'object' || depth > 3) return;
+                    for (const k of Object.keys(o)) {
+                        const val = o[k];
+                        if (typeof val === 'number' || (typeof val === 'string' && /^\d+(\.\d+)?$/.test(val))) {
+                            const n = Number(val);
+                            if (watch === null && /^(watchTime|playTime|currentTime|curTime|playbackTime)$/i.test(k)) watch = n;
+                            else if (duration === null && /^(duration|totalTime|videoDuration)$/i.test(k)) duration = n;
+                        } else if (val && typeof val === 'object') {
+                            scan(val, depth + 1);
+                        }
+                    }
+                };
+                scan(data, 0);
+                if (watch === null || !duration) return;
+                const prev = this._liveMsg;
+                const now = Date.now();
+                this._liveMsg = {
+                    watch, duration,
+                    ts: now,
+                    lastGrowTs: !prev || watch > prev.watch + 0.05 ? now : prev.lastGrowTs,
+                };
             },
 
             _findLiveVideo() {
@@ -917,7 +965,15 @@
                 const now = Date.now();
                 if (!this._isValid(this._video)) {
                     const v = this._findLiveVideo();
-                    if (!v) { this._state = 'loading'; return; }
+                    if (!v) {
+                        const m = this._liveMsg;
+                        this._state = m ? 'playing' : 'loading';
+                        if (m && m.watch / m.duration * 100 >= this._liveRequired && !this._liveReachedLogged) {
+                            this._liveReachedLogged = true;
+                            log(`观看时长已达到 ${this._liveRequired}%，任务点约 5 分钟内更新`, '#4CAF50');
+                        }
+                        return;
+                    }
                     this._video = v;
                     this._state = 'playing';
                     this._lastTime = v.currentTime || 0;
@@ -955,7 +1011,15 @@
             _livePanelStatus(fmt, c) {
                 const v = this._video;
                 if (this._state === 'stopped') return { color: c.GREEN, label: '已完成', text: this._note };
-                if (!v) return { color: c.BLUE, label: '加载中', text: '正在查找回放播放器…' };
+                if (!v) {
+                    const m = this._liveMsg;
+                    if (!m) return { color: c.BLUE, label: '加载中', text: '正在等待回放播放器开始播放…' };
+                    const pct = Math.min(100, Math.floor((m.watch / m.duration) * 100));
+                    const sub = `已观看 ${fmt(m.watch)} / ${fmt(m.duration)} · ${pct}%（需观看满 ${this._liveRequired}%）`;
+                    if (pct >= this._liveRequired) return { color: c.GREEN, label: '已达标', text: `观看时长已达 ${this._liveRequired}%，任务点约 5 分钟内更新，之后可关闭此页`, sub };
+                    if (Date.now() - m.lastGrowTs > 30000) return { color: c.ORANGE, label: '可能暂停', text: '观看时长 30 秒没有增加，请点一下播放器的播放键', sub };
+                    return { color: c.GREEN, label: '回放中', text: '正在观看直播回放，请勿最小化此窗口', sub };
+                }
                 const pct = isFinite(v.duration) && v.duration > 0 ? Math.round((v.currentTime / v.duration) * 100) : 0;
                 const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · 进度 ${pct}%（需观看满 ${this._liveRequired}%）`;
                 if (v.paused) return { color: c.ORANGE, label: '恢复中', text: '正在恢复回放播放…', sub };
