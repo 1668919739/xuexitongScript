@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.1.1
+// @version      4.1.2
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -747,39 +747,45 @@
                     const pad = (n) => String(n).padStart(2, '0');
                     return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
                 };
+                const GREEN = '#22B573', ORANGE = '#F5A524', RED = '#E5484D', BLUE = '#3B82F6', GREY = '#9CA3AF';
                 switch (this._state) {
                     case 'stopped':
-                        return { color: this._note.startsWith('🎉') ? '#4CAF50' : '#9E9E9E', text: this._note || '脚本已停止，执行 app.run() 继续' };
+                        if (this._note.startsWith('🎉')) return { color: GREEN, label: '已完成', text: this._note };
+                        return { color: GREY, label: '已停止', text: this._note || '脚本已停止，执行 app.run() 继续' };
                     case 'advancing':
-                        return { color: '#42A5F5', text: '即将进入下一小节…' };
+                        return { color: BLUE, label: '切换中', text: '即将进入下一小节…' };
                     case 'waiting':
-                        return { color: '#FFA726', text: this._note || '等待中…' };
+                        return { color: ORANGE, label: '等待中', text: this._note || '等待中…' };
                     case 'playing': {
                         if (!v) break;
-                        if (this._quizNotified) return { color: '#EF5350', text: '检测到视频内弹题，请手动作答，答完自动继续' };
-                        if (this._blocked) return { color: '#EF5350', text: '页面暂停了视频，请手动处理后点击播放' };
+                        if (this._quizNotified) return { color: RED, label: '需要处理', text: '检测到视频内弹题，请手动作答，答完自动继续' };
+                        if (this._blocked) return { color: RED, label: '需要处理', text: '页面暂停了视频，请手动处理后点击播放' };
                         const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · ${v.playbackRate}x`;
-                        if (!v.paused && (v.readyState < 3 || this._waiting)) return { color: '#FFA726', text: '网络缓冲中…', sub };
-                        if (v.paused) return { color: '#FFA726', text: '正在恢复播放…', sub };
-                        return { color: '#66BB6A', text: `正在播放：${this._title}`, sub };
+                        if (!v.paused && (v.readyState < 3 || this._waiting)) return { color: ORANGE, label: '缓冲中', text: `网络缓冲中：${this._title}`, sub };
+                        if (v.paused) return { color: ORANGE, label: '恢复中', text: `正在恢复播放：${this._title}`, sub };
+                        return { color: GREEN, label: '播放中', text: `正在播放：${this._title}`, sub };
                     }
                 }
-                return { color: '#42A5F5', text: '正在加载视频…' };
+                return { color: BLUE, label: '加载中', text: '正在加载视频…' };
             },
 
             _renderPanel() {
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
-                const key = `${st.color}|${st.text}|${st.sub || ''}|${this._panelCollapsed}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${this._panelCollapsed}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
-                el.querySelector('[data-k="dot"]').style.background = st.color;
-                el.querySelector('[data-k="text"]').textContent = st.text;
-                const sub = el.querySelector('[data-k="sub"]');
-                sub.textContent = st.sub || '';
-                el.querySelector('[data-k="body"]').style.display = this._panelCollapsed ? 'none' : 'block';
-                sub.style.display = st.sub ? 'block' : 'none';
+                const q = (k) => el.querySelector(`[data-k="${k}"]`);
+                q('dot').style.background = st.color;
+                q('label').textContent = st.label;
+                q('text').textContent = st.text;
+                q('sub').textContent = st.sub || '';
+                q('sub').style.display = st.sub ? 'block' : 'none';
+                q('box').style.borderLeftColor = st.color === '#22B573' ? '#A7C7F2' : st.color;
+                q('box').style.display = this._panelCollapsed ? 'none' : 'block';
+                q('toggle').textContent = this._panelCollapsed ? '+' : '–';
+                q('toggle').title = this._panelCollapsed ? '展开' : '收起';
             },
 
             _ensurePanel() {
@@ -788,27 +794,35 @@
                 const el = document.createElement('div');
                 el.id = 'xxt-v41-panel';
                 el.style.cssText = [
-                    'position:fixed', 'left:20px', 'bottom:20px', 'z-index:2147483647',
-                    'max-width:300px', 'padding:12px 16px', 'border-radius:12px',
-                    'background:#1E4D6B', 'color:#fff', 'box-shadow:0 4px 16px rgba(0,0,0,.25)',
-                    'font:14px/1.6 -apple-system,"Microsoft YaHei","PingFang SC",sans-serif',
-                    'cursor:pointer', 'user-select:none', 'opacity:.95',
+                    'position:fixed', 'left:20px', 'bottom:20px', 'z-index:2147483647', 'box-sizing:border-box',
+                    'width:300px', 'padding:16px', 'border-radius:16px', 'background:#fff', 'color:#1F2937',
+                    'box-shadow:0 8px 28px rgba(15,23,42,.12),0 1px 3px rgba(15,23,42,.08)',
+                    'font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif',
                 ].join(';');
-                el.title = '点击折叠/展开';
                 el.innerHTML =
-                    '<div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px">' +
-                    '<span data-k="dot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>' +
-                    '<span style="flex:1">学习通 V4.1 自动播放</span>' +
-                    '<span data-k="close" title="关闭浮窗" style="opacity:.6;font-size:16px;line-height:1;padding:0 2px">×</span></div>' +
-                    '<div data-k="body"><div data-k="text" style="margin-top:4px;word-break:break-all"></div>' +
-                    '<div data-k="sub" style="margin-top:2px;font-size:12px;opacity:.75"></div></div>';
-                el.addEventListener('click', (e) => {
-                    if (e.target && e.target.getAttribute('data-k') === 'close') {
-                        C.showPanel = false;
-                        this._removePanel();
-                        log('状态浮窗已关闭，执行 app.configs.showPanel = true 可重新显示', '#607D8B');
-                        return;
-                    }
+                    '<div style="display:flex;align-items:center;gap:12px">' +
+                      '<div style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
+                        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+                          '<path d="M12 6.5C10.3 5.2 7.9 4.6 4 4.8v13.4c3.9-.2 6.3.4 8 1.7 1.7-1.3 4.1-1.9 8-1.7V4.8c-3.9-.2-6.3.4-8 1.7z"/>' +
+                          '<path d="M12 6.5v13.4M7 9h2.5M7 12h2.5M14.5 9H17M14.5 12H17"/></svg>' +
+                      '</div>' +
+                      '<div style="flex:1;min-width:0">' +
+                        '<div style="display:flex;align-items:center;gap:8px">' +
+                          '<span style="font-size:17px;font-weight:700;color:#111827">学习通助手</span>' +
+                          '<span style="font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px">V4.1</span>' +
+                        '</div>' +
+                        '<div style="display:flex;align-items:center;gap:6px;margin-top:2px;font-size:13px;color:#6B7280">' +
+                          '<span data-k="dot" style="width:7px;height:7px;border-radius:50%;flex:none"></span>' +
+                          '<span data-k="label"></span>' +
+                        '</div>' +
+                      '</div>' +
+                      '<span data-k="toggle" style="align-self:flex-start;cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
+                    '</div>' +
+                    '<div data-k="box" style="margin-top:14px;padding:11px 14px;border-radius:10px;background:#F6F8FB;border-left:3px solid #A7C7F2">' +
+                      '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
+                      '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
+                    '</div>';
+                el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
                     this._panelCollapsed = !this._panelCollapsed;
                     this._panelKey = '';
                     this._renderPanel();
