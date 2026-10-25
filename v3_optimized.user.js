@@ -182,6 +182,7 @@
             _latest: null,
             _updating: false,
             _updateFailed: false,
+            _ratesOpen: false,
             _updateTimer: null,
             _mode: 'course',
             _docsDone: false,
@@ -1193,7 +1194,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1219,11 +1220,12 @@
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
+                q('ratecur').textContent = `${C.playbackRate}x`;
+                q('rates').classList.toggle('open', this._ratesOpen);
+                q('ratebtn').setAttribute('aria-expanded', String(this._ratesOpen));
                 for (const btn of el.querySelectorAll('[data-rate]')) {
-                    const on = Number(btn.getAttribute('data-rate')) === C.playbackRate;
-                    btn.style.background = on ? '#3B82F6' : '#F1F3F6';
-                    btn.style.color = on ? '#fff' : '#4B5563';
-                    btn.style.fontWeight = on ? '600' : '500';
+                    btn.classList.toggle('on', Number(btn.getAttribute('data-rate')) === C.playbackRate);
+                    btn.tabIndex = this._ratesOpen ? 0 : -1;
                 }
             },
 
@@ -1241,6 +1243,19 @@
                 el.innerHTML =
                     '<style>' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
+                    '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-rate-btn{flex:none;display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:12px;color:#4B5563;background:#F1F3F6;border:0;border-radius:7px;padding:4px 9px;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-rate-btn b{color:#2563EB;font-weight:600;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-rate-btn:hover,#xxt-v41-panel .xxt-rate-btn:focus-visible{background:#E3ECFD;outline:none}' +
+                    '#xxt-v41-panel .xxt-chev{font-style:normal;color:#9CA3AF;display:inline-block;transition:transform .22s ease}' +
+                    '#xxt-v41-panel .xxt-rate-row.open .xxt-chev{transform:rotate(180deg)}' +
+                    '#xxt-v41-panel .xxt-rate-opts{display:flex;gap:6px;flex:1;max-width:0;opacity:0;overflow:hidden;transform:translateX(-6px);' +
+                      'transition:max-width .26s ease,opacity .2s ease,transform .26s ease;pointer-events:none}' +
+                    '#xxt-v41-panel .xxt-rate-row.open .xxt-rate-opts{max-width:240px;opacity:1;transform:none;pointer-events:auto}' +
+                    '#xxt-v41-panel .xxt-rate-opt{flex:1;min-width:0;font:inherit;font-size:12px;border:0;border-radius:7px;padding:4px 0;cursor:pointer;background:#F1F3F6;color:#4B5563;white-space:nowrap}' +
+                    '#xxt-v41-panel .xxt-rate-opt:hover{background:#E3ECFD}' +
+                    '#xxt-v41-panel .xxt-rate-opt.on{background:#3B82F6;color:#fff;font-weight:600}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-rate-opts,#xxt-v41-panel .xxt-chev{transition:none}}' +
                     '#xxt-v41-panel [data-k="ver"]{font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums;transition:background .15s,color .15s}' +
                     '#xxt-v41-panel [data-k="ver"]:hover,#xxt-v41-panel [data-k="ver"]:focus-visible{background:#E3ECFD;color:#2563EB;outline:none}' +
                     '#xxt-v41-panel .xxt-tip{position:absolute;right:-64px;bottom:calc(100% + 10px);display:flex;flex-direction:column;gap:2px;white-space:nowrap;' +
@@ -1281,13 +1296,23 @@
                       '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                     '</div>' +
-                    '<div data-k="rates" style="display:flex;align-items:center;gap:6px;margin-top:12px">' +
-                      '<span style="font-size:12px;color:#6B7280;margin-right:2px">倍速</span>' +
-                      RATE_OPTIONS.map((r) => `<span data-rate="${r}" style="flex:1;text-align:center;cursor:pointer;user-select:none;font-size:12px;padding:4px 0;border-radius:7px">${r}x</span>`).join('') +
+                    '<div data-k="rates" class="xxt-rate-row">' +
+                      '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
+                      '<div data-k="rateopts" class="xxt-rate-opts">' +
+                        RATE_OPTIONS.map((r) => `<button type="button" data-rate="${r}" class="xxt-rate-opt">${r}x</button>`).join('') +
+                      '</div>' +
                     '</div>' +
                     '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>';
+                el.querySelector('[data-k="ratebtn"]').addEventListener('click', () => {
+                    this._ratesOpen = !this._ratesOpen;
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
                 for (const btn of el.querySelectorAll('[data-rate]')) {
-                    btn.addEventListener('click', () => this.setRate(btn.getAttribute('data-rate')));
+                    btn.addEventListener('click', () => {
+                        this._ratesOpen = false;            // 选好后自动收起
+                        this.setRate(btn.getAttribute('data-rate'));
+                    });
                 }
                 el.querySelector('[data-k="ver"]').addEventListener('click', (e) => {
                     if (!this._latest) return;          // 没有新版本：正常打开仓库
