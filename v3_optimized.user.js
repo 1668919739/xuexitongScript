@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.3
+// @version      4.2.4
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -9,6 +9,8 @@
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
 // @match        *://zhibo.chaoxing.com/*
 // @include      /^https?:\/\/live[\w-]*\.chaoxing\.com\//
+// @updateURL    https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
+// @downloadURL  https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
