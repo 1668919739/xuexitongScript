@@ -1262,13 +1262,14 @@
                       'padding:8px 11px;border-radius:9px;background:#1F2937;color:#F9FAFB;font-size:12px;line-height:1.45;box-shadow:0 6px 18px rgba(15,23,42,.22);' +
                       'opacity:0;transform:translateY(4px);pointer-events:none;transition:opacity .14s ease,transform .14s ease;z-index:1}' +
                     '#xxt-v41-panel .xxt-tip b{font-weight:600}' +
-                    '#xxt-v41-panel .xxt-upd{display:none;width:7px;height:7px;margin-left:5px;border-radius:50%;background:#F59E0B;vertical-align:1px;box-shadow:0 0 0 2px #fff;animation:xxt-pulse 1.6s ease-in-out infinite}' +
+                    '#xxt-v41-panel .xxt-upd{display:none;position:relative;width:7px;height:7px;margin-left:5px;border-radius:50%;background:#F59E0B;vertical-align:1px}' +
+                    '#xxt-v41-panel .xxt-upd::after{content:"";position:absolute;inset:0;border-radius:50%;background:#F59E0B;animation:xxt-ping 1.8s cubic-bezier(0,0,.2,1) infinite}' +
                     '#xxt-v41-panel [data-k="ver"].xxt-has-upd{background:#FEF3C7;color:#B45309}' +
-                    '@keyframes xxt-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}' +
+                    '@keyframes xxt-ping{0%{transform:scale(1);opacity:.7}75%,100%{transform:scale(2.6);opacity:0}}' +
                     '#xxt-v41-panel .xxt-tip span{color:#9CA3AF;font-size:11px}' +
                     '#xxt-v41-panel .xxt-tip::after{content:"";position:absolute;right:82px;top:100%;border:6px solid transparent;border-top-color:#1F2937}' +
                     '#xxt-v41-panel .xxt-ver-wrap:hover .xxt-tip,#xxt-v41-panel [data-k="ver"]:focus-visible + .xxt-tip{opacity:1;transform:translateY(0)}' +
-                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-tip{transition:none}#xxt-v41-panel .xxt-upd{animation:none}}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-tip{transition:none}#xxt-v41-panel .xxt-upd::after{animation:none;opacity:0}}' +
                     '</style>' +
                     '<div style="display:flex;align-items:center;gap:12px">' +
                       '<div style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
