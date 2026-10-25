@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.6
+// @version      4.2.7
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -23,7 +23,7 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.2.6';
+    const VERSION = '4.2.7';
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
@@ -999,7 +999,7 @@
                         const val = o[k];
                         if (typeof val === 'number' || (typeof val === 'string' && /^\d+(\.\d+)?$/.test(val))) {
                             const n = Number(val);
-                            if (watch === null && /^(watchTime|playTime|currentTime|curTime|playbackTime)$/i.test(k)) watch = n;
+                            if (watch === null && /^(watchTime|playTime|currentTime|curTime|playbackTime|time)$/i.test(k)) watch = n;
                             else if (duration === null && /^(duration|totalTime|videoDuration)$/i.test(k)) duration = n;
                         } else if (val && typeof val === 'object') {
                             scan(val, depth + 1);
@@ -1078,7 +1078,10 @@
 
             _livePanelStatus(fmt, c) {
                 const v = this._video;
-                if (this._state === 'stopped') return { color: c.GREEN, label: '已完成', text: this._note };
+                if (this._state === 'stopped') {
+                    if (this._userStopped) return { color: c.GREY, label: '已停止', text: this._note };
+                    return { color: c.GREEN, label: '已完成', text: this._note };
+                }
                 if (!v) {
                     const m = this._liveMsg;
                     if (!m) return { color: c.BLUE, label: '加载中', text: '正在等待回放播放器开始播放…' };
