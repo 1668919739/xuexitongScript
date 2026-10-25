@@ -26,3 +26,4 @@ const metadata = `// ==UserScript==
 `;
 
 writeFileSync(resolve(root, 'v3_optimized.user.js'), `${metadata}${source}`, 'utf8');
+writeFileSync(resolve(root, 'version.json'), JSON.stringify({ version }, null, 2) + '\n', 'utf8');

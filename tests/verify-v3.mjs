@@ -15,6 +15,8 @@ const source = readFileSync(sourcePath, 'utf8');
 if (payload !== source) throw new Error('油猴脚本未由 v3_optimized.js 同步生成');
 const srcVersion = (/const VERSION = '([\d.]+)'/.exec(source) || [])[1];
 const metaVersion = (/@version\s+([\d.]+)/.exec(userScript) || [])[1];
+const jsonVersion = JSON.parse(readFileSync(resolve(root, 'version.json'), 'utf8')).version;
+if (jsonVersion !== srcVersion) throw new Error(`version.json 未同步：${jsonVersion} ≠ ${srcVersion}`);
 if (!srcVersion || srcVersion !== metaVersion) throw new Error(`版本号不一致：源码 VERSION=${srcVersion}，油猴 @version=${metaVersion}`);
 
 execFileSync(process.execPath, ['--check', sourcePath], { stdio: 'inherit' });

@@ -8,6 +8,22 @@
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
     const VERSION = '4.2.4';
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
+    const USERSCRIPT_URL = 'https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js';
+    // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
+    const VERSION_URLS = [
+        'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/version.json',
+        'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/version.json',
+    ];
+    // 控制台版一键更新：按版本标签加载对应版本（标签内容固定，不受 CDN 缓存影响）
+    const versionScriptUrl = (v) => `https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@v${v}/v3_optimized.js`;
+    const newerThan = (a, b) => {
+        const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const x = pa[i] || 0, y = pb[i] || 0;
+            if (x !== y) return x > y;
+        }
+        return false;
+    };
 
     const APP_KEY = '__xuexitongPlayerV4';
     const BOOT_TIMER_KEY = '__xuexitongPlayerV4BootTimer';
@@ -146,6 +162,9 @@
             _rateGaveUp: false,
             _note: '',
             _noVideoWait: false,
+            _latest: null,
+            _updating: false,
+            _updateTimer: null,
             _mode: 'course',
             _docsDone: false,
             _docProgress: null,
@@ -160,6 +179,7 @@
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._enterLoading('start');
                 this._renderPanel();
+                this._startUpdateCheck();
             },
             run() {
                 if (!this._timer) this._timer = setInterval(() => this._tick(), C.tickMs);
@@ -213,6 +233,8 @@
                 this._state = 'stopped';
                 if (this._timer) clearInterval(this._timer);
                 this._timer = null;
+                if (this._updateTimer) clearInterval(this._updateTimer);
+                this._updateTimer = null;
                 this._clearTimeouts();
                 this._unbindVideoEvents();
                 $(document).off(NS);
@@ -920,6 +942,7 @@
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._state = 'loading';
                 this._renderPanel();
+                if (!playerOnly) this._startUpdateCheck();
             },
 
             // 回放播放器在跨域 iframe（如 live-rk.chaoxing.com）里，会用 postMessage 向回放页汇报观看时长
@@ -1038,6 +1061,62 @@
                 return { color: c.GREEN, label: '回放中', text: '正在观看直播回放，请勿最小化此窗口', sub };
             },
 
+            // ================= 版本更新 =================
+            _isUserscript() {
+                try { return typeof GM_info !== 'undefined' && !!GM_info.script; } catch (e) { return false; }
+            },
+
+            _startUpdateCheck() {
+                this._checkUpdate();
+                if (!this._updateTimer) this._updateTimer = setInterval(() => this._checkUpdate(), 6 * 3600 * 1000);
+            },
+
+            async _checkUpdate() {
+                for (const url of VERSION_URLS) {
+                    try {
+                        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                        const t = ctrl && setTimeout(() => ctrl.abort(), 6000);
+                        const res = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+                        if (t) clearTimeout(t);
+                        if (!res.ok) continue;
+                        const data = await res.json();
+                        if (data && /^\d+(\.\d+)*$/.test(data.version || '')) {
+                            const latest = newerThan(data.version, VERSION) ? data.version : null;
+                            if (latest && latest !== this._latest) log(`发现新版本 v${latest}，点击浮窗上的版本号即可更新`, '#2196F3');
+                            this._latest = latest;
+                            this._panelKey = '';
+                            this._renderPanel();
+                            return;
+                        }
+                    } catch (e) { /* 网络不通或被拦截，换下一个地址 */ }
+                }
+            },
+
+            _doUpdate() {
+                const v = this._latest;
+                if (!v || this._updating) return;
+                if (this._isUserscript()) {
+                    // 油猴版：打开安装地址，油猴会弹出更新确认页
+                    window.open(USERSCRIPT_URL, '_blank', 'noopener');
+                    return;
+                }
+                // 控制台版：直接加载新版本，新版本启动时会自动替换掉当前实例
+                this._updating = true;
+                this._panelKey = '';
+                this._renderPanel();
+                log(`正在更新到 v${v}…`, '#2196F3');
+                const s = document.createElement('script');
+                s.src = versionScriptUrl(v);
+                s.onerror = () => {
+                    this._updating = false;
+                    this._panelKey = '';
+                    this._renderPanel();
+                    log('自动更新失败，已打开仓库页面，可刷新页面后重新粘贴加载代码', '#F44336', 'warn');
+                    window.open(REPO_URL, '_blank', 'noopener');
+                };
+                document.head.appendChild(s);
+            },
+
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -1096,7 +1175,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1112,6 +1191,13 @@
                 q('box').style.display = this._panelCollapsed ? 'none' : 'block';
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
                 q('toggle').title = this._panelCollapsed ? '展开' : '收起';
+                const hasUpd = !!this._latest;
+                q('upd').style.display = hasUpd ? 'inline-block' : 'none';
+                q('ver').classList.toggle('xxt-has-upd', hasUpd);
+                q('tip1').textContent = this._updating ? `正在更新到 v${this._latest}…` : hasUpd ? `发现新版本 v${this._latest}` : '开源 · 1668919739/xuexitongScript';
+                q('tip2').textContent = this._updating ? '请稍候' : hasUpd
+                    ? (this._isUserscript() ? '点击打开油猴更新页' : '点击立即更新，无需刷新页面')
+                    : '已是最新版本 · 点击查看源码';
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
@@ -1135,6 +1221,22 @@
                     'font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif',
                 ].join(';');
                 el.innerHTML =
+                    '<style>' +
+                    '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
+                    '#xxt-v41-panel [data-k="ver"]{font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums;transition:background .15s,color .15s}' +
+                    '#xxt-v41-panel [data-k="ver"]:hover,#xxt-v41-panel [data-k="ver"]:focus-visible{background:#E3ECFD;color:#2563EB;outline:none}' +
+                    '#xxt-v41-panel .xxt-tip{position:absolute;right:-64px;bottom:calc(100% + 10px);display:flex;flex-direction:column;gap:2px;white-space:nowrap;' +
+                      'padding:8px 11px;border-radius:9px;background:#1F2937;color:#F9FAFB;font-size:12px;line-height:1.45;box-shadow:0 6px 18px rgba(15,23,42,.22);' +
+                      'opacity:0;transform:translateY(4px);pointer-events:none;transition:opacity .14s ease,transform .14s ease;z-index:1}' +
+                    '#xxt-v41-panel .xxt-tip b{font-weight:600}' +
+                    '#xxt-v41-panel .xxt-upd{display:none;width:7px;height:7px;margin-left:5px;border-radius:50%;background:#EF4444;vertical-align:1px;box-shadow:0 0 0 2px #fff;animation:xxt-pulse 1.6s ease-in-out infinite}' +
+                    '#xxt-v41-panel [data-k="ver"].xxt-has-upd{background:#FEF2F2;color:#DC2626}' +
+                    '@keyframes xxt-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}' +
+                    '#xxt-v41-panel .xxt-tip span{color:#9CA3AF;font-size:11px}' +
+                    '#xxt-v41-panel .xxt-tip::after{content:"";position:absolute;right:82px;top:100%;border:6px solid transparent;border-top-color:#1F2937}' +
+                    '#xxt-v41-panel .xxt-ver-wrap:hover .xxt-tip,#xxt-v41-panel [data-k="ver"]:focus-visible + .xxt-tip{opacity:1;transform:translateY(0)}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-tip{transition:none}#xxt-v41-panel .xxt-upd{animation:none}}' +
+                    '</style>' +
                     '<div style="display:flex;align-items:center;gap:12px">' +
                       '<div style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
                         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
@@ -1144,7 +1246,10 @@
                       '<div style="flex:1;min-width:0">' +
                         '<div style="display:flex;align-items:center;gap:8px">' +
                           '<span style="font-size:17px;font-weight:700;color:#111827">学习通助手</span>' +
-                          `<a data-k="ver" href="${REPO_URL}" target="_blank" rel="noopener" title="开源 · 1668919739/xuexitongScript" style="font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums">v${VERSION}</a>` +
+                          '<span class="xxt-ver-wrap">' +
+                            `<a data-k="ver" href="${REPO_URL}" target="_blank" rel="noopener" aria-label="版本 v${VERSION}">v${VERSION}<i data-k="upd" class="xxt-upd"></i></a>` +
+                            '<span class="xxt-tip" role="tooltip"><b data-k="tip1">开源 · 1668919739/xuexitongScript</b><span data-k="tip2">已是最新版本 · 点击查看源码</span></span>' +
+                          '</span>' +
                         '</div>' +
                         '<div style="display:flex;align-items:center;gap:6px;margin-top:2px;font-size:13px;color:#6B7280">' +
                           '<span data-k="dot" style="width:7px;height:7px;border-radius:50%;flex:none"></span>' +
@@ -1166,6 +1271,11 @@
                 for (const btn of el.querySelectorAll('[data-rate]')) {
                     btn.addEventListener('click', () => this.setRate(btn.getAttribute('data-rate')));
                 }
+                el.querySelector('[data-k="ver"]').addEventListener('click', (e) => {
+                    if (!this._latest) return;          // 没有新版本：正常打开仓库
+                    e.preventDefault();
+                    this._doUpdate();
+                });
                 el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
                     this._panelCollapsed = !this._panelCollapsed;
                     this._panelKey = '';
