@@ -91,6 +91,14 @@
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
 
+        // 浮窗里选择的倍速保存在本地，刷新页面、换课程后保持
+        const RATE_KEY = 'xxt-v41-rate';
+        const RATE_OPTIONS = [1, 1.25, 1.5, 2];
+        try {
+            const saved = parseFloat(localStorage.getItem(RATE_KEY));
+            if (RATE_OPTIONS.includes(saved)) C.playbackRate = saved;
+        } catch (e) { /* 无法读取本地存储时使用默认倍速 */ }
+
         const log = (msg, color = '#607D8B', level = 'log') =>
             console[level](`%c[学习通V4.1] ${msg}`, `color:${color}`);
 
@@ -168,6 +176,20 @@
                     return;
                 }
                 this._goToNode(idx + 1);
+            },
+            // 选择倍速（浮窗按钮调用，也可在控制台执行 app.setRate(2)）
+            setRate(r) {
+                r = Number(r);
+                if (!(r > 0 && r <= 4)) return;
+                C.playbackRate = r;
+                try { localStorage.setItem(RATE_KEY, String(r)); } catch (e) { /* ignore */ }
+                this._rateGaveUp = false;
+                this._rateResets = 0;
+                this._rate = r;
+                if (this._mode !== 'live' && this._isValid(this._video)) this._setRate(this._video, r);
+                log(`倍速已设为 ${r}x`, '#2196F3');
+                this._panelKey = '';
+                this._renderPanel();
             },
             status() {
                 const v = this._video;
@@ -1070,7 +1092,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1086,6 +1108,15 @@
                 q('box').style.display = this._panelCollapsed ? 'none' : 'block';
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
                 q('toggle').title = this._panelCollapsed ? '展开' : '收起';
+                const showRates = this._mode !== 'live' && !this._panelCollapsed;
+                q('rates').style.display = showRates ? 'flex' : 'none';
+                q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
+                for (const btn of el.querySelectorAll('[data-rate]')) {
+                    const on = Number(btn.getAttribute('data-rate')) === C.playbackRate;
+                    btn.style.background = on ? '#3B82F6' : '#F1F3F6';
+                    btn.style.color = on ? '#fff' : '#4B5563';
+                    btn.style.fontWeight = on ? '600' : '500';
+                }
             },
 
             _ensurePanel() {
@@ -1122,7 +1153,15 @@
                       '<div data-k="chap" style="margin-bottom:4px;font-size:12px;color:#6B7280;word-break:break-all"></div>' +
                       '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
-                    '</div>';
+                    '</div>' +
+                    '<div data-k="rates" style="display:flex;align-items:center;gap:6px;margin-top:12px">' +
+                      '<span style="font-size:12px;color:#6B7280;margin-right:2px">倍速</span>' +
+                      RATE_OPTIONS.map((r) => `<span data-rate="${r}" style="flex:1;text-align:center;cursor:pointer;user-select:none;font-size:12px;padding:4px 0;border-radius:7px">${r}x</span>`).join('') +
+                    '</div>' +
+                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>';
+                for (const btn of el.querySelectorAll('[data-rate]')) {
+                    btn.addEventListener('click', () => this.setRate(btn.getAttribute('data-rate')));
+                }
                 el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
                     this._panelCollapsed = !this._panelCollapsed;
                     this._panelKey = '';
