@@ -6,7 +6,7 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.2.5';
+    const VERSION = '4.2.6';
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
@@ -167,6 +167,7 @@
             _updating: false,
             _updateFailed: false,
             _ratesOpen: false,
+            _userStopped: false,
             _updateTimer: null,
             _mode: 'course',
             _docsDone: false,
@@ -185,14 +186,25 @@
                 this._startUpdateCheck();
             },
             run() {
+                this._userStopped = false;
                 if (!this._timer) this._timer = setInterval(() => this._tick(), C.tickMs);
-                this._enterLoading('start');
-                log('已重新开始接管当前小节', '#4CAF50');
+                if (this._mode === 'live') {
+                    this._video = null;
+                    this._state = 'loading';
+                } else {
+                    this._enterLoading('start');
+                }
+                log('已恢复运行', '#4CAF50');
+                this._panelKey = '';
+                this._renderPanel();
             },
             stop() {
+                this._userStopped = true;
                 this._stop();
-                this._note = '脚本已暂停，执行 app.run() 继续';
-                log('脚本已暂停，执行 app.run() 可继续', '#FF9800');
+                this._note = '脚本已停止，点击右上角 ▶ 继续运行';
+                log('脚本已停止，点击浮窗右上角的 ▶ 或执行 app.run() 继续', '#FF9800');
+                this._panelKey = '';
+                this._renderPanel();
             },
             nextUnit() {
                 const idx = this._currentIndex();
@@ -1131,7 +1143,7 @@
 
             // 自动更新只在“小节之间”进行：当前没有在播放视频、翻看课件，也不在直播回放页
             _maybeAutoUpdate() {
-                if (!C.autoUpdate || !this._latest || this._updating || this._updateFailed || this._mode === 'live') return;
+                if (!C.autoUpdate || !this._latest || this._updating || this._updateFailed || this._mode === 'live' || this._userStopped) return;
                 if (this._state === 'loading' || this._state === 'waiting' || this._state === 'stopped') this._doUpdate(false);
             },
 
@@ -1193,7 +1205,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1209,6 +1221,14 @@
                 q('box').style.display = this._panelCollapsed ? 'none' : 'block';
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
                 q('toggle').title = this._panelCollapsed ? '展开' : '收起';
+                const pw = q('power');
+                const paused = this._userStopped;
+                pw.classList.toggle('paused', paused);
+                pw.title = paused ? '继续运行脚本' : '停止脚本';
+                pw.setAttribute('aria-label', pw.title);
+                pw.innerHTML = paused
+                    ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8v10.4c0 .6.7 1 1.2.6l8-5.2a.7.7 0 000-1.2l-8-5.2c-.5-.4-1.2 0-1.2.6z"/></svg>'
+                    : '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>';
                 const hasUpd = !!this._latest;
                 q('upd').style.display = hasUpd ? 'inline-block' : 'none';
                 q('ver').classList.toggle('xxt-has-upd', hasUpd);
@@ -1235,13 +1255,20 @@
                 el.id = 'xxt-v41-panel';
                 el.style.cssText = [
                     'position:fixed', 'left:20px', 'bottom:20px', 'z-index:2147483647', 'box-sizing:border-box',
-                    'width:300px', 'padding:16px', 'border-radius:16px', 'background:#fff', 'color:#1F2937',
+                    'width:316px', 'padding:16px', 'border-radius:16px', 'background:#fff', 'color:#1F2937',
                     'box-shadow:0 8px 28px rgba(15,23,42,.12),0 1px 3px rgba(15,23,42,.08)',
                     'font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif',
                 ].join(';');
                 el.innerHTML =
                     '<style>' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
+                    '#xxt-v41-panel .xxt-power{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-power:hover,#xxt-v41-panel .xxt-power:focus-visible{background:#FEE2E2;color:#DC2626;outline:none}' +
+                    '#xxt-v41-panel .xxt-power.paused{color:#16A34A}' +
+                    '#xxt-v41-panel .xxt-power.paused:hover,#xxt-v41-panel .xxt-power.paused:focus-visible{background:#DCFCE7;color:#15803D}' +
+                    '#xxt-v41-panel.xxt-enter{animation:xxt-enter .32s cubic-bezier(.2,.8,.2,1) both}' +
+                    '@keyframes xxt-enter{from{opacity:0;transform:translateY(12px)}to{opacity:.999;transform:none}}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
                     '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin-top:12px}' +
                     '#xxt-v41-panel .xxt-rate-btn{flex:none;display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:12px;color:#4B5563;background:#F1F3F6;border:0;border-radius:7px;padding:4px 9px;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-rate-btn b{color:#2563EB;font-weight:600;font-variant-numeric:tabular-nums}' +
@@ -1255,7 +1282,7 @@
                     '#xxt-v41-panel .xxt-rate-opt:hover{background:#E3ECFD}' +
                     '#xxt-v41-panel .xxt-rate-opt.on{background:#3B82F6;color:#fff;font-weight:600}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-rate-opts,#xxt-v41-panel .xxt-chev{transition:none}}' +
-                    '#xxt-v41-panel [data-k="ver"]{font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums;transition:background .15s,color .15s}' +
+                    '#xxt-v41-panel [data-k="ver"]{white-space:nowrap;display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:#6B7280;background:#F1F3F6;border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums;transition:background .15s,color .15s}' +
                     '#xxt-v41-panel [data-k="ver"]:hover,#xxt-v41-panel [data-k="ver"]:focus-visible{background:#E3ECFD;color:#2563EB;outline:none}' +
                     '#xxt-v41-panel .xxt-tip{position:absolute;right:-64px;bottom:calc(100% + 10px);display:flex;flex-direction:column;gap:2px;white-space:nowrap;' +
                       'padding:8px 11px;border-radius:9px;background:#1F2937;color:#F9FAFB;font-size:12px;line-height:1.45;box-shadow:0 6px 18px rgba(15,23,42,.22);' +
@@ -1278,7 +1305,7 @@
                       '</div>' +
                       '<div style="flex:1;min-width:0">' +
                         '<div style="display:flex;align-items:center;gap:8px">' +
-                          '<span style="font-size:17px;font-weight:700;color:#111827">学习通助手</span>' +
+                          '<span style="font-size:17px;font-weight:700;color:#111827;white-space:nowrap">学习通助手</span>' +
                           '<span class="xxt-ver-wrap">' +
                             `<a data-k="ver" href="${REPO_URL}" target="_blank" rel="noopener" aria-label="版本 v${VERSION}">v${VERSION}<i data-k="upd" class="xxt-upd"></i></a>` +
                             '<span class="xxt-tip" role="tooltip"><b data-k="tip1">开源 · 1668919739/xuexitongScript</b><span data-k="tip2">已是最新版本 · 点击查看源码</span></span>' +
@@ -1289,6 +1316,7 @@
                           '<span data-k="label"></span>' +
                         '</div>' +
                       '</div>' +
+                      '<button type="button" data-k="power" class="xxt-power"></button>' +
                       '<span data-k="toggle" style="align-self:flex-start;cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
                     '</div>' +
                     '<div data-k="box" style="margin-top:14px;padding:11px 14px;border-radius:10px;background:#F6F8FB;border-left:3px solid #A7C7F2">' +
@@ -1319,11 +1347,20 @@
                     e.preventDefault();
                     this._doUpdate(true);
                 });
+                el.querySelector('[data-k="power"]').addEventListener('click', () => {
+                    if (this._userStopped) this.run();
+                    else this.stop();
+                });
                 el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
                     this._panelCollapsed = !this._panelCollapsed;
                     this._panelKey = '';
                     this._renderPanel();
                 });
+                if (!window.__xxtPanelShown) {
+                    window.__xxtPanelShown = true;
+                    el.classList.add('xxt-enter');
+                    el.addEventListener('animationend', (e) => { if (e.target === el) el.classList.remove('xxt-enter'); });
+                }
                 document.body.appendChild(el);
                 this._panel = el;
                 this._panelKey = '';
