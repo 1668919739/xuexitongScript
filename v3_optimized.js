@@ -1111,6 +1111,7 @@
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
+                q('repo').style.display = this._panelCollapsed ? 'none' : 'flex';
                 for (const btn of el.querySelectorAll('[data-rate]')) {
                     const on = Number(btn.getAttribute('data-rate')) === C.playbackRate;
                     btn.style.background = on ? '#3B82F6' : '#F1F3F6';
@@ -1158,7 +1159,15 @@
                       '<span style="font-size:12px;color:#6B7280;margin-right:2px">倍速</span>' +
                       RATE_OPTIONS.map((r) => `<span data-rate="${r}" style="flex:1;text-align:center;cursor:pointer;user-select:none;font-size:12px;padding:4px 0;border-radius:7px">${r}x</span>`).join('') +
                     '</div>' +
-                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>';
+                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
+                    // 来源标识：一眼看出是本仓库的开源版本
+                    '<a data-k="repo" href="https://github.com/1668919739/xuexitongScript" target="_blank" rel="noopener" ' +
+                      'title="开源免费 · 基于 chaolucky18/xuexitongScript 修改，点击查看源码" ' +
+                      'style="display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid #EEF0F3;font-size:12px;color:#6B7280;text-decoration:none">' +
+                      '<svg width="14" height="14" viewBox="0 0 16 16" fill="#6B7280" style="flex:none"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+                      '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">1668919739/xuexitongScript</span>' +
+                      '<span style="flex:none;font-size:11px;color:#16A34A;background:#ECFDF3;border-radius:5px;padding:1px 6px">开源免费</span>' +
+                    '</a>';
                 for (const btn of el.querySelectorAll('[data-rate]')) {
                     btn.addEventListener('click', () => this.setRate(btn.getAttribute('data-rate')));
                 }
