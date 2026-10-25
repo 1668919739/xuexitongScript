@@ -8,7 +8,6 @@
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
     const VERSION = '4.2.4';
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
-    const USERSCRIPT_URL = 'https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
         'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/version.json',
@@ -107,6 +106,7 @@
             docStepMs: 700,             // 课件每次滚动的间隔
             docMaxSteps: 400,           // 每份课件最多滚动次数
             liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
+            autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -164,6 +164,7 @@
             _noVideoWait: false,
             _latest: null,
             _updating: false,
+            _updateFailed: false,
             _updateTimer: null,
             _mode: 'course',
             _docsDone: false,
@@ -275,6 +276,8 @@
 
             _tickInner() {
                 if (this._mode === 'live') { this._liveTick(); return; }
+                this._maybeAutoUpdate();
+                if (this._updating) return;
                 if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle' || this._state === 'reading') return;
                 try {
                     if (!this._isValid(this._video)) {
@@ -1062,10 +1065,6 @@
             },
 
             // ================= 版本更新 =================
-            _isUserscript() {
-                try { return typeof GM_info !== 'undefined' && !!GM_info.script; } catch (e) { return false; }
-            },
-
             _startUpdateCheck() {
                 this._checkUpdate();
                 if (!this._updateTimer) this._updateTimer = setInterval(() => this._checkUpdate(), 6 * 3600 * 1000);
@@ -1092,29 +1091,31 @@
                 }
             },
 
-            _doUpdate() {
+            // 静默更新：直接在当前页面加载新版本，新版本启动时会自动替换掉当前实例，不打开任何页面。
+            // 油猴版同样适用（本页立即生效），油猴之后也会在后台把已安装的脚本更新到新版。
+            _doUpdate(manual) {
                 const v = this._latest;
                 if (!v || this._updating) return;
-                if (this._isUserscript()) {
-                    // 油猴版：打开安装地址，油猴会弹出更新确认页
-                    window.open(USERSCRIPT_URL, '_blank', 'noopener');
-                    return;
-                }
-                // 控制台版：直接加载新版本，新版本启动时会自动替换掉当前实例
                 this._updating = true;
                 this._panelKey = '';
                 this._renderPanel();
-                log(`正在更新到 v${v}…`, '#2196F3');
+                log(`正在${manual ? '' : '自动'}更新到 v${v}…`, '#2196F3');
                 const s = document.createElement('script');
                 s.src = versionScriptUrl(v);
                 s.onerror = () => {
                     this._updating = false;
+                    this._updateFailed = true;     // 本次页面不再自动重试，避免反复失败
                     this._panelKey = '';
                     this._renderPanel();
-                    log('自动更新失败，已打开仓库页面，可刷新页面后重新粘贴加载代码', '#F44336', 'warn');
-                    window.open(REPO_URL, '_blank', 'noopener');
+                    log(`更新到 v${v} 失败（网络无法访问 jsDelivr），刷新页面后会重试`, '#F44336', 'warn');
                 };
                 document.head.appendChild(s);
+            },
+
+            // 自动更新只在“小节之间”进行：当前没有在播放视频、翻看课件，也不在直播回放页
+            _maybeAutoUpdate() {
+                if (!C.autoUpdate || !this._latest || this._updating || this._updateFailed || this._mode === 'live') return;
+                if (this._state === 'loading' || this._state === 'waiting' || this._state === 'stopped') this._doUpdate(false);
             },
 
             // ================= 运行状态浮窗 =================
@@ -1196,7 +1197,7 @@
                 q('ver').classList.toggle('xxt-has-upd', hasUpd);
                 q('tip1').textContent = this._updating ? `正在更新到 v${this._latest}…` : hasUpd ? `发现新版本 v${this._latest}` : '开源 · 1668919739/xuexitongScript';
                 q('tip2').textContent = this._updating ? '请稍候' : hasUpd
-                    ? (this._isUserscript() ? '点击打开油猴更新页' : '点击立即更新，无需刷新页面')
+                    ? (this._updateFailed ? '更新失败，点击重试' : C.autoUpdate ? '将在下一小节开始前自动更新 · 点击立即更新' : '点击立即更新，无需刷新页面')
                     : '已是最新版本 · 点击查看源码';
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
@@ -1274,7 +1275,7 @@
                 el.querySelector('[data-k="ver"]').addEventListener('click', (e) => {
                     if (!this._latest) return;          // 没有新版本：正常打开仓库
                     e.preventDefault();
-                    this._doUpdate();
+                    this._doUpdate(true);
                 });
                 el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
                     this._panelCollapsed = !this._panelCollapsed;
