@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.4
+// @version      4.2.5
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       Codex
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -23,15 +23,16 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.2.4';
+    const VERSION = '4.2.5';
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
         'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/version.json',
         'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/version.json',
     ];
-    // 控制台版一键更新：按版本标签加载对应版本（标签内容固定，不受 CDN 缓存影响）
-    const versionScriptUrl = (v) => `https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@v${v}/v3_optimized.js`;
+    // 静默更新时获取新版代码：GitHub 原始文件最及时（需核对版本号），jsDelivr 作为备用
+    const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/v3_optimized.js';
+    const SCRIPT_CDN_URL = 'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.js';
     const newerThan = (a, b) => {
         const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
         for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -1118,16 +1119,31 @@
                 this._panelKey = '';
                 this._renderPanel();
                 log(`正在${manual ? '' : '自动'}更新到 v${v}…`, '#2196F3');
-                const s = document.createElement('script');
-                s.src = versionScriptUrl(v);
-                s.onerror = () => {
+                const fail = (why) => {
                     this._updating = false;
                     this._updateFailed = true;     // 本次页面不再自动重试，避免反复失败
                     this._panelKey = '';
                     this._renderPanel();
-                    log(`更新到 v${v} 失败（网络无法访问 jsDelivr），刷新页面后会重试`, '#F44336', 'warn');
+                    log(`更新到 v${v} 失败（${why}），刷新页面后会重试`, '#F44336', 'warn');
                 };
-                document.head.appendChild(s);
+                const run = (code) => {
+                    const s = document.createElement('script');
+                    s.textContent = code;
+                    document.head.appendChild(s);
+                };
+                (async () => {
+                    // 只接受版本号正好是新版本的代码，防止拿到缓存的旧文件
+                    for (const url of [SCRIPT_RAW_URL, SCRIPT_CDN_URL]) {
+                        try {
+                            const res = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
+                            if (!res.ok) continue;
+                            const code = await res.text();
+                            const m = /const VERSION = '([\d.]+)'/.exec(code);
+                            if (m && m[1] === v) { run(code); return; }
+                        } catch (e) { /* 换下一个地址 */ }
+                    }
+                    fail('暂时下载不到新版本代码');
+                })();
             },
 
             // 自动更新只在“小节之间”进行：当前没有在播放视频、翻看课件，也不在直播回放页
