@@ -124,6 +124,7 @@
             docStepMs: 700,             // 课件每次滚动的间隔
             docMaxSteps: 400,           // 每份课件最多滚动次数
             liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
+            autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
@@ -185,6 +186,10 @@
             _updateFailed: false,
             _ratesOpen: false,
             _userStopped: false,
+            _lives: [],
+            _liveOpened: new WeakSet(),
+            _liveScanTs: 0,
+            _liveBlocked: false,
             _updateTimer: null,
             _mode: 'course',
             _docsDone: false,
@@ -308,6 +313,7 @@
             _tickInner() {
                 if (this._mode === 'live') { this._liveTick(); return; }
                 this._maybeAutoUpdate();
+                this._scanLiveCards();
                 if (this._updating) return;
                 if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle' || this._state === 'reading') return;
                 try {
@@ -637,6 +643,8 @@
                 this._note = '';
                 this._noVideoWait = false;
                 this._docsDone = false;
+                this._lives = [];
+                this._liveBlocked = false;
                 this._docProgress = null;
                 document.title = this._origTitle;
             },
@@ -961,6 +969,105 @@
                 }
             },
 
+            // ================= 课程页上的直播回放任务点 =================
+            // 每张直播卡片是一个独立 iframe，里面的 .live-info2 写着“观看时长达到总时长的90%…当前观看进度为12.77%”
+            _scanLiveCards() {
+                if (this._mode === 'live' || this._userStopped) return;
+                const now = Date.now();
+                if (now - this._liveScanTs < 3000) return;
+                this._liveScanTs = now;
+                const lives = [];
+                for (const doc of this._sameOriginDocs()) {
+                    let infos = [];
+                    try { infos = doc.querySelectorAll('.live-info2'); } catch (e) { continue; }
+                    for (const info of infos) {
+                        const text = info.innerText || info.textContent || '';
+                        const frame = doc.defaultView && doc.defaultView.frameElement;
+                        const wrap = frame && frame.closest ? frame.closest('.ans-attach-ct') : null;
+                        const need = parseFloat((/总时长的\s*([\d.]+)\s*%/.exec(text) || [])[1]) || 90;
+                        const pct = parseFloat((/观看进度为\s*([\d.]+)\s*%/.exec(text) || [])[1]) || 0;
+                        const done = (wrap && wrap.classList.contains('ans-job-finished')) || pct >= need;
+                        lives.push({ doc, info, frame, need, pct, done });
+                    }
+                }
+                this._lives = lives;
+                const pending = lives.filter((l) => !l.done);
+                // 一次只自动打开一个回放：平台要求观看时回放页保持在前台，同时开多个只会有一个在计时
+                const watching = pending.some((l) => this._liveOpened.has(l.frame || l.info));
+                if (C.autoOpenLive && pending.length && !this._liveBlocked && !watching) {
+                    const next = pending.find((l) => !this._liveOpened.has(l.frame || l.info));
+                    if (next) {
+                        const ok = this._openLive(next, false);
+                        if (!ok) {
+                            this._liveBlocked = true;
+                            log('浏览器拦截了自动打开直播回放，请点击浮窗上的“打开直播回放”按钮', '#FF9800', 'warn');
+                        }
+                    }
+                }
+                this._panelKey = '';
+            },
+
+            // 找到卡片里可点击的元素（鼠标指针为手形、面积最大的那个）
+            _liveClickTarget(l) {
+                const doc = l.doc;
+                const win = doc.defaultView;
+                let best = null, bestArea = 0;
+                for (const el of doc.querySelectorAll('body *')) {
+                    if (el === l.info || l.info.contains(el)) continue;
+                    let cur = '';
+                    try { cur = win.getComputedStyle(el).cursor; } catch (e) { continue; }
+                    if (cur !== 'pointer') continue;
+                    const r = el.getBoundingClientRect();
+                    const area = r.width * r.height;
+                    if (area > bestArea) { best = el; bestArea = area; }
+                }
+                return best || doc.body.firstElementChild;
+            },
+
+            // 打开回放：先截获卡片自己要打开的地址，再由当前页面打开（manual=用户点击时，浏览器一般不会拦截）
+            _openLive(l, manual) {
+                const win = l.doc.defaultView;
+                const target = this._liveClickTarget(l);
+                if (!win || !target) return false;
+                let url = null;
+                // 卡片可能调用自己、父页面或顶层页面的 window.open，整条链都临时截获
+                const chain = [];
+                for (let w = win; w; w = w === w.parent ? null : w.parent) {
+                    try { chain.push([w, w.open]); w.open = (u) => { url = u; return null; }; } catch (e) { break; }
+                    if (w === window.top) break;
+                }
+                try {
+                    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: win }));
+                } catch (e) { /* ignore */ } finally {
+                    for (const [w, o] of chain) { try { w.open = o; } catch (e) { /* ignore */ } }
+                }
+                if (!url) {
+                    // 卡片可能是普通链接
+                    const a = target.closest ? target.closest('a[href]') : null;
+                    if (a && !/^javascript:/i.test(a.getAttribute('href'))) url = a.href;
+                }
+                if (!url) {
+                    log('没能找到直播回放的打开地址，请手动点击直播卡片', '#FF9800', 'warn');
+                    this._liveOpened.add(l.frame || l.info);
+                    return true;   // 不再自动重试
+                }
+                try { url = new URL(url, l.doc.baseURI).href; } catch (e) { /* ignore */ }
+                const w = window.open(url, '_blank');
+                if (!w) return false;
+                this._liveOpened.add(l.frame || l.info);
+                log(`已${manual ? '' : '自动'}打开直播回放（当前进度 ${l.pct}%），请让回放窗口保持显示`, '#4CAF50');
+                return true;
+            },
+
+            _openNextLive() {
+                const pending = this._lives.filter((l) => !l.done);
+                if (!pending.length) return;
+                const next = pending.find((l) => !this._liveOpened.has(l.frame || l.info)) || pending[0];
+                if (this._openLive(next, true)) this._liveBlocked = false;
+                this._panelKey = '';
+                this._renderPanel();
+            },
+
             // ================= 直播回放（zhibo.chaoxing.com）=================
             // 回放在新标签页打开，任务点按“观看时长达到总时长的一定比例”计算，所以保持 1 倍速持续播放
             startLive(playerOnly) {
@@ -1225,7 +1332,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1259,6 +1366,16 @@
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
+                const livePending = this._mode !== 'live' ? this._lives.filter((l) => !l.done) : [];
+                q('liverow').style.display = livePending.length && !this._panelCollapsed ? 'flex' : 'none';
+                if (livePending.length) {
+                    const p = livePending.map((l) => `${Math.floor(l.pct)}%`).join('、');
+                    q('livetext').textContent = `直播回放 ${livePending.length} 个未完成 · ${p}`;
+                    q('livetext').title = livePending.map((l, i) => `第 ${i + 1} 个：已看 ${l.pct}%，需 ${l.need}%`).join('\n');
+                    const openedCount = livePending.filter((l) => this._liveOpened.has(l.frame || l.info)).length;
+                    q('livebtn').textContent = this._liveBlocked || openedCount === 0 ? '打开直播回放'
+                        : openedCount < livePending.length ? '打开下一个' : '再次打开';
+                }
                 q('ratecur').textContent = `${C.playbackRate}x`;
                 q('rates').classList.toggle('open', this._ratesOpen);
                 q('ratebtn').setAttribute('aria-expanded', String(this._ratesOpen));
@@ -1290,6 +1407,10 @@
                     '@keyframes xxt-enter{from{opacity:0;transform:translateY(12px)}to{opacity:.999;transform:none}}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
                     '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-live-row{display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;background:#FFF7ED}' +
+                    '#xxt-v41-panel .xxt-live-text{flex:1;min-width:0;font-size:12px;color:#9A3412;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-panel .xxt-live-btn{flex:none;font:inherit;font-size:12px;font-weight:600;border:0;border-radius:7px;padding:4px 10px;background:#F97316;color:#fff;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-live-btn:hover,#xxt-v41-panel .xxt-live-btn:focus-visible{background:#EA580C;outline:none}' +
                     '#xxt-v41-panel .xxt-rate-btn{flex:none;display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:12px;color:#4B5563;background:#F1F3F6;border:0;border-radius:7px;padding:4px 9px;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-rate-btn b{color:#2563EB;font-weight:600;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-rate-btn:hover,#xxt-v41-panel .xxt-rate-btn:focus-visible{background:#E3ECFD;outline:none}' +
@@ -1350,7 +1471,11 @@
                         RATE_OPTIONS.map((r) => `<button type="button" data-rate="${r}" class="xxt-rate-opt">${r}x</button>`).join('') +
                       '</div>' +
                     '</div>' +
-                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>';
+                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
+                    '<div data-k="liverow" class="xxt-live-row" style="display:none">' +
+                      '<span data-k="livetext" class="xxt-live-text"></span>' +
+                      '<button type="button" data-k="livebtn" class="xxt-live-btn">打开直播回放</button>' +
+                    '</div>';
                 el.querySelector('[data-k="ratebtn"]').addEventListener('click', () => {
                     this._ratesOpen = !this._ratesOpen;
                     this._panelKey = '';
@@ -1367,6 +1492,7 @@
                     e.preventDefault();
                     this._doUpdate(true);
                 });
+                el.querySelector('[data-k="livebtn"]').addEventListener('click', () => this._openNextLive());
                 el.querySelector('[data-k="power"]').addEventListener('click', () => {
                     if (this._userStopped) this.run();
                     else this.stop();
