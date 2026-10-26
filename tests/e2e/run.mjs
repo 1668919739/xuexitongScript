@@ -499,6 +499,44 @@ test('学习助手：连续学习 45 分钟提醒休息，完成今日目标提�
     await ctx.close();
 });
 
+test('学习助手总开关：关闭后只保留一行学习时长，不再提醒休息，设置会被记住', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=79');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
+    assert(await vis('assist') && await vis('tabs'), '默认应开启学习助手');
+    await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(300);
+    const st = await p.evaluate(() => ({ text: document.querySelector('#xxt-v41-panel [data-k=statstext]').textContent, checked: document.querySelector('#xxt-v41-panel [data-k=assist]').getAttribute('aria-checked') }));
+    assert(!(await vis('tabs')) && !(await vis('goal')) && await vis('stats') && /^今日 /.test(st.text) && st.checked === 'false', `关闭后显示不对：${JSON.stringify(st)}`);
+    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
+    await sleep(2500);
+    assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '关闭后仍然提醒休息');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(2000);
+    assert(!(await vis('tabs')) && await vis('assist'), '刷新后没有记住关闭状态');
+    await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(300);
+    assert(await vis('tabs'), '重新打开后没有显示标签页');
+    await ctx.close();
+});
+
+test('延时任务交给后台线程计时（页面在后台也能按时恢复播放、进入下一节）', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const r = await p.evaluate(() => new Promise((res) => {
+        const t0 = Date.now();
+        const id = app._later(() => res({ id: typeof id, ms: Date.now() - t0 }), 300);
+    }));
+    assert(r.id === 'string' && r.ms >= 250 && r.ms < 1500, `延时任务没有走后台线程：${JSON.stringify(r)}`);
+    // 页面暂停视频后，靠后台线程的延时任务恢复
+    await p.evaluate(() => __v.pause()); await sleep(900);
+    assert(!(await p.evaluate(() => __v.paused)), '暂停后没有恢复');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();

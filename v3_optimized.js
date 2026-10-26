@@ -35,6 +35,9 @@
     };
 
     const APP_KEY = '__xuexitongPlayerV4';
+    // 浏览器原生的“页面是否隐藏”，不受脚本对 document.hidden 的伪装影响
+    const NATIVE_HIDDEN = (() => { try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get; } catch (e) { return null; } })();
+    const reallyHidden = () => { try { return NATIVE_HIDDEN ? !!NATIVE_HIDDEN.call(document) : false; } catch (e) { return false; } };
     const BOOT_TIMER_KEY = '__xuexitongPlayerV4BootTimer';
     const NS = '.xuexitongPlayerV4';
 
@@ -131,6 +134,7 @@
             liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
             autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
+            assistMode: true,           // 学习助手总开关：今日目标、笔记、学习记录、休息提醒
             dailyGoal: 60,              // 每日学习目标（分钟）
             breakRemind: true,          // 连续学习一段时间后提醒休息
             breakAfterMin: 45,          // 连续学习多少分钟提醒休息
@@ -174,12 +178,14 @@
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
             for (const [k] of SETTING_ITEMS) if (typeof saved[k] === 'boolean') C[k] = saved[k];
             if (GOAL_OPTIONS.includes(saved.dailyGoal)) C.dailyGoal = saved.dailyGoal;
+            if (typeof saved.assistMode === 'boolean') C.assistMode = saved.assistMode;
         } catch (e) { /* 读取失败时使用默认设置 */ }
         const saveSettings = () => {
             try {
                 const o = {};
                 for (const [k] of SETTING_ITEMS) o[k] = C[k];
                 o.dailyGoal = C.dailyGoal;
+                o.assistMode = C.assistMode;
                 localStorage.setItem(SETTINGS_KEY, JSON.stringify(o));
             } catch (e) { /* ignore */ }
         };
@@ -366,7 +372,7 @@
             // ================= 定时器（带令牌，切换小节后旧回调自动失效） =================
             _later(fn, ms) {
                 const token = this._token;
-                const id = setTimeout(() => {
+                const id = this._wait(() => {
                     this._timeouts.delete(id);
                     if (token === this._token && this._state !== 'stopped') fn();
                 }, ms);
@@ -374,8 +380,23 @@
                 return id;
             },
             _clearTimeouts() {
-                for (const id of this._timeouts) clearTimeout(id);
+                for (const id of this._timeouts) this._unwait(id);
                 this._timeouts.clear();
+            },
+            // 不受后台限速影响的 setTimeout：交给 Worker 计时，页面在后台时也能按时恢复播放、进入下一节
+            _wait(fn, ms) {
+                const t = this._timer;
+                if (t && t.worker) {
+                    this._waitSeq = (this._waitSeq || 0) + 1;
+                    const id = 'w' + this._waitSeq;
+                    t.fns.set(id, fn);
+                    try { t.worker.postMessage({ id, ms: Math.max(0, ms | 0) }); return id; } catch (e) { t.fns.delete(id); }
+                }
+                return setTimeout(fn, ms);
+            },
+            _unwait(id) {
+                if (typeof id === 'string') { if (this._timer && this._timer.fns) this._timer.fns.delete(id); }
+                else clearTimeout(id);
             },
 
             // ================= 计时器 =================
@@ -384,15 +405,24 @@
             _startTimer() {
                 this._stopTimer();
                 const fallback = () => {
+                    const pending = this._timer && this._timer.fns ? [...this._timer.fns.values()] : [];
                     if (this._timer && this._timer.worker) { try { this._timer.worker.terminate(); URL.revokeObjectURL(this._timer.url); } catch (e) { /* ignore */ } }
                     this._timer = { id: setInterval(() => this._tick(), C.tickMs) };
+                    for (const fn of pending) setTimeout(fn, 0);
                 };
                 try {
-                    const url = URL.createObjectURL(new Blob([`setInterval(function(){postMessage(0)},${C.tickMs});`], { type: 'text/javascript' }));
+                    const url = URL.createObjectURL(new Blob([`setInterval(function(){postMessage(0)},${C.tickMs});onmessage=function(e){var d=e.data;setTimeout(function(){postMessage(d.id)},d.ms)};`], { type: 'text/javascript' }));
                     const worker = new Worker(url);
-                    worker.onmessage = () => this._tick();
+                    const fns = new Map();
+                    worker.onmessage = (e) => {
+                        if (e.data === 0) { this._tick(); return; }
+                        const fn = fns.get(e.data);
+                        if (!fn) return;
+                        fns.delete(e.data);
+                        try { fn(); } catch (err) { log('定时任务异常: ' + err.message, '#F44336', 'error'); }
+                    };
                     worker.onerror = () => { if (this._timer && this._timer.worker === worker) fallback(); };
-                    this._timer = { worker, url };
+                    this._timer = { worker, url, fns };
                 } catch (e) {
                     fallback();
                 }
@@ -413,7 +443,7 @@
                 if (this._lastTickTs && now - this._lastTickTs > 8000 && !this._userStopped && this._mode !== 'list') {
                     const sec = Math.round((now - this._lastTickTs) / 1000);
                     if (!this._notice || this._notice.kind !== 'upd') {
-                        this._notice = { kind: 'bg', until: now + 30000, text: `页面刚才在后台，脚本有约 ${sec} 秒没能及时运行。保持窗口显示、不要最小化，可以避免变慢` };
+                        this._notice = { kind: 'bg', until: now + 45000, text: `页面刚才在后台被浏览器限速，约 ${sec} 秒没能及时运行。把 chaoxing.com 加入浏览器“始终保持活动”的网站（Edge：设置 › 系统和性能 › 睡眠标签页；Chrome：设置 › 性能 › 内存节省程序），并且不要最小化窗口，就不会再变慢` };
                     }
                     log(`页面在后台，定时器被浏览器延迟了 ${sec} 秒`, '#FF9800', 'warn');
                 }
@@ -926,7 +956,10 @@
                 const stopLeave = (e) => { if (!e.relatedTarget) e.stopImmediatePropagation(); };
                 // 只拦截窗口级 blur，不影响输入框等元素的失焦（弹题作答需要）
                 const stopWinBlur = (e) => { if (e.target === win || e.target === doc) e.stopImmediatePropagation(); };
-                const stopVis = (e) => e.stopImmediatePropagation();
+                const stopVis = (e) => {
+                    e.stopImmediatePropagation();
+                    if (win === window) this._onRealVisibility();
+                };
 
                 const listeners = [
                     [win, 'mouseout', stopLeave],
@@ -948,6 +981,21 @@
                     } catch (e) { /* ignore */ }
                 }
                 this._guarded.push({ doc, listeners, spoofed });
+            },
+
+            // 页面真正的可见状态（不受上面伪装的影响）：回到前台时立刻补一次检查，不等下一个计时
+            _onRealVisibility() {
+                const hidden = reallyHidden();
+                if (hidden) { this._hiddenSince = Date.now(); return; }
+                if (this._visTimer) return;
+                this._visTimer = true;
+                Promise.resolve().then(() => {
+                    this._visTimer = false;
+                    if (!this._timer || this._userStopped) return;
+                    if (this._hiddenSince) log(`回到前台（在后台 ${Math.round((Date.now() - this._hiddenSince) / 1000)} 秒），立即检查播放状态`, '#607D8B');
+                    this._hiddenSince = 0;
+                    this._tick();
+                });
             },
 
             _unguard(g) {
@@ -1058,7 +1106,7 @@
             },
 
             async _readDocs(docs, token) {
-                const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                const sleep = (ms) => new Promise((r) => this._wait(r, ms));
                 for (let i = 0; i < docs.length; i++) {
                     const d = docs[i];
                     this._docProgress = { i: i + 1, n: docs.length, pct: 0 };
@@ -1927,7 +1975,7 @@
                 return { goal, sec, pct: Math.min(100, Math.round((sec / goal) * 100)), done: sec >= goal };
             },
             _assistTick(dt) {
-                if (this._mode === 'list') return;
+                if (this._mode === 'list' || !C.assistMode) return;
                 const now = Date.now();
                 if (this._isStudying()) {
                     // 连续学习：中断超过 5 分钟就重新计时
@@ -1968,6 +2016,15 @@
                         if (this._softNotice({ kind: 'rest', until: now + 20000, text: `🎯 今日目标 ${C.dailyGoal} 分钟已完成，继续保持！` }) && C.alertSound) this._beep();
                     }
                 }
+            },
+            _toggleAssist() {
+                C.assistMode = !C.assistMode;
+                saveSettings();
+                if (!C.assistMode && this._notice && this._notice.kind === 'rest') this._notice = null;
+                this._chapAcc = null;
+                log(`学习助手：${C.assistMode ? '开启' : '关闭'}`, '#2196F3');
+                this._panelKey = '';
+                this._renderPanel();
             },
             _setGoal(m) {
                 if (!GOAL_OPTIONS.includes(m)) return;
@@ -2062,7 +2119,6 @@
                     ta.value = (this._loadNotes()[nt] || {}).t || '';
                     q('notestate').textContent = ta.value ? '已保存在本机' : '';
                 }
-                q('statstext').innerHTML = `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`;
             },
 
             _renderCourseDetail(el, prog) {
@@ -2200,7 +2256,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -2227,7 +2283,11 @@
                 // 三个标签页：今天 / 课程 / 记录（回放页只显示“今天”）
                 const tab = this._mode === 'live' ? 'today' : (this._tab || (this._mode === 'list' ? 'course' : 'today'));
                 const showMain = open && !this._settingsOpen;
-                q('tabs').style.display = showMain && this._mode !== 'live' ? 'flex' : 'none';
+                const assist = !!C.assistMode;
+                q('assist').style.display = showMain ? 'flex' : 'none';
+                q('assist').classList.toggle('on', assist);
+                q('assist').setAttribute('aria-checked', String(assist));
+                q('tabs').style.display = showMain && assist && this._mode !== 'live' ? 'flex' : 'none';
                 for (const b of el.querySelectorAll('[data-tab]')) {
                     const on = b.getAttribute('data-tab') === tab;
                     b.classList.toggle('on', on);
@@ -2235,14 +2295,25 @@
                     b.tabIndex = on ? 0 : -1;
                 }
                 const ss = this._statSummary();
-                for (const n of ['today', 'course', 'record']) q('pane-' + n).style.display = showMain && tab === n ? 'block' : 'none';
-                if (showMain && tab === 'today') this._renderToday(el, ss);
-                if (showMain && tab === 'course') {
+                // 关闭学习助手时只保留课程列表（列表页）和一行学习时长
+                const paneOn = (n) => showMain && (assist ? tab === n : n === 'course' && this._mode === 'list');
+                for (const n of ['today', 'course', 'record']) q('pane-' + n).style.display = paneOn(n) ? 'block' : 'none';
+                if (paneOn('today')) this._renderToday(el, ss);
+                if (paneOn('course')) {
                     q('cdetail').style.display = this._mode === 'course' ? 'block' : 'none';
                     if (this._mode === 'list') this._renderCourseList(el);
                     else { q('courses').style.display = 'none'; this._renderCourseDetail(el, prog); }
                 }
-                if (showMain && tab === 'record') this._renderRecord(el, ss);
+                if (paneOn('record')) this._renderRecord(el, ss);
+                q('stats').style.display = showMain && (!assist || tab === 'today') ? 'flex' : 'none';
+                q('stats').classList.toggle('plain', !assist);
+                q('stats').title = assist ? '查看学习记录' : '';
+                q('statstext').innerHTML = assist
+                    ? `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`
+                    : `今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}`;
+                q('goalset').style.display = assist ? 'block' : 'none';
+                const br = el.querySelector('[data-set="breakRemind"]');
+                if (br) br.closest('label').style.display = assist ? '' : 'none';
                 for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
@@ -2318,7 +2389,19 @@
                     '#xxt-v41-panel.xxt-collapsed .xxt-logo{width:32px!important;height:32px!important;border-radius:9px!important}' +
                     '#xxt-v41-panel .xxt-toggle{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;font:20px/1 sans-serif;cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-toggle:hover,#xxt-v41-panel .xxt-toggle:focus-visible{background:#F1F3F6;color:#374151;outline:none}' +
-                    '#xxt-v41-panel .xxt-tabs{display:flex;gap:2px;margin-top:12px;padding:3px;border-radius:10px;background:#F1F3F6}' +
+                    '#xxt-v41-panel .xxt-assist{display:flex;align-items:center;gap:10px;width:100%;margin-top:10px;padding:8px 12px;border:0;border-radius:10px;background:#F6F8FB;font:inherit;text-align:left;cursor:pointer;transition:background .15s}' +
+                    '#xxt-v41-panel .xxt-assist:hover{background:#EEF2F7}' +
+                    '#xxt-v41-panel .xxt-assist.on{background:#EEF4FF}' +
+                    '#xxt-v41-panel .xxt-assist:focus-visible{outline:2px solid #93C5FD;outline-offset:2px}' +
+                    '#xxt-v41-panel .xxt-assist-t{flex:1;min-width:0;display:flex;flex-direction:column}' +
+                    '#xxt-v41-panel .xxt-assist-t b{font-size:13px;font-weight:600;color:#111827}' +
+                    '#xxt-v41-panel .xxt-assist-t small{font-size:11px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-panel .xxt-assist-sw{flex:none;position:relative;width:32px;height:18px;border-radius:9px;background:#D1D5DB;transition:background .15s}' +
+                    '#xxt-v41-panel .xxt-assist-sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}' +
+                    '#xxt-v41-panel .xxt-assist.on .xxt-assist-sw{background:#3B82F6}' +
+                    '#xxt-v41-panel .xxt-assist.on .xxt-assist-sw::after{transform:translateX(14px)}' +
+                    '#xxt-v41-panel .xxt-stats.plain{cursor:default}#xxt-v41-panel .xxt-stats.plain .xxt-chev{display:none}' +
+                    '#xxt-v41-panel .xxt-tabs{display:flex;gap:2px;margin-top:10px;padding:3px;border-radius:10px;background:#F1F3F6}' +
                     '#xxt-v41-panel .xxt-tabs button{flex:1;font:inherit;font-size:13px;border:0;border-radius:8px;padding:5px 0;background:transparent;color:#6B7280;cursor:pointer;transition:background .15s,color .15s}' +
                     '#xxt-v41-panel .xxt-tabs button:hover{color:#111827}' +
                     '#xxt-v41-panel .xxt-tabs button.on{background:#fff;color:#111827;font-weight:600;box-shadow:0 1px 2px rgba(15,23,42,.08)}' +
@@ -2490,6 +2573,9 @@
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
+                    '<button type="button" data-k="assist" class="xxt-assist" role="switch" aria-checked="true">' +
+                      '<span class="xxt-assist-t"><b>学习助手</b><small>今日目标 · 本节笔记 · 学习记录 · 休息提醒</small></span><i class="xxt-assist-sw"></i>' +
+                    '</button>' +
                     '<div data-k="tabs" class="xxt-tabs" role="tablist" aria-label="学习助手">' +
                       '<button type="button" role="tab" data-tab="today">今天</button>' +
                       '<button type="button" role="tab" data-tab="course">课程</button>' +
@@ -2501,7 +2587,6 @@
                         '<div class="xxt-sec-title"><span>本节笔记</span><small data-k="notestate"></small></div>' +
                         '<textarea data-k="note" class="xxt-note" rows="3" maxlength="2000" placeholder="随手记下这一节的要点…（只保存在本机）"></textarea>' +
                       '</div>' +
-                      '<button type="button" data-k="stats" class="xxt-stats" title="查看学习记录"><span data-k="statstext"></span><i class="xxt-chev">›</i></button>' +
                     '</div>' +
                     '<div data-k="pane-course" class="xxt-pane" role="tabpanel">' +
                       '<div data-k="cdetail"></div>' +
@@ -2512,6 +2597,7 @@
                       '<div data-k="chart" class="xxt-chart"></div>' +
                       '<div data-k="heat" class="xxt-heat"></div>' +
                     '</div>' +
+                    '<button type="button" data-k="stats" class="xxt-stats" title="查看学习记录"><span data-k="statstext"></span><i class="xxt-chev">›</i></button>' +
                     '<div data-k="settings" class="xxt-settings" style="display:none">' +
                       '<div data-k="rates" class="xxt-rate-row">' +
                         '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
@@ -2520,8 +2606,8 @@
                         '</div>' +
                       '</div>' +
                       '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
-                      '<div class="xxt-set-label">每日学习目标</div>' +
-                      '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div>' +
+                      '<div data-k="goalset"><div class="xxt-set-label">每日学习目标</div>' +
+                      '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div></div>' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
@@ -2557,7 +2643,9 @@
                     const b = e.target.closest('[data-open]');
                     if (b) this._openFromList(b.getAttribute('data-open'));
                 });
+                el.querySelector('[data-k="assist"]').addEventListener('click', () => this._toggleAssist());
                 el.querySelector('[data-k="stats"]').addEventListener('click', () => {
+                    if (!C.assistMode) return;
                     this._tab = 'record';
                     this._panelKey = '';
                     this._renderPanel();
