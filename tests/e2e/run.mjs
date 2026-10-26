@@ -248,6 +248,37 @@ test('课程总进度：统计完成/未完成小节并估算剩余时间', asyn
     await ctx.close();
 });
 
+test('课程总进度：看完视频但还剩测验的小节，单独记为“需手动完成”', async (b) => {
+    const page = coursePage({ nodes: ['1.1 导学', '2.1 第一部分', '2.2 第二部分'], active: 1, marks: ['done', 1, 2] });
+    const ctx = await newContext(b, { routes: { '*': page } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=77');
+    await p.evaluate(() => document.querySelectorAll('.posCatalog_name').forEach((sp) => sp.addEventListener('click', () => {
+        document.querySelectorAll('.posCatalog_select').forEach((n) => n.classList.remove('posCatalog_active'));
+        sp.parentElement.classList.add('posCatalog_active');
+    })));
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate(() => __end()); await sleep(9000);
+    const r = await p.evaluate(() => ({
+        text: document.querySelector('#xxt-v41-panel [data-k=progtext]').textContent,
+        title: document.querySelector('#xxt-v41-panel [data-k=prog]').title,
+        saved: localStorage.getItem('xxt-v41-manual-77'),
+    }));
+    assert(/课程进度 1\/3 节 · 1 节需手动完成/.test(r.text), `进度文字不对：${r.text}`);
+    assert(/2\.1 第一部分/.test(r.title) && /2\.1 第一部分/.test(r.saved || ''), `需手动列表不对：${JSON.stringify(r)}`);
+    // 用户手动做完测验后，对勾出现，自动移出列表
+    await p.evaluate(() => {
+        const n = [...document.querySelectorAll('.posCatalog_select')].find((x) => x.textContent.includes('2.1'));
+        n.querySelector('.catalog_points').remove();
+        n.insertAdjacentHTML('beforeend', '<span class="icon_Completed"></span>');
+    });
+    await sleep(6000);
+    const t2 = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=progtext]').textContent);
+    assert(/课程进度 2\/3 节/.test(t2) && !/需手动/.test(t2), `补完后进度不对：${t2}`);
+    await ctx.close();
+});
+
 test('设置面板：关闭自动更新后保存，发现新版本也不自动更新', async (b) => {
     const nv = nextVersion();
     const ctx = await newContext(b, { latest: nv, versionDelay: 3000 });

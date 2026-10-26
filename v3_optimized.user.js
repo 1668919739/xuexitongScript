@@ -229,6 +229,8 @@
             _progress: null,
             _progressTs: 0,
             _loginExpired: false,
+            _processedTitle: '',
+            _lastActiveTitle: '',
             _lastAlertKey: '',
             _audioCtx: null,
             _lives: [],
@@ -684,6 +686,7 @@
                 if (this._doneVideos.has(v)) return;
                 this._doneVideos.add(v);
                 if (v !== this._video) return;
+                this._markProcessed();
                 log(`'${this._title}' 播放完成`, '#4CAF50');
                 this._unbindVideoEvents();
                 this._video = null;
@@ -1010,6 +1013,7 @@
                 this._readDocs(docs, token).catch((e) => log('翻看课件出错：' + e.message, '#F44336', 'warn')).finally(() => {
                     if (token !== this._token || this._state !== 'reading') return;
                     this._docsDone = true;
+                    this._markProcessed();
                     this._docProgress = null;
                     this._state = 'loading';
                     this._unitStartTs = Date.now() - 3000;
@@ -1401,24 +1405,77 @@
                 else v.addEventListener('loadedmetadata', save, { once: true });
             },
 
+            _nodeTitle(n) {
+                const s = n && n.querySelector('.posCatalog_name');
+                return s ? (s.getAttribute('title') || s.textContent || '').trim() : '';
+            },
+            _nodeDone(n) {
+                return !!n.querySelector('.icon_Completed, [class*="icon_Completed"], [class*="icon_complete"]');
+            },
+            _nodePending(n) {
+                return [...n.querySelectorAll('span, em, i, div')].some((e) => e.children.length === 0 && /^\d+$/.test((e.textContent || '').trim()));
+            },
+            _manualSet() {
+                try { return new Set(JSON.parse(localStorage.getItem('xxt-v41-manual-' + this._courseKey()) || '[]')); } catch (e) { return new Set(); }
+            },
+            _saveManualSet(set) {
+                try { localStorage.setItem('xxt-v41-manual-' + this._courseKey(), JSON.stringify([...set].slice(-300))); } catch (e) { /* ignore */ }
+            },
+            // 记下脚本已经处理过（看完视频 / 翻完课件）的小节
+            _markProcessed() {
+                const idx = this._currentIndex();
+                if (idx >= 0) this._processedTitle = this._nodeTitle(this._nodes().get(idx));
+            },
+
+            _markManual(n) {
+                if (!n || this._nodeDone(n) || !this._nodePending(n)) return;
+                const t = this._nodeTitle(n);
+                if (!t) return;
+                const set = this._manualSet();
+                if (!set.has(t)) {
+                    set.add(t);
+                    this._saveManualSet(set);
+                    log(`「${t}」还有需要手动完成的任务（如章节测验、讨论），已记入课程进度`, '#FF9800');
+                }
+            },
+
             _scanCourse() {
                 const now = Date.now();
                 if (now - this._progressTs < 5000) return;
                 this._progressTs = now;
-                // 课程进度：目录里带“已完成”标记的算完成，带数字角标（未完成任务点数）的算未完成
+                // 课程进度：带“已完成”对勾的算完成；带数字角标的算未完成，其中脚本处理过、
+                // 但还剩测验/讨论等手动任务的小节单独统计为“需手动完成”，不计入剩余观看时间
                 try {
+                    const curIdx = this._currentIndex();
+                    const curTitle = curIdx >= 0 ? this._nodeTitle(this._nodes().get(curIdx)) : '';
+                    if (this._lastActiveTitle && curTitle !== this._lastActiveTitle && this._lastActiveTitle === this._processedTitle) {
+                        const prev = this._nodes().filter((_, n) => this._nodeTitle(n) === this._lastActiveTitle).get(0);
+                        this._markManual(prev);
+                    }
+                    this._lastActiveTitle = curTitle;
                     let done = 0, pending = 0;
+                    const manualSet = this._manualSet();
+                    const manual = [];
+                    let changed = false;
                     this._nodes().each((_, n) => {
-                        if (n.querySelector('.icon_Completed, [class*="icon_Completed"], [class*="icon_complete"]')) { done++; return; }
-                        const badge = [...n.querySelectorAll('span, em, i, div')].some((e) => e.children.length === 0 && /^\d+$/.test((e.textContent || '').trim()));
-                        if (badge) pending++;
+                        const t = this._nodeTitle(n);
+                        if (this._nodeDone(n)) {
+                            done++;
+                            if (manualSet.delete(t)) changed = true;   // 已经手动补完，移出列表
+                            return;
+                        }
+                        if (!this._nodePending(n)) return;
+                        if (manualSet.has(t)) manual.push(t);
+                        else pending++;
                     });
+                    if (changed) this._saveManualSet(manualSet);
                     let avg = 0;
                     try {
                         const o = JSON.parse(localStorage.getItem('xxt-v41-dur-' + this._courseKey()) || 'null');
                         if (o && o.count) avg = o.sum / o.count;
                     } catch (e) { /* ignore */ }
-                    this._progress = done + pending ? { done, total: done + pending, pending, avg } : null;
+                    const total = done + pending + manual.length;
+                    this._progress = total ? { done, total, pending, manual, avg } : null;
                 } catch (e) {
                     this._progress = null;
                 }
@@ -1452,7 +1509,14 @@
                     const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
                     eta = ` · 预计还需约 ${h ? h + ' 小时 ' : ''}${h && !m ? '' : m + ' 分钟'}`;
                 }
-                return { pct: Math.round((p.done / p.total) * 100), text: `课程进度 ${p.done}/${p.total} 节${p.pending ? eta : ' · 已全部完成'}` };
+                const manual = p.manual.length ? ` · ${p.manual.length} 节需手动完成` : '';
+                const tail = p.pending ? eta : p.manual.length ? ' · 视频等已全部完成' : ' · 已全部完成';
+                return {
+                    pct: Math.round((p.done / p.total) * 100),
+                    manualPct: Math.round((p.manual.length / p.total) * 100),
+                    text: `课程进度 ${p.done}/${p.total} 节${manual}${tail}`,
+                    title: p.manual.length ? '需手动完成（章节测验、讨论等）：\n' + p.manual.join('\n') : '',
+                };
             },
 
             // ================= 提醒 =================
@@ -1533,7 +1597,7 @@
                     `模式/状态：${this._mode} / ${this._state}${this._userStopped ? '（已手动停止）' : ''}`,
                     `浮窗：${st.label} · ${st.text}${st.sub ? ' · ' + st.sub : ''}`,
                     `章节：${this._chapterLine() || '-'}`,
-                    `课程进度：${this._progress ? `${this._progress.done}/${this._progress.total}` : '-'}`,
+                    `课程进度：${this._progress ? `${this._progress.done}/${this._progress.total}，需手动 ${this._progress.manual.length} 节` : '-'}`,
                     `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
                     `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
                     `设置：倍速 ${C.playbackRate}x · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
@@ -1692,7 +1756,9 @@
                 q('prog').style.display = prog ? 'block' : 'none';
                 if (prog) {
                     q('progbar').style.width = prog.pct + '%';
+                    q('progman').style.width = prog.manualPct + '%';
                     q('progtext').textContent = prog.text;
+                    q('prog').title = prog.title;
                 }
                 q('settings').style.display = this._settingsOpen && !this._panelCollapsed ? 'block' : 'none';
                 q('gear').classList.toggle('on', this._settingsOpen);
@@ -1764,8 +1830,9 @@
                     '#xxt-v41-panel .xxt-gear{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-gear:hover,#xxt-v41-panel .xxt-gear:focus-visible,#xxt-v41-panel .xxt-gear.on{background:#E3ECFD;color:#2563EB;outline:none}' +
                     '#xxt-v41-panel .xxt-prog{margin-top:8px}' +
-                    '#xxt-v41-panel .xxt-prog-track{height:4px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
-                    '#xxt-v41-panel .xxt-prog-bar{height:100%;border-radius:2px;background:#3B82F6;transition:width .4s ease}' +
+                    '#xxt-v41-panel .xxt-prog-track{display:flex;height:4px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
+                    '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
+                    '#xxt-v41-panel .xxt-prog-bar{height:100%;background:#3B82F6;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-settings{margin-top:12px;padding:10px 12px;border-radius:10px;background:#F6F8FB}' +
                     '#xxt-v41-panel .xxt-set-row{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer}' +
@@ -1856,7 +1923,7 @@
                       '<div data-k="chap" style="margin-bottom:4px;font-size:12px;color:#6B7280;word-break:break-all"></div>' +
                       '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
-                      '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
+                      '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
                     '<div data-k="settings" class="xxt-settings" style="display:none">' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
@@ -1978,6 +2045,9 @@
                     return;
                 }
                 const span = $(nodes.get(idx)).find('.posCatalog_name');
+                // 离开时这一节还没完成：说明剩下的是脚本不做的任务（章节测验、讨论等），记为“需手动完成”
+                const curIdx = this._currentIndex();
+                if (curIdx >= 0 && curIdx < idx && this._nodeTitle(nodes.get(curIdx)) === this._processedTitle) this._markManual(nodes.get(curIdx));
                 log(`切换到：${span.attr('title') || span.text().trim()}（${idx + 1}/${nodes.length}）`, '#2196F3');
                 this._enterLoading('next');
                 if (!this._clickNode(idx)) {
