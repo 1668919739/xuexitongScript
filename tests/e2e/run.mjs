@@ -618,6 +618,35 @@ test('剩余时间：关闭学习助手时显示在状态框，打开时移到�
     await ctx.close();
 });
 
+test('反馈：在浮窗里写问题或建议，可复制内容或在 GitHub 打开填好的 Issue', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'https://mooc1.chaoxing.com' });
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=5&enc=secret');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.click('[data-k=gear]'); await sleep(300);
+    await p.click('[data-k=fbopen]'); await sleep(600);
+    // 没写内容时不提交
+    await p.click('[data-k=fbsend]'); await sleep(200);
+    assert(/先写一下/.test((await panelInfo(p)).notice || ''), '空内容没有提示');
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=fbdiag]').checked), '问题反馈默认应附带诊断信息');
+    await p.fill('#xxt-v41-panel [data-k=fbtext]', '弹题后没有继续播放');
+    await p.click('[data-k=fbcopy]'); await sleep(400);
+    const clip = await p.evaluate(() => navigator.clipboard.readText());
+    assert(/^\[问题\] 弹题后没有继续播放/.test(clip) && /学习通助手 诊断信息/.test(clip) && !/secret/.test(clip), `复制内容不对：${clip.slice(0, 200)}`);
+    const pages = [];
+    ctx.on('page', (pg) => pages.push(pg));
+    await p.click('[data-fbtype=idea]'); await sleep(200);
+    assert(!(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=fbdiag]').checked)), '建议默认不附带诊断信息');
+    await p.click('[data-k=fbsend]'); await sleep(800);
+    const u = pages.length ? decodeURIComponent(pages[0].url()) : '';
+    assert(/github\.com\/1668919739\/xuexitongScript\/issues\/new\?title=\[建议\] 弹题后没有继续播放/.test(u) && !/secret/.test(u), `GitHub 地址不对：${u.slice(0, 200)}`);
+    await p.click('[data-k=fbback]'); await sleep(600);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=settings]').offsetParent !== null), '返回后应回到设置');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();

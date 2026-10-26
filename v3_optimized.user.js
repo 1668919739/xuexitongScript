@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.4.1
+// @version      4.4.2
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,9 +25,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.4.1';
+    const VERSION = '4.4.2';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.4.2': '浮窗设置里可以直接反馈问题或提建议',
         '4.4.1': '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间',
         '4.4.0': '浮窗改版为学习助手：今天 / 课程 / 记录三个标签页、本节笔记、每日目标、休息提醒、学习日历',
         '4.3.1': '油猴版改为通过国内 CDN 检查更新，不再因 GitHub 访问慢而更新失败',
@@ -1939,6 +1940,43 @@
                 return lines.join('\n');
             },
 
+            // ================= 反馈 =================
+            // 只在用户主动点击时生成反馈内容：复制到剪贴板，或在 GitHub 打开一个填好的 Issue，不会自动发送任何东西
+            _feedbackText() {
+                const el = this._panel;
+                const type = this._fbType || 'bug';
+                const text = ((el && el.querySelector('[data-k="fbtext"]').value) || '').trim();
+                const withDiag = el ? el.querySelector('[data-k="fbdiag"]').checked : false;
+                const title = `[${type === 'bug' ? '问题' : '建议'}] ${(text.split('\n')[0] || (type === 'bug' ? '遇到问题' : '改进建议')).slice(0, 40)}`;
+                const body = [`**${type === 'bug' ? '问题描述' : '建议内容'}**`, '', text || '（未填写）', ''];
+                const short = [`版本：v${VERSION}（${(() => { try { return typeof GM_info !== 'undefined' ? '油猴版' : '控制台版'; } catch (e) { return '控制台版'; } })()}）`,
+                    `状态：${this._mode} / ${this._state}`, `浏览器：${navigator.userAgent}`];
+                return { title, text, withDiag, body: body.join('\n'), short: short.join('\n'), full: withDiag ? this._diagnostics() : '' };
+            },
+            _sendFeedback(github) {
+                const f = this._feedbackText();
+                if (!f.text) {
+                    this._notice = { kind: 'bg', until: Date.now() + 6000, text: '先写一下遇到的问题或建议吧' };
+                    this._panelKey = ''; this._renderPanel();
+                    const ta = this._panel && this._panel.querySelector('[data-k="fbtext"]');
+                    if (ta) ta.focus();
+                    return;
+                }
+                const copyAll = `${f.title}\n\n${f.body}\n${f.full ? '\n' + f.full : '\n' + f.short}`;
+                if (!github) {
+                    this._copyText(copyAll, '已复制反馈内容，可以直接发给作者', '复制失败，请手动选中文字复制');
+                    return;
+                }
+                // 网址长度有限：Issue 里放描述和简要信息，完整诊断信息复制到剪贴板，方便粘贴进去
+                let body = `${f.body}\n<details><summary>环境</summary>\n\n\`\`\`\n${f.short}\n\`\`\`\n</details>\n`;
+                if (f.full) body += '\n<!-- 完整诊断信息已复制到剪贴板，可以粘贴在这一行下面 -->\n';
+                const url = `${REPO_URL}/issues/new?title=${encodeURIComponent(f.title)}&body=${encodeURIComponent(body)}`;
+                window.open(url, '_blank', 'noopener');
+                if (f.full) this._copyText(f.full, '已在新标签页打开 GitHub；完整诊断信息已复制，可粘贴到 Issue 里', '已在新标签页打开 GitHub');
+                else { this._notice = { kind: 'upd', until: Date.now() + 8000, text: '已在新标签页打开 GitHub，登录后点「Submit new issue」即可' }; this._panelKey = ''; this._renderPanel(); }
+                log(`打开反馈页面（${this._fbType === 'idea' ? '建议' : '问题'}）`, '#2196F3');
+            },
+
             _copyDiagnostics() {
                 this._copyText(this._diagnostics(), '已复制诊断信息，可以直接粘贴到仓库的 Issues 里反馈', '复制失败，请按 F12 在控制台执行 copy(app._diagnostics())');
             },
@@ -2283,7 +2321,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._fbOpen}|${this._fbType}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -2308,7 +2346,20 @@
                     q('prog').title = prog.title;
                 }
                 const open = !this._panelCollapsed;
-                q('settings').style.display = this._settingsOpen && open ? 'block' : 'none';
+                q('settings').style.display = this._settingsOpen && open && !this._fbOpen ? 'block' : 'none';
+                q('feedback').style.display = this._settingsOpen && open && this._fbOpen ? 'block' : 'none';
+                if (this._fbOpen) {
+                    const type = this._fbType || 'bug';
+                    for (const b of el.querySelectorAll('[data-fbtype]')) {
+                        const on = b.getAttribute('data-fbtype') === type;
+                        b.classList.toggle('on', on);
+                        b.setAttribute('aria-checked', String(on));
+                    }
+                    q('fbtext').placeholder = type === 'bug'
+                        ? '遇到了什么问题？比如：在哪个页面、做了什么、浮窗显示什么…'
+                        : '希望增加或改进什么？';
+                    q('fbdiag').checked = this._fbDiag !== undefined ? this._fbDiag : type === 'bug';
+                }
                 // 三个标签页：今天 / 课程 / 记录（回放页只显示“今天”）
                 const tab = this._mode === 'live' ? 'today' : (this._tab || (this._mode === 'list' ? 'course' : 'today'));
                 const showMain = open && !this._settingsOpen;
@@ -2485,6 +2536,15 @@
                     '#xxt-v41-panel .xxt-hlegend{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:6px;font-size:10px;color:#9CA3AF}' +
                     '#xxt-v41-panel .xxt-hlegend i{width:10px;height:10px;border-radius:2px}' +
                     '#xxt-v41-panel .l0{background:#EEF1F5}#xxt-v41-panel .l1{background:#D6E4FB}#xxt-v41-panel .l2{background:#A9C6F5}#xxt-v41-panel .l3{background:#6FA0EE}#xxt-v41-panel .l4{background:#3B82F6}#xxt-v41-panel .lx{background:transparent}' +
+                    '#xxt-v41-panel .xxt-fb-entry{color:#2563EB;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-fb-head{display:flex;align-items:center;margin-bottom:8px}' +
+                    '#xxt-v41-panel .xxt-fb-head b{flex:1;font-size:13px;color:#111827}' +
+                    '#xxt-v41-panel .xxt-fb-back{border:0;background:none;font:inherit;font-size:12px;color:#6B7280;cursor:pointer;padding:2px 4px;border-radius:6px}' +
+                    '#xxt-v41-panel .xxt-fb-back:hover,#xxt-v41-panel .xxt-fb-back:focus-visible{color:#2563EB;background:#E3ECFD;outline:none}' +
+                    '#xxt-v41-panel .xxt-fb .xxt-note{margin-top:6px;min-height:84px}' +
+                    '#xxt-v41-panel .xxt-fb-send{background:#3B82F6!important;color:#fff!important;box-shadow:none!important;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-fb-send:hover,#xxt-v41-panel .xxt-fb-send:focus-visible{background:#2563EB!important}' +
+                    '#xxt-v41-panel .xxt-fb-hint{margin-top:6px;font-size:11px;color:#9CA3AF;line-height:1.5}' +
                     '#xxt-v41-panel .xxt-set-label{margin-top:10px;font-size:13px;color:#374151}' +
                     '#xxt-v41-panel .xxt-goal-opts{display:flex;gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice.rest{background:#ECFDF5;color:#065F46}' +
@@ -2662,9 +2722,26 @@
                       '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div></div>' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
+                        '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
+                      '</div>' +
+                      '<div class="xxt-set-actions" style="border-top:0;padding-top:0">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
                         '<button type="button" data-k="resetpos" class="xxt-set-btn">浮窗回到左下角</button>' +
                       '</div>' +
+                    '</div>' +
+                    '<div data-k="feedback" class="xxt-settings xxt-fb" style="display:none">' +
+                      '<div class="xxt-fb-head"><b>反馈问题 / 提建议</b><button type="button" data-k="fbback" class="xxt-fb-back">‹ 返回</button></div>' +
+                      '<div class="xxt-goal-opts" role="radiogroup" aria-label="反馈类型">' +
+                        '<button type="button" data-fbtype="bug" class="xxt-rate-opt" role="radio">遇到问题</button>' +
+                        '<button type="button" data-fbtype="idea" class="xxt-rate-opt" role="radio">改进建议</button>' +
+                      '</div>' +
+                      '<textarea data-k="fbtext" class="xxt-note" rows="4" maxlength="2000"></textarea>' +
+                      '<label class="xxt-set-row" style="padding-top:8px"><span>附带诊断信息<small>版本、运行状态、最近日志，不含账号和网址参数</small></span><input type="checkbox" class="xxt-switch" data-k="fbdiag"></label>' +
+                      '<div class="xxt-set-actions" style="border-top:0;padding-top:4px">' +
+                        '<button type="button" data-k="fbcopy" class="xxt-set-btn">复制内容</button>' +
+                        '<button type="button" data-k="fbsend" class="xxt-set-btn xxt-fb-send">在 GitHub 提交</button>' +
+                      '</div>' +
+                      '<div class="xxt-fb-hint">GitHub 需要登录，打不开时点「复制内容」，再发给作者即可。</div>' +
                     '</div>' +
                     '<div data-k="liverow" class="xxt-live-row" style="display:none">' +
                       '<span data-k="livetext" class="xxt-live-text"></span>' +
@@ -2737,12 +2814,22 @@
                 // 在笔记里打字时，不让页面把按键当成播放器快捷键
                 for (const t of ['keydown', 'keyup', 'keypress']) note.addEventListener(t, (e) => e.stopPropagation());
                 el.querySelector('[data-k="gear"]').addEventListener('click', () => {
-                    this._animatePanel(() => { this._settingsOpen = !this._settingsOpen; });
+                    this._animatePanel(() => { this._settingsOpen = !this._settingsOpen; this._fbOpen = false; });
                 });
                 for (const inp of el.querySelectorAll('[data-set]')) {
                     inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
                 }
                 el.querySelector('[data-k="diag"]').addEventListener('click', () => this._copyDiagnostics());
+                el.querySelector('[data-k="fbopen"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = true; }));
+                el.querySelector('[data-k="fbback"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = false; }));
+                for (const b of el.querySelectorAll('[data-fbtype]')) {
+                    b.addEventListener('click', () => { this._fbType = b.getAttribute('data-fbtype'); this._fbDiag = undefined; this._panelKey = ''; this._renderPanel(); });
+                }
+                const fbtext = el.querySelector('[data-k="fbtext"]');
+                for (const t of ['keydown', 'keyup', 'keypress']) fbtext.addEventListener(t, (e) => e.stopPropagation());
+                el.querySelector('[data-k="fbdiag"]').addEventListener('change', (e) => { this._fbDiag = e.target.checked; });
+                el.querySelector('[data-k="fbcopy"]').addEventListener('click', () => this._sendFeedback(false));
+                el.querySelector('[data-k="fbsend"]').addEventListener('click', () => this._sendFeedback(true));
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
                 this._bindDrag(el, el.querySelector('[data-k="head"]'));
                 el.querySelector('[data-k="noticex"]').addEventListener('click', () => {
