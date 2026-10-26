@@ -125,7 +125,7 @@
 
     function createApp($) {
         const C = {
-            playbackRate: 1.5,          // 期望倍速
+            playbackRate: 2,            // 期望倍速（默认 2x，课程限制倍速时自动按页面允许的速度播放）
             fallbackRate: 1.0,          // 卡顿时的降级倍速
             muted: true,                // 接管时静音（浏览器自动播放策略要求）
             tickMs: 1000,               // 状态检查间隔
@@ -155,7 +155,7 @@
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
             assistMode: true,           // 学习助手总开关：今日目标、笔记、学习记录、休息提醒
             dailyGoal: 60,              // 每日学习目标（分钟）
-            breakRemind: true,          // 连续学习一段时间后提醒休息
+            breakRemind: false,         // 连续学习一段时间后提醒休息（默认关闭）
             breakAfterMin: 45,          // 连续学习多少分钟提醒休息
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层

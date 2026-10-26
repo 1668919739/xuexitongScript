@@ -19,7 +19,7 @@ test('接管视频：静默音、按默认倍速播放，浮窗显示章节与�
     await inject(p); await sleep(2500);
     const v = await p.evaluate(() => ({ paused: __v.paused, muted: __v.muted, rate: __v.playbackRate }));
     const info = await panelInfo(p);
-    assert(!v.paused && v.muted && v.rate === 1.5, `视频状态不对：${JSON.stringify(v)}`);
+    assert(!v.paused && v.muted && v.rate === 2, `视频状态不对：${JSON.stringify(v)}`);
     assert(info.label === '学习中' && /2\.1 第一部分/.test(info.text), `浮窗不对：${JSON.stringify(info)}`);
     assert(/第 1 \/ 2 节/.test(info.chap), `章节行不对：${info.chap}`);
     assert(info.ver === `v${VERSION}`, `版本号不对：${info.ver}`);
@@ -41,7 +41,7 @@ test('页面暂停后自动恢复；同一位置反复暂停时停止拉扯并�
     await ctx.close();
 });
 
-test('倍速：点击展开选择 2x 后生效并在刷新后保持', async (b) => {
+test('倍速：点击展开选择 1.25x 后生效并在刷新后保持', async (b) => {
     const ctx = await newContext(b);
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
@@ -49,12 +49,12 @@ test('倍速：点击展开选择 2x 后生效并在刷新后保持', async (b) 
     await inject(p); await sleep(2500);
     await p.click('[data-k=gear]'); await sleep(200);
     await p.click('[data-k=ratebtn]'); await sleep(400);
-    await p.click('[data-rate="2"]'); await sleep(800);
-    assert((await p.evaluate(() => __v.playbackRate)) === 2, '选择 2x 后视频倍速没变');
+    await p.click('[data-rate="1.25"]'); await sleep(800);
+    assert((await p.evaluate(() => __v.playbackRate)) === 1.25, '选择 1.25x 后视频倍速没变');
     await p.reload();
     await addFakeVideo(p);
     await inject(p); await sleep(2500);
-    assert((await p.evaluate(() => __v.playbackRate)) === 2, '刷新后没有记住 2x');
+    assert((await p.evaluate(() => __v.playbackRate)) === 1.25, '刷新后没有记住 1.25x');
     await ctx.close();
 });
 
@@ -244,8 +244,8 @@ test('课程总进度：统计完成/未完成小节并估算剩余时间', asyn
     await addFakeVideo(p);
     await inject(p); await sleep(7000);
     const t = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=progtext]').textContent);
-    // 3 节未完成 × 平均时长（1800s 与本节 1540s 的平均）÷ 1.5 倍速 ≈ 56 分钟
-    assert(/课程进度 1\/4 节/.test(t) && /预计还需约 5\d 分钟/.test(t), `进度文字不对：${t}`);
+    // 3 节未完成 × 平均时长（1800s 与本节 1540s 的平均）÷ 2 倍速 ≈ 42 分钟
+    assert(/课程进度 1\/4 节/.test(t) && /预计还需约 4\d 分钟/.test(t), `进度文字不对：${t}`);
     await ctx.close();
 });
 
@@ -487,6 +487,11 @@ test('学习助手：连续学习 45 分钟提醒休息，完成今日目标提�
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=78');
     await addFakeVideo(p);
     await inject(p); await sleep(2500);
+    // 休息提醒默认关闭
+    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
+    await sleep(2500);
+    assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '休息提醒应默认关闭');
+    await p.click('[data-k=gear]'); await p.click('[data-set=breakRemind]'); await p.click('[data-k=gear]'); await sleep(200);
     await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
     await sleep(2500);
     let info = await panelInfo(p);
@@ -503,6 +508,7 @@ test('学习助手总开关：关闭后只保留一行学习时长，不再提�
     const ctx = await newContext(b);
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=79');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-settings', JSON.stringify({ breakRemind: true })));
     await addFakeVideo(p);
     await inject(p); await sleep(2500);
     const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
