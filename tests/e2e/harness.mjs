@@ -109,6 +109,7 @@ export const panelInfo = (page) => page.evaluate(() => {
         ver: q('ver') ? q('ver').firstChild.nodeValue : null,
         tip1: txt('tip1'), tip2: txt('tip2'),
         notice: q('notice') && q('notice').style.display !== 'none' ? txt('noticetext') : null,
+        whatsnew: q('whatsnew') && q('whatsnew').style.display !== 'none' ? txt('whatsnew') : null,
         live: q('liverow') && q('liverow').style.display !== 'none' ? txt('livetext') : null,
         state: window.app ? window.app._state : null,
     };

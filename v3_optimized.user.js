@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.4.4
+// @version      4.5.0
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,20 +25,96 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.4.4';
-    // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
-    const CHANGELOG = {
-        '4.4.4': '后台防卡顿：切到别的窗口时以极小音量播放，并防止浏览器冻结页面',
-        '4.4.3': '弹题等需要处理时改用急促的警示音，和普通提示音区分开',
-        '4.4.2': '浮窗设置里可以直接反馈问题或提建议',
-        '4.4.1': '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间',
-        '4.4.0': '浮窗改版为学习助手：今天 / 课程 / 记录三个标签页、本节笔记、每日目标、休息提醒、学习日历',
-        '4.3.1': '油猴版改为通过国内 CDN 检查更新，不再因 GitHub 访问慢而更新失败',
-        '4.3.0': '课程总进度与剩余时间、设置面板、一键复制诊断信息、提示音与系统通知、浮窗可拖动、登录过期提醒',
-        '4.2.8': '页面在后台时给出提示、更新后显示更新说明、增加问题反馈入口',
-        '4.2.7': '直播回放自动打开，浮窗显示回放进度',
-        '4.2.6': '一键停止 / 继续，浮窗出场动画',
-    };
+    const VERSION = '4.5.0';
+    // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
+    const CHANGELOG = [
+        { v: '4.5.0', items: [
+            '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
+            '设置里新增「更新记录」，可查看每个版本更新的内容',
+            '后台防卡顿（默认开启，可在设置里关闭）：页面真正转到后台时，视频改为极小音量（3%）播放，回到前台恢复静音。浏览器不会给“正在播放声音”的页面限速、冻结或暂停视频；若浏览器不允许取消静音，自动恢复静音播放',
+            '运行时持有一个保活锁（Web Lock），减少页面被浏览器冻结 / 丢弃',
+            '诊断信息增加后台状态：防卡顿是否生效、后台被暂停次数、保活锁、当前前后台',
+            '设置面板内容较多时可以滚动，小屏幕上也能完整显示',
+        ] },
+        { v: '4.4.3', items: [
+            '提示音分两种：弹题、页面要求操作、登录过期等需要处理时，响急促的高低双音警示音（每 15 秒重复直到处理完）；课程完成、目标达成等普通提醒仍是柔和的两声',
+        ] },
+        { v: '4.4.2', items: [
+            '浮窗设置（齿轮）里新增「反馈问题 / 提建议」：写下问题或建议，可一键复制发给作者，或在 GitHub 打开填好的 Issue；问题反馈默认附带诊断信息（不含账号和网址参数），只在点击时生成，不会自动发送',
+        ] },
+        { v: '4.4.1', items: [
+            '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间；打开学习助手时显示在「课程」页',
+        ] },
+        { v: '4.4.0', items: [
+            '浮窗新增「学习助手」总开关（状态框下方），打开后分「今天 / 课程 / 记录」三个标签页，关闭则只保留一行学习时长',
+            '  今天：今日目标进度环（30 / 60 / 90 / 120 分钟可选）、本节笔记（自动保存在本机）',
+            '  课程：课程进度环与剩余时间、待手动完成的测验 / 讨论清单、按章节整理的笔记，可一键复制全部笔记',
+            '  记录：今日 / 本周 / 连续天数 / 累计时长、近 7 天柱状图、最近 12 周学习日历',
+            '休息提醒（连续学习 45 分钟提醒一次，默认关闭，可在设置里开启）；完成今日目标、学完一章时给出小结',
+            '状态文字改为学习口吻（学习中、阅读课件、本节完成进入下一节…）；倍速移入设置',
+            '收起后只保留一条，显示状态和课程进度',
+            '过渡动画：浮窗打开时淡入上浮并轻微放大；收起、展开、切换标签页、打开设置时尺寸平滑过渡，新内容淡入（系统开启“减少动态效果”时不播放）',
+            '后台卡顿：恢复播放、进入下一节、翻课件等延时动作改由后台线程（Worker）计时，不再被浏览器对后台页面的限速拖慢；回到前台时立即补一次检查',
+            '后台被限速时，提示把 chaoxing.com 加入浏览器“始终保持活动”的网站',
+            '修复：收起 / 展开按钮在部分浏览器点击无效',
+            '页面开着时每 3 小时检查一次新版本（原为 6 小时），控制台版和油猴版都会在小节之间静默更新',
+            '切换标签页时浮窗高度保持不变，不再上下跳动；标签切换改为滑块 + 淡入，整体动画放慢、更柔和',
+            '默认倍速改为 2x（已经手动选过倍速的保持原选择；课程限制倍速时自动按页面允许的速度播放）',
+            '弹题、页面要求操作、登录过期等需要处理时，提示音每 15 秒重复一次，直到处理完',
+        ] },
+        { v: '4.3.1', items: [
+            '油猴版的安装和自动更新改为走 jsDelivr（国内 CDN），不再依赖 GitHub，避免访问超时导致更新失败',
+        ] },
+        { v: '4.3.0', items: [
+            '课程总进度：浮窗显示已完成 / 总小节数和进度条，并根据看过的视频时长估算剩余时间',
+            '看完视频但还剩章节测验、讨论等手动任务的小节，单独统计为“需手动完成”（进度条橙色段，鼠标悬停可看清单），不计入剩余时间；手动补完后自动移出',
+            '设置面板（浮窗右上角齿轮）：自动更新、自动打开直播回放、静音播放、提示音、系统通知，设置会被记住',
+            '一键复制诊断信息（版本、状态、视频、设置、最近日志，不含网址参数），方便在 Issues 里反馈',
+            '需要人工处理（弹题、验证、登录过期）或课程完成时，播放提示音 / 弹出系统通知',
+            '检测到登录过期时提醒重新登录',
+            '浮窗可以按住标题栏拖动，位置会被记住，可在设置里一键回到左下角',
+            '主循环计时改为在后台线程（Web Worker）运行，页面在后台时更不容易变慢',
+            '学习记录：浮窗显示今日 / 本周学习时长和连续学习天数，点开可看近 7 天柱状图；课程完成时显示总学习时长和天数（数据只存在本机浏览器）',
+            '课程列表页总览：在学习通“课程”页显示共几门课、已完成 / 进行中，列出最多 15 门进行中的课程（超出部分可滚动查看），一键“继续上次的课程”',
+            '控制台版使用一段时间后，提示可改用油猴版（打开课程自动运行、自动更新），可关闭且不再出现',
+        ] },
+        { v: '4.2.8', items: [
+            '页面在后台导致脚本变慢时，回到前台后浮窗给出提示',
+            '静默更新或油猴更新后，浮窗短暂显示这一版的更新说明',
+            '版本号气泡增加“反馈问题”提示',
+        ] },
+        { v: '4.2.7', items: [
+            '课程页自动打开未完成的直播回放（一次一个），被浏览器拦截时显示“打开直播回放”按钮',
+            '课程页浮窗显示直播回放完成情况',
+            '回放页正确识别播放器的进度消息，浮窗显示观看进度',
+            '回放页手动停止时显示“已停止”',
+        ] },
+        { v: '4.2.6', items: [
+            '浮窗右上角一键停止 / 继续',
+            '浮窗淡入上浮出场动画',
+        ] },
+        { v: '4.2.5', items: [
+            '静默更新改为直接获取新版代码，不依赖版本标签',
+        ] },
+        { v: '4.2.4', items: [
+            '版本号显示与悬停气泡，点击打开仓库',
+            '发现新版本时版本号变黄，在两个小节之间自动静默更新',
+            '倍速选择（1x / 1.25x / 1.5x / 2x），点击“倍速”展开，记住选择',
+            '油猴版指定从 GitHub 检查更新',
+        ] },
+        { v: '4.2.0–v4.2.3', items: [
+            'PPT 课件自动翻看、点进即完成的资料页自动跳过',
+            '直播回放保活，适配跨域播放器',
+            '浮窗显示当前章节进度',
+        ] },
+        { v: '4.1.x', items: [
+            '状态浮窗（白色卡片样式），显示播放状态、进度、倍速',
+            '修复视频卡住、“暂停-播放”反复拉扯、重复跳节等问题（已提交原仓库 PR #76）',
+        ] },
+    ];
+    // 版本号区间（如 4.2.0–4.2.3、4.1.x）取上限，用于比较
+    const changelogTop = (label) => String(label).split('–').pop().replace(/x/gi, '99');
+    const changelogSince = (from) => CHANGELOG.filter((e) => newerThan(changelogTop(e.v), from) && !newerThan(changelogTop(e.v), VERSION));
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
@@ -171,6 +247,7 @@
         // 浮窗里选择的倍速保存在本地，刷新页面、换课程后保持
         const RATE_KEY = 'xxt-v41-rate';
         const SEEN_KEY = 'xxt-v41-seen-version';
+        const WHATSNEW_KEY = 'xxt-v41-whatsnew';
         const SETTINGS_KEY = 'xxt-v41-settings';
         const POS_KEY = 'xxt-v41-panel-pos';
         const STATS_KEY = 'xxt-v41-stats';
@@ -1473,10 +1550,44 @@
                     localStorage.setItem(SEEN_KEY, VERSION);
                 } catch (e) { /* ignore */ }
                 window.__xxtUpdatedFrom = null;
-                if (!from || from === VERSION) return;
-                const note = CHANGELOG[VERSION];
-                this._notice = { kind: 'upd', until: Date.now() + 15000, text: `已更新到 v${VERSION}${note ? '：' + note : ''}` };
-                log(`已从 v${from} 更新到 v${VERSION}${note ? '：' + note : ''}`, '#4CAF50');
+                if (!from || from === VERSION || !newerThan(VERSION, from)) return;
+                // 记下“从哪个版本更新来的”，浮窗一直显示新增内容，直到用户关掉（刷新页面也不会错过）
+                try {
+                    const pending = localStorage.getItem(WHATSNEW_KEY);
+                    if (!pending || newerThan(pending, from)) localStorage.setItem(WHATSNEW_KEY, from);
+                } catch (e) { /* ignore */ }
+                this._whatsNewFrom = from;
+                log(`已从 v${from} 更新到 v${VERSION}`, '#4CAF50');
+            },
+            _whatsNew() {
+                let from = this._whatsNewFrom || null;
+                try { from = localStorage.getItem(WHATSNEW_KEY) || from; } catch (e) { /* ignore */ }
+                if (!from || !newerThan(VERSION, from)) return null;
+                return { from, entries: changelogSince(from) };
+            },
+            _dismissWhatsNew() {
+                this._whatsNewFrom = null;
+                try { localStorage.removeItem(WHATSNEW_KEY); } catch (e) { /* ignore */ }
+            },
+            _renderWhatsNew(el, open) {
+                const box = el.querySelector('[data-k="whatsnew"]');
+                const wn = open && !this._histOpen ? this._whatsNew() : null;
+                box.style.display = wn ? 'block' : 'none';
+                if (!wn) return;
+                const esc = (t) => this._esc(t);
+                const items = [];
+                for (const e of wn.entries) for (const it of e.items) if (!it.startsWith('  ')) items.push(it);
+                const shown = items.slice(0, 3);
+                el.querySelector('[data-k="wntitle"]').textContent = `🎉 已更新到 v${VERSION}`;
+                el.querySelector('[data-k="wnlist"]').innerHTML =
+                    (shown.length ? shown.map((t) => `<li>${esc(t)}</li>`).join('') : '<li>修复了一些问题，体验更稳定</li>') +
+                    (items.length > shown.length ? `<li class="xxt-wn-more">还有 ${items.length - shown.length} 项改进</li>` : '');
+            },
+            _renderHistory(el) {
+                const esc = (t) => this._esc(t);
+                el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
+                    `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}</div><ul>` +
+                    e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul></div>').join('');
             },
             _startUpdateCheck() {
                 this._checkUpdate();
@@ -2391,7 +2502,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._fbOpen}|${this._fbType}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -2416,8 +2527,11 @@
                     q('prog').title = prog.title;
                 }
                 const open = !this._panelCollapsed;
-                q('settings').style.display = this._settingsOpen && open && !this._fbOpen ? 'block' : 'none';
-                q('feedback').style.display = this._settingsOpen && open && this._fbOpen ? 'block' : 'none';
+                q('settings').style.display = this._settingsOpen && open && !this._fbOpen && !this._histOpen ? 'block' : 'none';
+                q('feedback').style.display = this._settingsOpen && open && this._fbOpen && !this._histOpen ? 'block' : 'none';
+                q('history').style.display = open && this._histOpen ? 'block' : 'none';
+                if (open && this._histOpen) this._renderHistory(el);
+                this._renderWhatsNew(el, open && !this._settingsOpen);
                 if (this._fbOpen) {
                     const type = this._fbType || 'bug';
                     for (const b of el.querySelectorAll('[data-fbtype]')) {
@@ -2432,7 +2546,7 @@
                 }
                 // 三个标签页：今天 / 课程 / 记录（回放页只显示“今天”）
                 const tab = this._mode === 'live' ? 'today' : (this._tab || (this._mode === 'list' ? 'course' : 'today'));
-                const showMain = open && !this._settingsOpen;
+                const showMain = open && !this._settingsOpen && !this._histOpen;
                 const assist = !!C.assistMode;
                 q('assist').style.display = showMain ? 'flex' : 'none';
                 q('assist').classList.toggle('on', assist);
@@ -2543,6 +2657,7 @@
                 ].join(';');
                 el.innerHTML =
                     '<style>' +
+                    '#xxt-v41-panel{max-height:calc(100vh - 24px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
                     '#xxt-v41-panel.xxt-collapsed{width:auto!important;min-width:230px;padding:10px 12px!important}' +
                     '#xxt-v41-panel.xxt-collapsed .xxt-logo{width:32px!important;height:32px!important;border-radius:9px!important}' +
@@ -2607,6 +2722,23 @@
                     '#xxt-v41-panel .xxt-hlegend i{width:10px;height:10px;border-radius:2px}' +
                     '#xxt-v41-panel .l0{background:#EEF1F5}#xxt-v41-panel .l1{background:#D6E4FB}#xxt-v41-panel .l2{background:#A9C6F5}#xxt-v41-panel .l3{background:#6FA0EE}#xxt-v41-panel .l4{background:#3B82F6}#xxt-v41-panel .lx{background:transparent}' +
                     '#xxt-v41-panel .xxt-fb-entry{color:#2563EB;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-wn{margin-top:10px;padding:10px 12px;border-radius:10px;background:linear-gradient(135deg,#EFF6FF,#F5F3FF);color:#1E3A8A}' +
+                    '#xxt-v41-panel .xxt-wn-head{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-panel .xxt-wn-head b{flex:1;font-size:13px;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-wn ul,#xxt-v41-panel .xxt-hv ul{margin:6px 0 0;padding-left:18px;font-size:12px;line-height:1.6;color:#374151}' +
+                    '#xxt-v41-panel .xxt-wn ul{list-style:none;padding-left:0}' +
+                    '#xxt-v41-panel .xxt-wn li{margin:2px 0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}' +
+                    '#xxt-v41-panel .xxt-wn li::before{content:"•";color:#6366F1;font-weight:700;margin-right:6px}' +
+                    '#xxt-v41-panel .xxt-wn li.xxt-wn-more::before{content:none}' +
+                    '#xxt-v41-panel .xxt-wn li.xxt-wn-more{color:#6B7280}' +
+                    '#xxt-v41-panel .xxt-wn-all{margin-top:6px;padding:0;border:0;background:none;font:inherit;font-size:12px;font-weight:600;color:#2563EB;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-wn-all:hover,#xxt-v41-panel .xxt-wn-all:focus-visible{text-decoration:underline;outline:none}' +
+                    '#xxt-v41-panel .xxt-hv{padding:8px 0;border-top:1px solid #E5E9F0}' +
+                    '#xxt-v41-panel .xxt-hv:first-child{border-top:0;padding-top:0}' +
+                    '#xxt-v41-panel .xxt-hv-head{display:flex;align-items:center;gap:6px}' +
+                    '#xxt-v41-panel .xxt-hv-head b{font-size:13px;color:#111827;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-hv-head span{font-size:10px;font-weight:600;color:#2563EB;background:#E3ECFD;border-radius:5px;padding:0 6px}' +
+                    '#xxt-v41-panel .xxt-hv li.sub{list-style:circle;margin-left:14px;color:#6B7280}' +
                     '#xxt-v41-panel .xxt-fb-head{display:flex;align-items:center;margin-bottom:8px}' +
                     '#xxt-v41-panel .xxt-fb-head b{flex:1;font-size:13px;color:#111827}' +
                     '#xxt-v41-panel .xxt-fb-back{border:0;background:none;font:inherit;font-size:12px;color:#6B7280;cursor:pointer;padding:2px 4px;border-radius:6px}' +
@@ -2656,7 +2788,7 @@
                     '#xxt-v41-panel .xxt-bar em{font-style:normal;font-size:10px;color:#6B7280;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-days{display:flex;gap:6px;margin-top:4px}' +
                     '#xxt-v41-panel .xxt-days span{flex:1;text-align:center;font-size:10px;color:#9CA3AF}' +
-                    '#xxt-v41-panel .xxt-settings{margin-top:12px;padding:10px 12px;border-radius:10px;background:#F6F8FB}' +
+                    '#xxt-v41-panel .xxt-settings{margin-top:12px;padding:10px 12px;border-radius:10px;background:#F6F8FB;max-height:min(62vh,460px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}' +
                     '#xxt-v41-panel .xxt-set-row{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-set-row span{flex:1;min-width:0;font-size:13px;color:#374151}' +
                     '#xxt-v41-panel .xxt-set-row small{display:block;font-size:11px;color:#9CA3AF;line-height:1.35}' +
@@ -2752,6 +2884,11 @@
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
+                    '<div data-k="whatsnew" class="xxt-wn" style="display:none">' +
+                      '<div class="xxt-wn-head"><b data-k="wntitle"></b><button type="button" data-k="wnx" class="xxt-notice-x" aria-label="关闭更新说明">×</button></div>' +
+                      '<ul data-k="wnlist"></ul>' +
+                      '<button type="button" data-k="wnall" class="xxt-wn-all">查看全部更新记录 ›</button>' +
+                    '</div>' +
                     '<button type="button" data-k="assist" class="xxt-assist" role="switch" aria-checked="true">' +
                       '<span class="xxt-assist-t"><b>学习助手</b><small>今日目标 · 本节笔记 · 学习记录 · 休息提醒</small></span><i class="xxt-assist-sw"></i>' +
                     '</button>' +
@@ -2793,11 +2930,16 @@
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
+                        '<button type="button" data-k="histopen" class="xxt-set-btn">更新记录</button>' +
                       '</div>' +
                       '<div class="xxt-set-actions" style="border-top:0;padding-top:0">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
                         '<button type="button" data-k="resetpos" class="xxt-set-btn">浮窗回到左下角</button>' +
                       '</div>' +
+                    '</div>' +
+                    '<div data-k="history" class="xxt-settings xxt-hist" style="display:none">' +
+                      '<div class="xxt-fb-head"><b>更新记录</b><button type="button" data-k="histback" class="xxt-fb-back">‹ 返回</button></div>' +
+                      '<div data-k="histlist"></div>' +
                     '</div>' +
                     '<div data-k="feedback" class="xxt-settings xxt-fb" style="display:none">' +
                       '<div class="xxt-fb-head"><b>反馈问题 / 提建议</b><button type="button" data-k="fbback" class="xxt-fb-back">‹ 返回</button></div>' +
@@ -2884,12 +3026,20 @@
                 // 在笔记里打字时，不让页面把按键当成播放器快捷键
                 for (const t of ['keydown', 'keyup', 'keypress']) note.addEventListener(t, (e) => e.stopPropagation());
                 el.querySelector('[data-k="gear"]').addEventListener('click', () => {
-                    this._animatePanel(() => { this._settingsOpen = !this._settingsOpen; this._fbOpen = false; });
+                    this._animatePanel(() => {
+                        this._settingsOpen = this._histOpen ? true : !this._settingsOpen;
+                        this._fbOpen = false; this._histOpen = false;
+                    });
                 });
                 for (const inp of el.querySelectorAll('[data-set]')) {
                     inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
                 }
                 el.querySelector('[data-k="diag"]').addEventListener('click', () => this._copyDiagnostics());
+                const openHist = () => this._animatePanel(() => { this._histOpen = true; this._histFromSettings = this._settingsOpen; this._settingsOpen = false; });
+                el.querySelector('[data-k="histopen"]').addEventListener('click', openHist);
+                el.querySelector('[data-k="wnall"]').addEventListener('click', () => { this._dismissWhatsNew(); openHist(); });
+                el.querySelector('[data-k="histback"]').addEventListener('click', () => this._animatePanel(() => { this._histOpen = false; this._settingsOpen = !!this._histFromSettings; }));
+                el.querySelector('[data-k="wnx"]').addEventListener('click', () => this._animatePanel(() => this._dismissWhatsNew()));
                 el.querySelector('[data-k="fbopen"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = true; }));
                 el.querySelector('[data-k="fbback"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = false; }));
                 for (const b of el.querySelectorAll('[data-fbtype]')) {

@@ -167,7 +167,7 @@ test('静默更新：播放中不打断，视频结束后自动换成新版本�
     await p.evaluate(() => __end()); await sleep(4000);
     const after = await panelInfo(p);
     assert(after.ver === `v${nv}` && after.panels === 1, `结束后没有更新：${JSON.stringify(after)}`);
-    assert(/已更新到/.test(after.notice || ''), `更新后应显示更新说明：${after.notice}`);
+    assert(/已更新到/.test(after.whatsnew || ''), `更新后应显示更新说明：${after.whatsnew}`);
     assert(popups === 1, `不应弹出页面（只算测试页本身）：${popups}`);
     await ctx.close();
 });
@@ -212,14 +212,35 @@ test('页面在后台被延迟后，浮窗提示保持窗口显示', async (b) =
     await ctx.close();
 });
 
-test('油猴更新后第一次打开：显示这一版的更新说明', async (b) => {
+test('更新后浮窗显示新增内容（关掉前一直显示），可查看全部更新记录', async (b) => {
     const ctx = await newContext(b);
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
     await p.evaluate(() => localStorage.setItem('xxt-v41-seen-version', '4.0.0'));
     await inject(p); await sleep(1500);
     const info = await panelInfo(p);
-    assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.notice || ''), `没有更新说明：${info.notice}`);
+    assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
+    // 从 4.0.0 更新来：列出期间各版本的新内容
+    assert(/后台防卡顿/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    // 没关掉之前，刷新页面仍然显示
+    await p.reload(); await inject(p); await sleep(1500);
+    assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
+    // 查看全部更新记录：列出所有版本
+    await p.click('#xxt-v41-panel [data-k=wnall]'); await sleep(700);
+    const hist = await p.evaluate(() => ({
+        n: document.querySelectorAll('#xxt-v41-panel .xxt-hv').length,
+        first: document.querySelector('#xxt-v41-panel .xxt-hv b').textContent,
+        tabs: document.querySelector('#xxt-v41-panel [data-k=tabs]').offsetParent !== null,
+    }));
+    assert(hist.n >= 10 && hist.first === `v${VERSION}` && !hist.tabs, `更新记录不对：${JSON.stringify(hist)}`);
+    await p.click('#xxt-v41-panel [data-k=histback]'); await sleep(700);
+    const back = await panelInfo(p);
+    assert(!back.whatsnew && await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=tabs]').offsetParent !== null), '返回后应回到主界面，且更新说明已关闭');
+    await p.reload(); await inject(p); await sleep(1500);
+    assert(!(await panelInfo(p)).whatsnew, '关闭后刷新又出现了更新说明');
+    // 设置里也能打开更新记录
+    await p.click('[data-k=gear]'); await sleep(300); await p.click('[data-k=histopen]'); await sleep(700);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=history]').offsetParent !== null), '设置里打不开更新记录');
     await ctx.close();
 });
 
@@ -605,6 +626,7 @@ test('剩余时间：关闭学习助手时显示在状态框，打开时移到�
     const ctx = await newContext(b, { routes: { '*': page } });
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=124');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-dur-124', JSON.stringify({ sum: 1800, count: 1 })));
     await addFakeVideo(p);
     await inject(p); await sleep(6500);
     const st = () => p.evaluate(() => {
