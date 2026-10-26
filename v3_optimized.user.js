@@ -146,6 +146,7 @@
             showPanel: true,            // 页面左下角显示运行状态浮窗
             alertSound: true,           // 需要人工处理 / 课程完成时播放提示音
             alertNotify: false,         // 同时弹出系统通知（需要浏览器授权）
+            alertRepeatMs: 15000,       // 需要人工处理时，每隔多久再响一次提示音，直到处理完
             completedPageDwellMs: 2000, // 无视频且已完成的小节，停留多久后进入下一小节
             readDocs: true,             // 自动翻看课件（PPT/PDF/文档）任务点：逐步滚动到底部
             docStepMs: 700,             // 课件每次滚动的间隔
@@ -189,7 +190,7 @@
             ['autoUpdate', '自动更新', '发现新版本后，在两个小节之间自动静默更新'],
             ['autoOpenLive', '自动打开直播回放', '有未完成的直播回放时自动打开回放页'],
             ['muted', '静音播放', '接管视频时静音（关闭后浏览器可能阻止自动播放）'],
-            ['alertSound', '提示音', '弹题、需要处理、课程完成时播放提示音'],
+            ['alertSound', '提示音', '弹题、需要处理时每 15 秒响一次直到处理完；课程完成时响一次'],
             ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
             ['breakRemind', '休息提醒', '连续学习 45 分钟后，提醒起来活动一下'],
         ];
@@ -1875,7 +1876,13 @@
                 let key = '', title = '', body = '';
                 if (st.color === '#E5484D') { key = 'attn|' + st.text; title = '学习通助手：需要你处理'; body = st.text; }
                 else if (/已完成|已达标/.test(st.label)) { key = 'done|' + st.text; title = '学习通助手'; body = st.text; }
-                if (key && key !== this._lastAlertKey) this._alert(title, body);
+                const now = Date.now();
+                if (key && key !== this._lastAlertKey) { this._alert(title, body); this._lastBeepTs = now; }
+                // 需要人工处理（弹题、页面要求操作、登录过期）时，每隔一会儿再响一次，直到处理完
+                else if (key.startsWith('attn|') && C.alertSound && now - (this._lastBeepTs || 0) >= C.alertRepeatMs) {
+                    this._beep();
+                    this._lastBeepTs = now;
+                }
                 this._lastAlertKey = key;
             },
 

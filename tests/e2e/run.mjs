@@ -574,6 +574,30 @@ test('浮窗收起 / 展开 / 切换标签页带过渡动画，系统要求减�
     await ctx.close();
 });
 
+test('弹题等需要处理时，提示音每隔一会儿重复，处理完就停', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.evaluate(() => {
+        window.__beeps = 0; app._beep = () => window.__beeps++;
+        const d = document.getElementById('f').contentDocument;
+        const q = d.createElement('div'); q.className = 'ans-videoquiz'; q.id = 'quiz'; q.style.cssText = 'width:5px;height:5px'; q.textContent = 'Q';
+        d.body.appendChild(q);
+    });
+    await sleep(3200);
+    const first = await p.evaluate(() => window.__beeps);
+    assert(first === 1, `第一次提醒次数不对：${first}`);
+    await p.evaluate(() => { app._lastBeepTs = Date.now() - 15000; });
+    await sleep(1500);
+    assert(await p.evaluate(() => window.__beeps) === 2, '没有重复提醒');
+    await p.evaluate(() => { document.getElementById('f').contentDocument.getElementById('quiz').remove(); app._lastBeepTs = Date.now() - 15000; });
+    await sleep(2500);
+    assert(await p.evaluate(() => window.__beeps) === 2, '处理完后还在响');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
