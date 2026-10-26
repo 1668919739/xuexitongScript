@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.4.2
+// @version      4.4.3
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,9 +25,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.4.2';
+    const VERSION = '4.4.3';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.4.3': '弹题等需要处理时改用急促的警示音，和普通提示音区分开',
         '4.4.2': '浮窗设置里可以直接反馈问题或提建议',
         '4.4.1': '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间',
         '4.4.0': '浮窗改版为学习助手：今天 / 课程 / 记录三个标签页、本节笔记、每日目标、休息提醒、学习日历',
@@ -192,7 +193,7 @@
             ['autoUpdate', '自动更新', '发现新版本后，在两个小节之间自动静默更新'],
             ['autoOpenLive', '自动打开直播回放', '有未完成的直播回放时自动打开回放页'],
             ['muted', '静音播放', '接管视频时静音（关闭后浏览器可能阻止自动播放）'],
-            ['alertSound', '提示音', '弹题、需要处理时每 15 秒响一次直到处理完；课程完成时响一次'],
+            ['alertSound', '提示音', '需要处理时（弹题等）响急促的警示音，每 15 秒一次直到处理完；完成等普通提醒响柔和的提示音'],
             ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
             ['breakRemind', '休息提醒', '连续学习 45 分钟后，提醒起来活动一下'],
         ];
@@ -1842,27 +1843,34 @@
             },
 
             // ================= 提醒 =================
-            _beep() {
+            // 提示音分两种：
+            //   'attn'（需要处理：弹题、页面要求操作、登录过期）——急促的高低双音交替，响两轮，一听就知道要过去看
+            //   'chime'（完成、目标达成、休息等普通提醒）——柔和的上行两声
+            _beep(kind = 'chime') {
                 try {
                     const Ctx = window.AudioContext || window.webkitAudioContext;
                     if (!Ctx) return;
                     if (!this._audioCtx) this._audioCtx = new Ctx();
                     const ctx = this._audioCtx;
                     if (ctx.state === 'suspended') ctx.resume();
-                    [[880, 0], [1175, 0.18]].forEach(([freq, at]) => {
+                    const notes = kind === 'attn'
+                        ? { type: 'square', vol: 0.09, len: 0.13, seq: [[988, 0], [740, 0.16], [988, 0.32], [740, 0.48], [988, 0.8], [740, 0.96], [988, 1.12], [740, 1.28]] }
+                        : { type: 'sine', vol: 0.18, len: 0.16, seq: [[880, 0], [1175, 0.18]] };
+                    for (const [freq, at] of notes.seq) {
                         const o = ctx.createOscillator(), g = ctx.createGain();
-                        o.type = 'sine'; o.frequency.value = freq;
-                        g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
-                        g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + at + 0.02);
-                        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.16);
+                        const t0 = ctx.currentTime + at;
+                        o.type = notes.type; o.frequency.value = freq;
+                        g.gain.setValueAtTime(0.0001, t0);
+                        g.gain.exponentialRampToValueAtTime(notes.vol, t0 + 0.015);
+                        g.gain.exponentialRampToValueAtTime(0.0001, t0 + notes.len);
                         o.connect(g).connect(ctx.destination);
-                        o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.18);
-                    });
+                        o.start(t0); o.stop(t0 + notes.len + 0.02);
+                    }
                 } catch (e) { /* ignore */ }
             },
 
-            _alert(title, body) {
-                if (C.alertSound) this._beep();
+            _alert(title, body, kind) {
+                if (C.alertSound) this._beep(kind);
                 if (C.alertNotify) {
                     try {
                         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -1879,10 +1887,11 @@
                 if (st.color === '#E5484D') { key = 'attn|' + st.text; title = '学习通助手：需要你处理'; body = st.text; }
                 else if (/已完成|已达标/.test(st.label)) { key = 'done|' + st.text; title = '学习通助手'; body = st.text; }
                 const now = Date.now();
-                if (key && key !== this._lastAlertKey) { this._alert(title, body); this._lastBeepTs = now; }
+                const kind = key.startsWith('attn|') ? 'attn' : 'chime';
+                if (key && key !== this._lastAlertKey) { this._alert(title, body, kind); this._lastBeepTs = now; }
                 // 需要人工处理（弹题、页面要求操作、登录过期）时，每隔一会儿再响一次，直到处理完
                 else if (key.startsWith('attn|') && C.alertSound && now - (this._lastBeepTs || 0) >= C.alertRepeatMs) {
-                    this._beep();
+                    this._beep('attn');
                     this._lastBeepTs = now;
                 }
                 this._lastAlertKey = key;

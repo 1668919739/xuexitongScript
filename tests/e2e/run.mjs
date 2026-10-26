@@ -582,7 +582,7 @@ test('弹题等需要处理时，提示音每隔一会儿重复，处理完就�
     await addFakeVideo(p);
     await inject(p); await sleep(2000);
     await p.evaluate(() => {
-        window.__beeps = 0; app._beep = () => window.__beeps++;
+        window.__beeps = 0; window.__kinds = []; app._beep = (k) => { window.__beeps++; window.__kinds.push(k || 'chime'); };
         const d = document.getElementById('f').contentDocument;
         const q = d.createElement('div'); q.className = 'ans-videoquiz'; q.id = 'quiz'; q.style.cssText = 'width:5px;height:5px'; q.textContent = 'Q';
         d.body.appendChild(q);
@@ -590,9 +590,10 @@ test('弹题等需要处理时，提示音每隔一会儿重复，处理完就�
     await sleep(3200);
     const first = await p.evaluate(() => window.__beeps);
     assert(first === 1, `第一次提醒次数不对：${first}`);
+    assert(await p.evaluate(() => window.__kinds[0]) === 'attn', '需要处理时应使用警示音');
     await p.evaluate(() => { app._lastBeepTs = Date.now() - 15000; });
     await sleep(1500);
-    assert(await p.evaluate(() => window.__beeps) === 2, '没有重复提醒');
+    assert(await p.evaluate(() => window.__beeps) === 2 && await p.evaluate(() => window.__kinds[1]) === 'attn', '没有用警示音重复提醒');
     await p.evaluate(() => { document.getElementById('f').contentDocument.getElementById('quiz').remove(); app._lastBeepTs = Date.now() - 15000; });
     await sleep(2500);
     assert(await p.evaluate(() => window.__beeps) === 2, '处理完后还在响');
