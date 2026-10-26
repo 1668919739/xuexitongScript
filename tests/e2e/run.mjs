@@ -508,8 +508,8 @@ test('学习助手总开关：关闭后只保留一行学习时长，不再提�
     const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
     assert(await vis('assist') && await vis('tabs'), '默认应开启学习助手');
     await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(300);
-    const st = await p.evaluate(() => ({ text: document.querySelector('#xxt-v41-panel [data-k=statstext]').textContent, checked: document.querySelector('#xxt-v41-panel [data-k=assist]').getAttribute('aria-checked') }));
-    assert(!(await vis('tabs')) && !(await vis('goal')) && await vis('stats') && /^今日 /.test(st.text) && st.checked === 'false', `关闭后显示不对：${JSON.stringify(st)}`);
+    const st = await p.evaluate(() => ({ text: document.querySelector('#xxt-v41-panel [data-k=statsplain]').textContent, checked: document.querySelector('#xxt-v41-panel [data-k=assist]').getAttribute('aria-checked') }));
+    assert(!(await vis('tabs')) && !(await vis('goal')) && await vis('statsplain') && /^今日 /.test(st.text) && st.checked === 'false', `关闭后显示不对：${JSON.stringify(st)}`);
     await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
     await sleep(2500);
     assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '关闭后仍然提醒休息');
@@ -547,16 +547,21 @@ test('浮窗收起 / 展开 / 切换标签页带过渡动画，系统要求减�
     const h0 = await p.evaluate(() => document.getElementById('xxt-v41-panel').offsetHeight);
     await p.click('[data-k=toggle]');
     assert(await anims() > 0, '收起时没有动画');
-    await sleep(500);
+    await sleep(800);
     const h1 = await p.evaluate(() => ({ h: document.getElementById('xxt-v41-panel').offsetHeight, ov: document.getElementById('xxt-v41-panel').style.overflow }));
     assert(h1.h < h0 - 100 && h1.ov === '', `收起后尺寸不对：${h0} -> ${JSON.stringify(h1)}`);
     await p.click('[data-k=toggle]');
     assert(await anims() > 0, '展开时没有动画');
-    await sleep(500);
+    await sleep(800);
     assert(Math.abs((await p.evaluate(() => document.getElementById('xxt-v41-panel').offsetHeight)) - h0) < 4, '展开后没有恢复原来的高度');
-    await p.click('#xxt-v41-panel [data-tab=record]');
-    assert(await anims() > 0, '切换标签页时没有动画');
-    await sleep(500);
+    const hs = [];
+    for (const tb of ['record', 'course', 'today']) {
+        await p.click(`#xxt-v41-panel [data-tab=${tb}]`);
+        if (tb === 'record') assert(await anims() > 0, '切换标签页时没有动画');
+        await sleep(700);
+        hs.push(await p.evaluate(() => document.getElementById('xxt-v41-panel').getBoundingClientRect().top));
+    }
+    assert(Math.max(...hs) - Math.min(...hs) < 1, `切换标签页时浮窗上下跳动：${JSON.stringify(hs)}`);
     await p.emulateMedia({ reducedMotion: 'reduce' });
     await p.click('#xxt-v41-panel [data-tab=today]');
     assert(await anims() === 0, '减少动态效果时仍有动画');

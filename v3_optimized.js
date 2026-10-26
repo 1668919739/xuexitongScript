@@ -1398,7 +1398,7 @@
             },
             _startUpdateCheck() {
                 this._checkUpdate();
-                if (!this._updateTimer) this._updateTimer = setInterval(() => this._checkUpdate(), 6 * 3600 * 1000);
+                if (!this._updateTimer) this._updateTimer = setInterval(() => this._checkUpdate(), 3 * 3600 * 1000);   // 每 3 小时检查一次新版本
             },
 
             async _checkUpdate() {
@@ -2112,7 +2112,7 @@
                     `<span class="xxt-goal-text"><b>${g.done ? '🎯 今日目标已完成' : `今日目标 ${C.dailyGoal} 分钟`}</b>` +
                     `<span>已学 ${fmtShort(g.sec)} · 完成 ${ss.todayNodes} 节${g.done ? '' : ` · 还差 ${fmtShort(g.goal - g.sec)}`}</span></span>`;
                 const nt = this._mode === 'course' ? this._currentNodeTitle() : '';
-                q('notewrap').style.display = nt ? 'block' : 'none';
+                q('notewrap').style.display = nt ? 'flex' : 'none';
                 const ta = q('note');
                 if (nt && ta.getAttribute('data-title') !== nt && document.activeElement !== ta) {
                     ta.setAttribute('data-title', nt);
@@ -2288,6 +2288,7 @@
                 q('assist').classList.toggle('on', assist);
                 q('assist').setAttribute('aria-checked', String(assist));
                 q('tabs').style.display = showMain && assist && this._mode !== 'live' ? 'flex' : 'none';
+                q('tabind').style.transform = `translateX(calc(${['today', 'course', 'record'].indexOf(tab)} * (100% + 2px)))`;
                 for (const b of el.querySelectorAll('[data-tab]')) {
                     const on = b.getAttribute('data-tab') === tab;
                     b.classList.toggle('on', on);
@@ -2296,21 +2297,29 @@
                 }
                 const ss = this._statSummary();
                 // 关闭学习助手时只保留课程列表（列表页）和一行学习时长
-                const paneOn = (n) => showMain && (assist ? tab === n : n === 'course' && this._mode === 'list');
-                for (const n of ['today', 'course', 'record']) q('pane-' + n).style.display = paneOn(n) ? 'block' : 'none';
-                if (paneOn('today')) this._renderToday(el, ss);
-                if (paneOn('course')) {
+                // 三个标签页叠放在同一块区域里，区域高度取最高的那页：切换标签页时浮窗不再忽高忽低
+                // （回放页只有“今天”；关闭学习助手时只保留课程列表页的课程总览）
+                const stacked = assist && this._mode !== 'live';
+                const paneUsed = (n) => showMain && (stacked || (assist ? n === 'today' : n === 'course' && this._mode === 'list'));
+                q('panes').style.display = ['today', 'course', 'record'].some(paneUsed) ? 'grid' : 'none';
+                for (const n of ['today', 'course', 'record']) {
+                    const pane = q('pane-' + n);
+                    pane.style.display = paneUsed(n) ? 'flex' : 'none';
+                    const active = !stacked || tab === n;
+                    pane.classList.toggle('off', !active);
+                    pane.setAttribute('aria-hidden', String(!active));
+                    if (!active) pane.setAttribute('inert', ''); else pane.removeAttribute('inert');
+                }
+                if (paneUsed('today')) this._renderToday(el, ss);
+                if (paneUsed('course')) {
                     q('cdetail').style.display = this._mode === 'course' ? 'block' : 'none';
                     if (this._mode === 'list') this._renderCourseList(el);
                     else { q('courses').style.display = 'none'; this._renderCourseDetail(el, prog); }
                 }
-                if (paneOn('record')) this._renderRecord(el, ss);
-                q('stats').style.display = showMain && (!assist || tab === 'today') ? 'flex' : 'none';
-                q('stats').classList.toggle('plain', !assist);
-                q('stats').title = assist ? '查看学习记录' : '';
-                q('statstext').innerHTML = assist
-                    ? `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`
-                    : `今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}`;
+                if (paneUsed('record')) this._renderRecord(el, ss);
+                q('statstext').innerHTML = `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`;
+                q('statsplain').style.display = showMain && !assist ? 'flex' : 'none';
+                q('statsplain').innerHTML = `<span>今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}</span>`;
                 q('goalset').style.display = assist ? 'block' : 'none';
                 const br = el.querySelector('[data-set="breakRemind"]');
                 if (br) br.closest('label').style.display = assist ? '' : 'none';
@@ -2402,11 +2411,19 @@
                     '#xxt-v41-panel .xxt-assist.on .xxt-assist-sw::after{transform:translateX(14px)}' +
                     '#xxt-v41-panel .xxt-stats.plain{cursor:default}#xxt-v41-panel .xxt-stats.plain .xxt-chev{display:none}' +
                     '#xxt-v41-panel .xxt-tabs{display:flex;gap:2px;margin-top:10px;padding:3px;border-radius:10px;background:#F1F3F6}' +
-                    '#xxt-v41-panel .xxt-tabs button{flex:1;font:inherit;font-size:13px;border:0;border-radius:8px;padding:5px 0;background:transparent;color:#6B7280;cursor:pointer;transition:background .15s,color .15s}' +
+                    '#xxt-v41-panel .xxt-tabs{position:relative}' +
+                    '#xxt-v41-panel .xxt-tabs button{position:relative;z-index:1;flex:1;font:inherit;font-size:13px;border:0;border-radius:8px;padding:5px 0;background:transparent;color:#6B7280;cursor:pointer;transition:color .3s ease}' +
+                    '#xxt-v41-panel .xxt-tab-ind{position:absolute;z-index:0;top:3px;bottom:3px;left:3px;width:calc((100% - 10px) / 3);border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.08);transition:transform .45s cubic-bezier(.22,1,.36,1)}' +
                     '#xxt-v41-panel .xxt-tabs button:hover{color:#111827}' +
-                    '#xxt-v41-panel .xxt-tabs button.on{background:#fff;color:#111827;font-weight:600;box-shadow:0 1px 2px rgba(15,23,42,.08)}' +
+                    '#xxt-v41-panel .xxt-tabs button.on{color:#111827;font-weight:600}' +
                     '#xxt-v41-panel .xxt-tabs button:focus-visible{outline:2px solid #93C5FD;outline-offset:1px}' +
-                    '#xxt-v41-panel .xxt-pane{margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-panes{display:grid;margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-pane{grid-area:1/1;min-width:0;flex-direction:column;transition:opacity .42s cubic-bezier(.22,1,.36,1),transform .42s cubic-bezier(.22,1,.36,1),visibility 0s linear 0s}' +
+                    '#xxt-v41-panel .xxt-pane.off{opacity:0;transform:translateY(8px);visibility:hidden;pointer-events:none;transition:opacity .22s ease,transform .22s ease,visibility 0s linear .22s}' +
+                    '#xxt-v41-panel [data-k="pane-today"] .xxt-notewrap{flex:1;flex-direction:column;min-height:0}' +
+                    '#xxt-v41-panel [data-k="pane-today"] .xxt-note{flex:1}' +
+                    '#xxt-v41-panel [data-k="pane-today"] .xxt-stats{margin-top:auto;padding-top:10px}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-pane,#xxt-v41-panel .xxt-pane.off{transition:none}}' +
                     '#xxt-v41-panel .xxt-goal{display:flex;align-items:center;gap:12px}' +
                     '#xxt-v41-panel .xxt-ring{position:relative;flex:none;display:inline-flex}' +
                     '#xxt-v41-panel .xxt-ring circle{transition:stroke-dashoffset .5s ease}' +
@@ -2442,7 +2459,7 @@
                     '#xxt-v41-panel .xxt-set-label{margin-top:10px;font-size:13px;color:#374151}' +
                     '#xxt-v41-panel .xxt-goal-opts{display:flex;gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice.rest{background:#ECFDF5;color:#065F46}' +
-                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-ring circle,#xxt-v41-panel .xxt-tabs button{transition:none}}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-ring circle,#xxt-v41-panel .xxt-tabs button,#xxt-v41-panel .xxt-tab-ind,#xxt-v41-panel .xxt-toggle,#xxt-v41-panel .xxt-logo{transition:none}}' +
                     '#xxt-v41-panel .xxt-head{display:flex;align-items:center;gap:12px;cursor:grab;touch-action:none}' +
                     '#xxt-v41-panel .xxt-head:active{cursor:grabbing}' +
                     '#xxt-v41-panel .xxt-actions{align-self:flex-start;display:flex;align-items:center;gap:2px;margin-right:-6px}' +
@@ -2497,11 +2514,11 @@
                     '#xxt-v41-panel .xxt-power:hover,#xxt-v41-panel .xxt-power:focus-visible{background:#FEE2E2;color:#DC2626;outline:none}' +
                     '#xxt-v41-panel .xxt-power.paused{color:#16A34A}' +
                     '#xxt-v41-panel .xxt-power.paused:hover,#xxt-v41-panel .xxt-power.paused:focus-visible{background:#DCFCE7;color:#15803D}' +
-                    '#xxt-v41-panel.xxt-enter{transform-origin:left bottom;animation:xxt-enter .38s cubic-bezier(.2,.8,.2,1) both}' +
-                    '@keyframes xxt-enter{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:.999;transform:none}}' +
-                    '#xxt-v41-panel .xxt-toggle{transition:transform .25s ease,background .15s,color .15s}' +
+                    '#xxt-v41-panel.xxt-enter{transform-origin:left bottom;animation:xxt-enter .7s cubic-bezier(.22,1,.36,1) both}' +
+                    '@keyframes xxt-enter{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:.999;transform:none}}' +
+                    '#xxt-v41-panel .xxt-toggle{transition:transform .45s cubic-bezier(.22,1,.36,1),background .15s,color .15s}' +
                     '#xxt-v41-panel.xxt-collapsed .xxt-toggle{transform:rotate(90deg)}' +
-                    '#xxt-v41-panel .xxt-logo{transition:width .28s cubic-bezier(.2,.8,.2,1),height .28s cubic-bezier(.2,.8,.2,1),border-radius .28s}' +
+                    '#xxt-v41-panel .xxt-logo{transition:width .52s cubic-bezier(.22,1,.36,1),height .52s cubic-bezier(.22,1,.36,1),border-radius .52s}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
                     '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin:2px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice{display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;line-height:1.5}' +
@@ -2579,17 +2596,19 @@
                     '<button type="button" data-k="assist" class="xxt-assist" role="switch" aria-checked="true">' +
                       '<span class="xxt-assist-t"><b>学习助手</b><small>今日目标 · 本节笔记 · 学习记录 · 休息提醒</small></span><i class="xxt-assist-sw"></i>' +
                     '</button>' +
-                    '<div data-k="tabs" class="xxt-tabs" role="tablist" aria-label="学习助手">' +
+                    '<div data-k="tabs" class="xxt-tabs" role="tablist" aria-label="学习助手"><i data-k="tabind" class="xxt-tab-ind"></i>' +
                       '<button type="button" role="tab" data-tab="today">今天</button>' +
                       '<button type="button" role="tab" data-tab="course">课程</button>' +
                       '<button type="button" role="tab" data-tab="record">记录</button>' +
                     '</div>' +
+                    '<div data-k="panes" class="xxt-panes">' +
                     '<div data-k="pane-today" class="xxt-pane" role="tabpanel">' +
                       '<div data-k="goal" class="xxt-goal"></div>' +
                       '<div data-k="notewrap" class="xxt-notewrap" style="display:none">' +
                         '<div class="xxt-sec-title"><span>本节笔记</span><small data-k="notestate"></small></div>' +
                         '<textarea data-k="note" class="xxt-note" rows="3" maxlength="2000" placeholder="随手记下这一节的要点…（只保存在本机）"></textarea>' +
                       '</div>' +
+                      '<button type="button" data-k="stats" class="xxt-stats" title="查看学习记录"><span data-k="statstext"></span><i class="xxt-chev">›</i></button>' +
                     '</div>' +
                     '<div data-k="pane-course" class="xxt-pane" role="tabpanel">' +
                       '<div data-k="cdetail"></div>' +
@@ -2600,7 +2619,8 @@
                       '<div data-k="chart" class="xxt-chart"></div>' +
                       '<div data-k="heat" class="xxt-heat"></div>' +
                     '</div>' +
-                    '<button type="button" data-k="stats" class="xxt-stats" title="查看学习记录"><span data-k="statstext"></span><i class="xxt-chev">›</i></button>' +
+                    '</div>' +
+                    '<div data-k="statsplain" class="xxt-stats plain"></div>' +
                     '<div data-k="settings" class="xxt-settings" style="display:none">' +
                       '<div data-k="rates" class="xxt-rate-row">' +
                         '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
@@ -2741,17 +2761,17 @@
                 change(); finish();
                 this._applyPanelPos(el);
                 const to = box(el.getBoundingClientRect(), getComputedStyle(el));
-                const ease = 'cubic-bezier(.2,.8,.2,1)';
+                const ease = 'cubic-bezier(.22,1,.36,1)';
                 if (from.width !== to.width || from.height !== to.height) {
                     el.style.overflow = 'hidden';
-                    const a = el.animate([from, to], { duration: 280, easing: ease });
+                    const a = el.animate([from, to], { duration: 520, easing: ease });
                     this._resizeAnim = a;
                     const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } };
                     a.onfinish = done; a.oncancel = done;
                 }
                 visible().filter((c) => !before.has(c)).forEach((c, i) => {
-                    c.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
-                        { duration: 240, delay: 70 + i * 30, easing: ease, fill: 'backwards' });
+                    c.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }],
+                        { duration: 460, delay: 120 + i * 50, easing: ease, fill: 'backwards' });
                 });
             },
 
