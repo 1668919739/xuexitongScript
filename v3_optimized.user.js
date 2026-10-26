@@ -2516,8 +2516,11 @@
                     '#xxt-v41-panel .xxt-power:hover,#xxt-v41-panel .xxt-power:focus-visible{background:#FEE2E2;color:#DC2626;outline:none}' +
                     '#xxt-v41-panel .xxt-power.paused{color:#16A34A}' +
                     '#xxt-v41-panel .xxt-power.paused:hover,#xxt-v41-panel .xxt-power.paused:focus-visible{background:#DCFCE7;color:#15803D}' +
-                    '#xxt-v41-panel.xxt-enter{animation:xxt-enter .32s cubic-bezier(.2,.8,.2,1) both}' +
-                    '@keyframes xxt-enter{from{opacity:0;transform:translateY(12px)}to{opacity:.999;transform:none}}' +
+                    '#xxt-v41-panel.xxt-enter{transform-origin:left bottom;animation:xxt-enter .38s cubic-bezier(.2,.8,.2,1) both}' +
+                    '@keyframes xxt-enter{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:.999;transform:none}}' +
+                    '#xxt-v41-panel .xxt-toggle{transition:transform .25s ease,background .15s,color .15s}' +
+                    '#xxt-v41-panel.xxt-collapsed .xxt-toggle{transform:rotate(90deg)}' +
+                    '#xxt-v41-panel .xxt-logo{transition:width .28s cubic-bezier(.2,.8,.2,1),height .28s cubic-bezier(.2,.8,.2,1),border-radius .28s}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
                     '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin:2px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice{display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;line-height:1.5}' +
@@ -2662,29 +2665,23 @@
                     const b = e.target.closest('[data-open]');
                     if (b) this._openFromList(b.getAttribute('data-open'));
                 });
-                el.querySelector('[data-k="assist"]').addEventListener('click', () => this._toggleAssist());
+                el.querySelector('[data-k="assist"]').addEventListener('click', () => this._animatePanel(() => this._toggleAssist()));
                 el.querySelector('[data-k="stats"]').addEventListener('click', () => {
                     if (!C.assistMode) return;
-                    this._tab = 'record';
-                    this._panelKey = '';
-                    this._renderPanel();
+                    this._animatePanel(() => { this._tab = 'record'; });
                 });
                 const tabs = el.querySelector('[data-k="tabs"]');
                 tabs.addEventListener('click', (e) => {
                     const b = e.target.closest('[data-tab]');
                     if (!b) return;
-                    this._tab = b.getAttribute('data-tab');
-                    this._panelKey = '';
-                    this._renderPanel();
+                    this._animatePanel(() => { this._tab = b.getAttribute('data-tab'); });
                 });
                 tabs.addEventListener('keydown', (e) => {
                     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
                     const list = [...tabs.querySelectorAll('[data-tab]')];
                     const i = list.findIndex((b) => b.classList.contains('on'));
                     const nb = list[(i + (e.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
-                    this._tab = nb.getAttribute('data-tab');
-                    this._panelKey = '';
-                    this._renderPanel();
+                    this._animatePanel(() => { this._tab = nb.getAttribute('data-tab'); });
                     nb.focus();
                     e.preventDefault();
                 });
@@ -2710,9 +2707,7 @@
                 // 在笔记里打字时，不让页面把按键当成播放器快捷键
                 for (const t of ['keydown', 'keyup', 'keypress']) note.addEventListener(t, (e) => e.stopPropagation());
                 el.querySelector('[data-k="gear"]').addEventListener('click', () => {
-                    this._settingsOpen = !this._settingsOpen;
-                    this._panelKey = '';
-                    this._renderPanel();
+                    this._animatePanel(() => { this._settingsOpen = !this._settingsOpen; });
                 });
                 for (const inp of el.querySelectorAll('[data-set]')) {
                     inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
@@ -2731,9 +2726,7 @@
                     else this.stop();
                 });
                 el.querySelector('[data-k="toggle"]').addEventListener('click', () => {
-                    this._panelCollapsed = !this._panelCollapsed;
-                    this._panelKey = '';
-                    this._renderPanel();
+                    this._animatePanel(() => { this._panelCollapsed = !this._panelCollapsed; });
                 });
                 if (!window.__xxtPanelShown) {
                     window.__xxtPanelShown = true;
@@ -2745,6 +2738,40 @@
                 this._panel = el;
                 this._panelKey = '';
                 return el;
+            },
+
+            // 浮窗尺寸变化（收起 / 展开 / 切换标签页 / 打开设置）时的过渡动画：
+            // 先记下旧尺寸，改完再量新尺寸，从旧尺寸平滑过渡过去，新出现的内容淡入
+            _animatePanel(change) {
+                const el = this._panel;
+                const finish = () => { this._panelKey = ''; this._renderPanel(); };
+                let reduce = false;
+                try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { reduce = false; }
+                if (!el || !el.isConnected || reduce || typeof el.animate !== 'function') {
+                    change(); finish();
+                    if (this._panel) this._applyPanelPos(this._panel);
+                    return;
+                }
+                if (this._resizeAnim) this._resizeAnim.cancel();
+                const box = (r, cs) => ({ width: r.width + 'px', height: r.height + 'px', padding: `${cs.paddingTop} ${cs.paddingRight} ${cs.paddingBottom} ${cs.paddingLeft}` });
+                const visible = () => [...el.children].filter((c) => c.tagName !== 'STYLE' && c.offsetParent !== null);
+                const from = box(el.getBoundingClientRect(), getComputedStyle(el));
+                const before = new Set(visible());
+                change(); finish();
+                this._applyPanelPos(el);
+                const to = box(el.getBoundingClientRect(), getComputedStyle(el));
+                const ease = 'cubic-bezier(.2,.8,.2,1)';
+                if (from.width !== to.width || from.height !== to.height) {
+                    el.style.overflow = 'hidden';
+                    const a = el.animate([from, to], { duration: 280, easing: ease });
+                    this._resizeAnim = a;
+                    const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } };
+                    a.onfinish = done; a.oncancel = done;
+                }
+                visible().filter((c) => !before.has(c)).forEach((c, i) => {
+                    c.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+                        { duration: 240, delay: 70 + i * 30, easing: ease, fill: 'backwards' });
+                });
             },
 
             _removePanel() {

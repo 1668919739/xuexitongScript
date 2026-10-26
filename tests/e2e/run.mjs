@@ -537,6 +537,32 @@ test('延时任务交给后台线程计时（页面在后台也能按时恢复�
     await ctx.close();
 });
 
+test('浮窗收起 / 展开 / 切换标签页带过渡动画，系统要求减少动态效果时不播放', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const anims = () => p.evaluate(() => document.getElementById('xxt-v41-panel').getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length);
+    const h0 = await p.evaluate(() => document.getElementById('xxt-v41-panel').offsetHeight);
+    await p.click('[data-k=toggle]');
+    assert(await anims() > 0, '收起时没有动画');
+    await sleep(500);
+    const h1 = await p.evaluate(() => ({ h: document.getElementById('xxt-v41-panel').offsetHeight, ov: document.getElementById('xxt-v41-panel').style.overflow }));
+    assert(h1.h < h0 - 100 && h1.ov === '', `收起后尺寸不对：${h0} -> ${JSON.stringify(h1)}`);
+    await p.click('[data-k=toggle]');
+    assert(await anims() > 0, '展开时没有动画');
+    await sleep(500);
+    assert(Math.abs((await p.evaluate(() => document.getElementById('xxt-v41-panel').offsetHeight)) - h0) < 4, '展开后没有恢复原来的高度');
+    await p.click('#xxt-v41-panel [data-tab=record]');
+    assert(await anims() > 0, '切换标签页时没有动画');
+    await sleep(500);
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    await p.click('#xxt-v41-panel [data-tab=today]');
+    assert(await anims() === 0, '减少动态效果时仍有动画');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
