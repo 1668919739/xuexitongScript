@@ -11,7 +11,7 @@ const metadata = `// ==UserScript==
 // @namespace    local.codex.xuexitong
 // @version      ${version}
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
-// @author       Codex
+// @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*

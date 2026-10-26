@@ -1,0 +1,13 @@
+{
+  "name": "xuexitong-script",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-userscript.mjs",
+    "test": "node tests/verify-v3.mjs",
+    "test:e2e": "node tests/e2e/run.mjs"
+  },
+  "devDependencies": {
+    "jquery": "3.6.0",
+    "playwright": "1.63.0"
+  }
+}

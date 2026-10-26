@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.7
+// @version      4.2.8
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
-// @author       Codex
+// @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
@@ -23,7 +23,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.2.7';
+    const VERSION = '4.2.8';
+    // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
+    const CHANGELOG = {
+        '4.2.8': '页面在后台时给出提示、更新后显示更新说明、增加问题反馈入口',
+        '4.2.7': '直播回放自动打开，浮窗显示回放进度',
+        '4.2.6': '一键停止 / 继续，浮窗出场动画',
+    };
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
@@ -132,6 +138,7 @@
 
         // 浮窗里选择的倍速保存在本地，刷新页面、换课程后保持
         const RATE_KEY = 'xxt-v41-rate';
+        const SEEN_KEY = 'xxt-v41-seen-version';
         const RATE_OPTIONS = [1, 1.25, 1.5, 2];
         try {
             const saved = parseFloat(localStorage.getItem(RATE_KEY));
@@ -186,6 +193,8 @@
             _updateFailed: false,
             _ratesOpen: false,
             _userStopped: false,
+            _lastTickTs: 0,
+            _notice: null,
             _lives: [],
             _liveOpened: new WeakSet(),
             _liveScanTs: 0,
@@ -204,6 +213,7 @@
                 this._bindPageEvents();
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._enterLoading('start');
+                this._showUpdatedNotice();
                 this._renderPanel();
                 this._startUpdateCheck();
             },
@@ -303,6 +313,16 @@
 
             // ================= 主循环 =================
             _tick() {
+                const now = Date.now();
+                // 定时器间隔被浏览器拉长（页面在后台/最小化）时记录下来，回到前台后提示
+                if (this._lastTickTs && now - this._lastTickTs > 8000 && !this._userStopped) {
+                    const sec = Math.round((now - this._lastTickTs) / 1000);
+                    if (!this._notice || this._notice.kind !== 'upd') {
+                        this._notice = { kind: 'bg', until: now + 30000, text: `页面刚才在后台，脚本有约 ${sec} 秒没能及时运行。保持窗口显示、不要最小化，可以避免变慢` };
+                    }
+                    log(`页面在后台，定时器被浏览器延迟了 ${sec} 秒`, '#FF9800', 'warn');
+                }
+                this._lastTickTs = now;
                 try {
                     this._tickInner();
                 } finally {
@@ -1083,7 +1103,10 @@
                 this._timer = setInterval(() => this._tick(), C.tickMs);
                 this._state = 'loading';
                 this._renderPanel();
-                if (!playerOnly) this._startUpdateCheck();
+                if (!playerOnly) {
+                    this._showUpdatedNotice();
+                    this._startUpdateCheck();
+                }
             },
 
             // 回放播放器在跨域 iframe（如 live-rk.chaoxing.com）里，会用 postMessage 向回放页汇报观看时长
@@ -1206,6 +1229,20 @@
             },
 
             // ================= 版本更新 =================
+            // 刚更新过（静默更新或油猴更新后第一次打开）时，浮窗短暂显示更新说明
+            _showUpdatedNotice() {
+                let from = window.__xxtUpdatedFrom || null;
+                try {
+                    const seen = localStorage.getItem(SEEN_KEY);
+                    if (!from && seen && seen !== VERSION) from = seen;
+                    localStorage.setItem(SEEN_KEY, VERSION);
+                } catch (e) { /* ignore */ }
+                window.__xxtUpdatedFrom = null;
+                if (!from || from === VERSION) return;
+                const note = CHANGELOG[VERSION];
+                this._notice = { kind: 'upd', until: Date.now() + 15000, text: `已更新到 v${VERSION}${note ? '：' + note : ''}` };
+                log(`已从 v${from} 更新到 v${VERSION}${note ? '：' + note : ''}`, '#4CAF50');
+            },
             _startUpdateCheck() {
                 this._checkUpdate();
                 if (!this._updateTimer) this._updateTimer = setInterval(() => this._checkUpdate(), 6 * 3600 * 1000);
@@ -1249,6 +1286,7 @@
                     log(`更新到 v${v} 失败（${why}），刷新页面后会重试`, '#F44336', 'warn');
                 };
                 const run = (code) => {
+                    window.__xxtUpdatedFrom = VERSION;
                     const s = document.createElement('script');
                     s.textContent = code;
                     document.head.appendChild(s);
@@ -1332,7 +1370,7 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1362,10 +1400,17 @@
                 q('tip1').textContent = this._updating ? `正在更新到 v${this._latest}…` : hasUpd ? `发现新版本 v${this._latest}` : '开源 · 1668919739/xuexitongScript';
                 q('tip2').textContent = this._updating ? '请稍候' : hasUpd
                     ? (this._updateFailed ? '更新失败，点击重试' : C.autoUpdate ? '将在下一小节开始前自动更新 · 点击立即更新' : '点击立即更新，无需刷新页面')
-                    : '已是最新版本 · 点击查看源码';
+                    : '已是最新版本 · 点击查看源码、反馈问题';
                 const showRates = this._mode !== 'live' && !this._panelCollapsed;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
+                const nt = this._notice && Date.now() < this._notice.until ? this._notice : null;
+                if (!nt) this._notice = null;
+                q('notice').style.display = nt && !this._panelCollapsed ? 'flex' : 'none';
+                if (nt) {
+                    q('notice').className = 'xxt-notice ' + nt.kind;
+                    q('noticetext').textContent = nt.text;
+                }
                 const livePending = this._mode !== 'live' ? this._lives.filter((l) => !l.done) : [];
                 q('liverow').style.display = livePending.length && !this._panelCollapsed ? 'flex' : 'none';
                 if (livePending.length) {
@@ -1407,6 +1452,12 @@
                     '@keyframes xxt-enter{from{opacity:0;transform:translateY(12px)}to{opacity:.999;transform:none}}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
                     '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-notice{display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;line-height:1.5}' +
+                    '#xxt-v41-panel .xxt-notice.upd{background:#EFF6FF;color:#1D4ED8}' +
+                    '#xxt-v41-panel .xxt-notice.bg{background:#FFFBEB;color:#92400E}' +
+                    '#xxt-v41-panel .xxt-notice-text{flex:1;min-width:0}' +
+                    '#xxt-v41-panel .xxt-notice-x{flex:none;border:0;background:transparent;color:inherit;opacity:.6;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}' +
+                    '#xxt-v41-panel .xxt-notice-x:hover{opacity:1}' +
                     '#xxt-v41-panel .xxt-live-row{display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;background:#FFF7ED}' +
                     '#xxt-v41-panel .xxt-live-text{flex:1;min-width:0;font-size:12px;color:#9A3412;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
                     '#xxt-v41-panel .xxt-live-btn{flex:none;font:inherit;font-size:12px;font-weight:600;border:0;border-radius:7px;padding:4px 10px;background:#F97316;color:#fff;cursor:pointer}' +
@@ -1449,7 +1500,7 @@
                           '<span style="font-size:17px;font-weight:700;color:#111827;white-space:nowrap">学习通助手</span>' +
                           '<span class="xxt-ver-wrap">' +
                             `<a data-k="ver" href="${REPO_URL}" target="_blank" rel="noopener" aria-label="版本 v${VERSION}">v${VERSION}<i data-k="upd" class="xxt-upd"></i></a>` +
-                            '<span class="xxt-tip" role="tooltip"><b data-k="tip1">开源 · 1668919739/xuexitongScript</b><span data-k="tip2">已是最新版本 · 点击查看源码</span></span>' +
+                            '<span class="xxt-tip" role="tooltip"><b data-k="tip1">开源 · 1668919739/xuexitongScript</b><span data-k="tip2">已是最新版本 · 点击查看源码、反馈问题</span></span>' +
                           '</span>' +
                         '</div>' +
                         '<div style="display:flex;align-items:center;gap:6px;margin-top:2px;font-size:13px;color:#6B7280">' +
@@ -1475,6 +1526,10 @@
                     '<div data-k="liverow" class="xxt-live-row" style="display:none">' +
                       '<span data-k="livetext" class="xxt-live-text"></span>' +
                       '<button type="button" data-k="livebtn" class="xxt-live-btn">打开直播回放</button>' +
+                    '</div>' +
+                    '<div data-k="notice" class="xxt-notice" style="display:none">' +
+                      '<span data-k="noticetext" class="xxt-notice-text"></span>' +
+                      '<button type="button" data-k="noticex" class="xxt-notice-x" aria-label="关闭提示">×</button>' +
                     '</div>';
                 el.querySelector('[data-k="ratebtn"]').addEventListener('click', () => {
                     this._ratesOpen = !this._ratesOpen;
@@ -1493,6 +1548,11 @@
                     this._doUpdate(true);
                 });
                 el.querySelector('[data-k="livebtn"]').addEventListener('click', () => this._openNextLive());
+                el.querySelector('[data-k="noticex"]').addEventListener('click', () => {
+                    this._notice = null;
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
                 el.querySelector('[data-k="power"]').addEventListener('click', () => {
                     if (this._userStopped) this.run();
                     else this.stop();

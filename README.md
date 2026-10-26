@@ -187,15 +187,26 @@ The play() request was interrupted by a call to pause()
 
 ## 维护与验证
 
-修改 `v3_optimized.js` 后，执行：
+修改 `v3_optimized.js` 后执行：
 
-```bash
-node scripts/build-userscript.mjs
-node tests/verify-v3.mjs
+```
+node scripts/build-userscript.mjs   # 生成油猴版和 version.json
+node tests/verify-v3.mjs            # 检查语法、两个入口同步、版本号一致
 ```
 
-第二条命令会验证两个入口的语法，并确认油猴脚本与唯一源码完全一致。
+端到端测试（模拟学习通页面，覆盖播放、倍速、课件、资料页、直播回放、静默更新、一键停止等）：
 
+```
+npm install
+npx playwright install chromium     # 首次需要
+npm run test:e2e
+```
+
+发新版本时：修改源码顶部的 `VERSION`，在同一处的 `CHANGELOG` 和 `CHANGELOG.md` 里写一句更新说明，再运行上面的构建和检查。
+
+## 问题反馈
+
+遇到问题请在本仓库的 Issues 里反馈，附上浮窗截图、控制台（F12）里 `[学习通V4.1]` 开头的日志，以及出问题的页面类型（视频 / 课件 / 直播回放等）。
 
 ## 免责声明
 
