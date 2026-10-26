@@ -18,10 +18,13 @@ export const nextVersion = () => VERSION.replace(/(\d+)$/, (n) => String(Number(
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 课程目录 + 当前小节，nodes 为小节标题数组，active 为当前小节下标 */
-export function coursePage({ nodes = ['2.1 第一部分', '2.2 第二部分'], active = 0, body = '', completed = false } = {}) {
-    const items = nodes.map((t, i) =>
-        `<li><div class="posCatalog_select${i === active ? ' posCatalog_active' : ''}"><span class="posCatalog_name" title="${t}">${t}</span>` +
-        `${i === active && completed ? '<span class="icon_Completed"></span>' : ''}</div></li>`).join('');
+export function coursePage({ nodes = ['2.1 第一部分', '2.2 第二部分'], active = 0, body = '', completed = false, marks = [] } = {}) {
+    // marks[i]：'done' 显示已完成对勾；数字显示未完成任务点角标
+    const items = nodes.map((t, i) => {
+        const mark = marks[i] === 'done' || (i === active && completed) ? '<span class="icon_Completed"></span>'
+            : typeof marks[i] === 'number' ? `<span class="catalog_points"><em>${marks[i]}</em></span>` : '';
+        return `<li><div class="posCatalog_select${i === active ? ' posCatalog_active' : ''}"><span class="posCatalog_name" title="${t}">${t}</span>${mark}</div></li>`;
+    }).join('');
     return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#EEF1F5;min-height:700px">
 <div id="coursetree"><ul><li><div class="posCatalog_select firstLayer"><span class="posCatalog_name" title="2 第一单元">2 第一单元</span></div><ul>${items}</ul></li></ul></div>
 <div class="prev_title" title="视频"></div>${body}</body></html>`;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.2.8
+// @version      4.3.0
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -23,9 +23,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.2.8';
+    const VERSION = '4.3.0';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.3.0': '课程总进度与剩余时间、设置面板、一键复制诊断信息、提示音与系统通知、浮窗可拖动、登录过期提醒',
         '4.2.8': '页面在后台时给出提示、更新后显示更新说明、增加问题反馈入口',
         '4.2.7': '直播回放自动打开，浮窗显示回放进度',
         '4.2.6': '一键停止 / 继续，浮窗出场动画',
@@ -125,6 +126,8 @@
             guardFocus: true,           // 让各层页面认为窗口始终可见/有焦点
             debugPause: false,          // 开启后打印每次 pause() 的调用栈，用于定位是谁暂停了视频
             showPanel: true,            // 页面左下角显示运行状态浮窗
+            alertSound: true,           // 需要人工处理 / 课程完成时播放提示音
+            alertNotify: false,         // 同时弹出系统通知（需要浏览器授权）
             completedPageDwellMs: 2000, // 无视频且已完成的小节，停留多久后进入下一小节
             readDocs: true,             // 自动翻看课件（PPT/PDF/文档）任务点：逐步滚动到底部
             docStepMs: 700,             // 课件每次滚动的间隔
@@ -139,14 +142,41 @@
         // 浮窗里选择的倍速保存在本地，刷新页面、换课程后保持
         const RATE_KEY = 'xxt-v41-rate';
         const SEEN_KEY = 'xxt-v41-seen-version';
+        const SETTINGS_KEY = 'xxt-v41-settings';
+        const POS_KEY = 'xxt-v41-panel-pos';
+        // 设置面板里可以开关的项，保存在本地
+        const SETTING_ITEMS = [
+            ['autoUpdate', '自动更新', '发现新版本后，在两个小节之间自动静默更新'],
+            ['autoOpenLive', '自动打开直播回放', '有未完成的直播回放时自动打开回放页'],
+            ['muted', '静音播放', '接管视频时静音（关闭后浏览器可能阻止自动播放）'],
+            ['alertSound', '提示音', '弹题、需要处理、课程完成时播放提示音'],
+            ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
+        ];
+        try {
+            const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+            for (const [k] of SETTING_ITEMS) if (typeof saved[k] === 'boolean') C[k] = saved[k];
+        } catch (e) { /* 读取失败时使用默认设置 */ }
+        const saveSettings = () => {
+            try {
+                const o = {};
+                for (const [k] of SETTING_ITEMS) o[k] = C[k];
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(o));
+            } catch (e) { /* ignore */ }
+        };
         const RATE_OPTIONS = [1, 1.25, 1.5, 2];
         try {
             const saved = parseFloat(localStorage.getItem(RATE_KEY));
             if (RATE_OPTIONS.includes(saved)) C.playbackRate = saved;
         } catch (e) { /* 无法读取本地存储时使用默认倍速 */ }
 
-        const log = (msg, color = '#607D8B', level = 'log') =>
+        // 最近的日志保存在内存里，“复制诊断信息”时一起带上
+        const LOGS = [];
+        const log = (msg, color = '#607D8B', level = 'log') => {
+            const d = new Date();
+            LOGS.push(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')} ${level === 'log' ? '' : '[' + level + '] '}${msg}`);
+            if (LOGS.length > 80) LOGS.shift();
             console[level](`%c[学习通V4.1] ${msg}`, `color:${color}`);
+        };
 
         const app = {
             configs: C,
@@ -195,6 +225,12 @@
             _userStopped: false,
             _lastTickTs: 0,
             _notice: null,
+            _settingsOpen: false,
+            _progress: null,
+            _progressTs: 0,
+            _loginExpired: false,
+            _lastAlertKey: '',
+            _audioCtx: null,
             _lives: [],
             _liveOpened: new WeakSet(),
             _liveScanTs: 0,
@@ -211,7 +247,7 @@
             start() {
                 log(`=== 学习通自动播放脚本 V4.1 启动 === v${VERSION} · 源码 ${REPO_URL}`, '#4CAF50');
                 this._bindPageEvents();
-                this._timer = setInterval(() => this._tick(), C.tickMs);
+                this._startTimer();
                 this._enterLoading('start');
                 this._showUpdatedNotice();
                 this._renderPanel();
@@ -219,7 +255,7 @@
             },
             run() {
                 this._userStopped = false;
-                if (!this._timer) this._timer = setInterval(() => this._tick(), C.tickMs);
+                if (!this._timer) this._startTimer();
                 if (this._mode === 'live') {
                     this._video = null;
                     this._state = 'loading';
@@ -278,8 +314,7 @@
             },
             destroy() {
                 this._state = 'stopped';
-                if (this._timer) clearInterval(this._timer);
-                this._timer = null;
+                this._stopTimer();
                 if (this._updateTimer) clearInterval(this._updateTimer);
                 this._updateTimer = null;
                 this._clearTimeouts();
@@ -311,6 +346,34 @@
                 this._timeouts.clear();
             },
 
+            // ================= 计时器 =================
+            // 主循环放在后台线程（Web Worker）里计时：浏览器对后台标签页的普通定时器限制很严，
+            // 对 Worker 宽松得多，页面在后台时也能更及时地恢复播放、切换下一节。创建失败时回退到普通定时器。
+            _startTimer() {
+                this._stopTimer();
+                const fallback = () => {
+                    if (this._timer && this._timer.worker) { try { this._timer.worker.terminate(); URL.revokeObjectURL(this._timer.url); } catch (e) { /* ignore */ } }
+                    this._timer = { id: setInterval(() => this._tick(), C.tickMs) };
+                };
+                try {
+                    const url = URL.createObjectURL(new Blob([`setInterval(function(){postMessage(0)},${C.tickMs});`], { type: 'text/javascript' }));
+                    const worker = new Worker(url);
+                    worker.onmessage = () => this._tick();
+                    worker.onerror = () => { if (this._timer && this._timer.worker === worker) fallback(); };
+                    this._timer = { worker, url };
+                } catch (e) {
+                    fallback();
+                }
+            },
+
+            _stopTimer() {
+                const t = this._timer;
+                if (!t) return;
+                if (t.worker) { try { t.worker.terminate(); URL.revokeObjectURL(t.url); } catch (e) { /* ignore */ } }
+                if (t.id) clearInterval(t.id);
+                this._timer = null;
+            },
+
             // ================= 主循环 =================
             _tick() {
                 const now = Date.now();
@@ -334,6 +397,7 @@
                 if (this._mode === 'live') { this._liveTick(); return; }
                 this._maybeAutoUpdate();
                 this._scanLiveCards();
+                this._scanCourse();
                 if (this._updating) return;
                 if (this._state === 'stopped' || this._state === 'advancing' || this._state === 'idle' || this._state === 'reading') return;
                 try {
@@ -725,6 +789,7 @@
 
             _attachVideo(item) {
                 const v = item.video;
+                this._recordDuration(v);
                 this._video = v;
                 this._videoFrameEl = item.frameEl;
                 this._state = 'playing';
@@ -1100,7 +1165,7 @@
                 window.addEventListener('message', this._onLiveMessage);
                 const m = /[?&]rt=([\d.]+)/.exec(location.search);
                 this._liveRequired = m ? Math.round(parseFloat(m[1]) * 100) : 90;
-                this._timer = setInterval(() => this._tick(), C.tickMs);
+                this._startTimer();
                 this._state = 'loading';
                 this._renderPanel();
                 if (!playerOnly) {
@@ -1312,6 +1377,243 @@
                 if (this._state === 'loading' || this._state === 'waiting' || this._state === 'stopped') this._doUpdate(false);
             },
 
+            // ================= 课程总进度 / 登录状态 =================
+            _courseKey() {
+                const m = /[?&]courseId=(\d+)/i.exec(location.search) || /[?&]courseid=(\d+)/i.exec(location.search);
+                return m ? m[1] : 'default';
+            },
+
+            // 记录看过的视频时长，用来估算剩余时间
+            _recordDuration(v) {
+                const save = () => {
+                    const d = v.duration;
+                    if (!isFinite(d) || d < 30 || d > 6 * 3600 || v.__xxtDurRecorded) return;
+                    v.__xxtDurRecorded = true;
+                    try {
+                        const key = 'xxt-v41-dur-' + this._courseKey();
+                        const o = JSON.parse(localStorage.getItem(key) || '{"sum":0,"count":0}');
+                        o.sum += d; o.count += 1;
+                        if (o.count > 50) { o.sum = o.sum / o.count * 50; o.count = 50; }
+                        localStorage.setItem(key, JSON.stringify(o));
+                    } catch (e) { /* ignore */ }
+                };
+                if (isFinite(v.duration) && v.duration > 0) save();
+                else v.addEventListener('loadedmetadata', save, { once: true });
+            },
+
+            _scanCourse() {
+                const now = Date.now();
+                if (now - this._progressTs < 5000) return;
+                this._progressTs = now;
+                // 课程进度：目录里带“已完成”标记的算完成，带数字角标（未完成任务点数）的算未完成
+                try {
+                    let done = 0, pending = 0;
+                    this._nodes().each((_, n) => {
+                        if (n.querySelector('.icon_Completed, [class*="icon_Completed"], [class*="icon_complete"]')) { done++; return; }
+                        const badge = [...n.querySelectorAll('span, em, i, div')].some((e) => e.children.length === 0 && /^\d+$/.test((e.textContent || '').trim()));
+                        if (badge) pending++;
+                    });
+                    let avg = 0;
+                    try {
+                        const o = JSON.parse(localStorage.getItem('xxt-v41-dur-' + this._courseKey()) || 'null');
+                        if (o && o.count) avg = o.sum / o.count;
+                    } catch (e) { /* ignore */ }
+                    this._progress = done + pending ? { done, total: done + pending, pending, avg } : null;
+                } catch (e) {
+                    this._progress = null;
+                }
+                // 登录状态：页面里出现跳转到登录页的框架，或明确的“登录超时”提示
+                let expired = false;
+                for (const doc of this._sameOriginDocs()) {
+                    let frames = [];
+                    try { frames = doc.querySelectorAll('iframe'); } catch (e) { continue; }
+                    for (const f of frames) {
+                        const src = f.getAttribute('src') || '';
+                        if (/passport\d*\.chaoxing\.com|\/login(\?|$|\/)/i.test(src)) { expired = true; break; }
+                    }
+                    if (expired) break;
+                    try {
+                        for (const el of doc.querySelectorAll('.layui-layer-content, [class*="dialog"], [class*="popup"], [class*="tip"]')) {
+                            if (el.offsetParent !== null && /登录超时|登录已过期|请重新登录|登录失效/.test(el.textContent || '')) { expired = true; break; }
+                        }
+                    } catch (e) { /* ignore */ }
+                    if (expired) break;
+                }
+                if (expired && !this._loginExpired) log('检测到登录可能已过期，请重新登录后刷新页面', '#F44336', 'warn');
+                this._loginExpired = expired;
+            },
+
+            _progressLine() {
+                const p = this._progress;
+                if (!p) return null;
+                let eta = '';
+                if (p.pending && p.avg) {
+                    const sec = (p.pending * p.avg) / (C.playbackRate || 1);
+                    const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+                    eta = ` · 预计还需约 ${h ? h + ' 小时 ' : ''}${h && !m ? '' : m + ' 分钟'}`;
+                }
+                return { pct: Math.round((p.done / p.total) * 100), text: `课程进度 ${p.done}/${p.total} 节${p.pending ? eta : ' · 已全部完成'}` };
+            },
+
+            // ================= 提醒 =================
+            _beep() {
+                try {
+                    const Ctx = window.AudioContext || window.webkitAudioContext;
+                    if (!Ctx) return;
+                    if (!this._audioCtx) this._audioCtx = new Ctx();
+                    const ctx = this._audioCtx;
+                    if (ctx.state === 'suspended') ctx.resume();
+                    [[880, 0], [1175, 0.18]].forEach(([freq, at]) => {
+                        const o = ctx.createOscillator(), g = ctx.createGain();
+                        o.type = 'sine'; o.frequency.value = freq;
+                        g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+                        g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + at + 0.02);
+                        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.16);
+                        o.connect(g).connect(ctx.destination);
+                        o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.18);
+                    });
+                } catch (e) { /* ignore */ }
+            },
+
+            _alert(title, body) {
+                if (C.alertSound) this._beep();
+                if (C.alertNotify) {
+                    try {
+                        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                            const n = new Notification(title, { body, tag: 'xxt-v41', renotify: true });
+                            n.onclick = () => { try { window.focus(); n.close(); } catch (e) { /* ignore */ } };
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            },
+
+            // 状态进入“需要处理 / 已完成”时提醒一次
+            _checkAlert(st) {
+                let key = '', title = '', body = '';
+                if (st.color === '#E5484D') { key = 'attn|' + st.text; title = '学习通助手：需要你处理'; body = st.text; }
+                else if (/已完成|已达标/.test(st.label)) { key = 'done|' + st.text; title = '学习通助手'; body = st.text; }
+                if (key && key !== this._lastAlertKey) this._alert(title, body);
+                this._lastAlertKey = key;
+            },
+
+            // ================= 设置 / 诊断 / 位置 =================
+            _toggleSetting(k, on) {
+                if (k === 'alertNotify' && on) {
+                    if (typeof Notification === 'undefined') {
+                        this._notice = { kind: 'bg', until: Date.now() + 8000, text: '当前浏览器不支持系统通知' };
+                        on = false;
+                    } else if (Notification.permission === 'denied') {
+                        this._notice = { kind: 'bg', until: Date.now() + 10000, text: '浏览器已禁止本站通知，请在地址栏左侧的网站设置里允许通知' };
+                        on = false;
+                    } else if (Notification.permission !== 'granted') {
+                        Notification.requestPermission().then((perm) => {
+                            C.alertNotify = perm === 'granted';
+                            saveSettings();
+                            if (!C.alertNotify) this._notice = { kind: 'bg', until: Date.now() + 8000, text: '没有获得通知权限，系统通知未开启' };
+                            this._panelKey = '';
+                            this._renderPanel();
+                        });
+                    }
+                }
+                C[k] = on;
+                saveSettings();
+                if (k === 'muted' && this._isValid(this._video)) { try { this._video.muted = on; } catch (e) { /* ignore */ } }
+                log(`设置：${(SETTING_ITEMS.find((x) => x[0] === k) || [k, k])[1]} ${on ? '开启' : '关闭'}`, '#2196F3');
+                this._panelKey = '';
+                this._renderPanel();
+            },
+
+            _diagnostics() {
+                const v = this._isValid(this._video) ? this._video : null;
+                const st = this._panelStatus();
+                const lines = [
+                    '【学习通助手 诊断信息】',
+                    `版本：v${VERSION}（${(() => { try { return typeof GM_info !== 'undefined' ? '油猴版' : '控制台版'; } catch (e) { return '控制台版'; } })()}）`,
+                    `页面：${location.origin}${location.pathname}`,
+                    `模式/状态：${this._mode} / ${this._state}${this._userStopped ? '（已手动停止）' : ''}`,
+                    `浮窗：${st.label} · ${st.text}${st.sub ? ' · ' + st.sub : ''}`,
+                    `章节：${this._chapterLine() || '-'}`,
+                    `课程进度：${this._progress ? `${this._progress.done}/${this._progress.total}` : '-'}`,
+                    `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
+                    `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
+                    `设置：倍速 ${C.playbackRate}x · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
+                    `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
+                    `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
+                    `浏览器：${navigator.userAgent}`,
+                    '',
+                    '—— 最近日志 ——',
+                    ...LOGS.slice(-40),
+                ];
+                return lines.join('\n');
+            },
+
+            _copyDiagnostics() {
+                const text = this._diagnostics();
+                const done = (ok) => {
+                    this._notice = { kind: ok ? 'upd' : 'bg', until: Date.now() + 8000, text: ok ? '已复制诊断信息，可以直接粘贴到仓库的 Issues 里反馈' : '复制失败，请按 F12 在控制台执行 copy(app._diagnostics())' };
+                    this._panelKey = '';
+                    this._renderPanel();
+                };
+                const legacy = () => {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                        document.body.appendChild(ta); ta.select();
+                        const ok = document.execCommand('copy');
+                        ta.remove(); done(ok);
+                    } catch (e) { done(false); }
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), legacy);
+                    else legacy();
+                } catch (e) { legacy(); }
+            },
+
+            _applyPanelPos(el) {
+                let pos = null;
+                try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { pos = null; }
+                if (pos && isFinite(pos.left) && isFinite(pos.top)) {
+                    const w = el.offsetWidth || 324, h = el.offsetHeight || 220;
+                    const left = Math.min(Math.max(0, pos.left), Math.max(0, window.innerWidth - w));
+                    const top = Math.min(Math.max(0, pos.top), Math.max(0, window.innerHeight - h));
+                    el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.bottom = 'auto';
+                } else {
+                    el.style.left = '20px'; el.style.top = 'auto'; el.style.bottom = '20px';
+                }
+            },
+
+            _bindDrag(el, handle) {
+                let start = null;
+                handle.addEventListener('pointerdown', (e) => {
+                    if (e.button !== 0 || e.target.closest('button, a, input, label')) return;
+                    const r = el.getBoundingClientRect();
+                    start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, moved: false };
+                    handle.setPointerCapture(e.pointerId);
+                });
+                handle.addEventListener('pointermove', (e) => {
+                    if (!start) return;
+                    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+                    if (!start.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+                    start.moved = true;
+                    const left = Math.min(Math.max(0, start.left + dx), window.innerWidth - el.offsetWidth);
+                    const top = Math.min(Math.max(0, start.top + dy), window.innerHeight - el.offsetHeight);
+                    el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.bottom = 'auto';
+                });
+                const end = () => {
+                    if (start && start.moved) {
+                        try { localStorage.setItem(POS_KEY, JSON.stringify({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) })); } catch (e) { /* ignore */ }
+                    }
+                    start = null;
+                };
+                handle.addEventListener('pointerup', end);
+                handle.addEventListener('pointercancel', end);
+            },
+
+            _resetPanelPos() {
+                try { localStorage.removeItem(POS_KEY); } catch (e) { /* ignore */ }
+                if (this._panel) this._applyPanelPos(this._panel);
+            },
+
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -1324,6 +1626,7 @@
                 };
                 const GREEN = '#22B573', ORANGE = '#F5A524', RED = '#E5484D', BLUE = '#3B82F6', GREY = '#9CA3AF';
                 if (this._mode === 'live') return this._livePanelStatus(fmt, { GREEN, ORANGE, RED, BLUE, GREY });
+                if (this._loginExpired) return { color: RED, label: '需要登录', text: '登录可能已过期，请重新登录后刷新页面' };
                 switch (this._state) {
                     case 'reading': {
                         const d = this._docProgress || { i: 1, n: 1, pct: 0 };
@@ -1370,7 +1673,9 @@
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
                 if (this._mode !== 'live') st.chap = this._chapterLine();
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
+                this._checkAlert(st);
+                const prog = this._mode !== 'live' ? this._progressLine() : null;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1384,6 +1689,15 @@
                 q('chap').style.display = st.chap ? 'block' : 'none';
                 q('box').style.borderLeftColor = st.color === '#22B573' ? '#A7C7F2' : st.color;
                 q('box').style.display = this._panelCollapsed ? 'none' : 'block';
+                q('prog').style.display = prog ? 'block' : 'none';
+                if (prog) {
+                    q('progbar').style.width = prog.pct + '%';
+                    q('progtext').textContent = prog.text;
+                }
+                q('settings').style.display = this._settingsOpen && !this._panelCollapsed ? 'block' : 'none';
+                q('gear').classList.toggle('on', this._settingsOpen);
+                q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
+                for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
                 q('toggle').title = this._panelCollapsed ? '展开' : '收起';
                 const pw = q('power');
@@ -1401,7 +1715,7 @@
                 q('tip2').textContent = this._updating ? '请稍候' : hasUpd
                     ? (this._updateFailed ? '更新失败，点击重试' : C.autoUpdate ? '将在下一小节开始前自动更新 · 点击立即更新' : '点击立即更新，无需刷新页面')
                     : '已是最新版本 · 点击查看源码、反馈问题';
-                const showRates = this._mode !== 'live' && !this._panelCollapsed;
+                const showRates = this._mode !== 'live' && !this._panelCollapsed && !this._settingsOpen;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
                 const nt = this._notice && Date.now() < this._notice.until ? this._notice : null;
@@ -1437,13 +1751,35 @@
                 el.id = 'xxt-v41-panel';
                 el.style.cssText = [
                     'position:fixed', 'left:20px', 'bottom:20px', 'z-index:2147483647', 'box-sizing:border-box',
-                    'width:316px', 'padding:16px', 'border-radius:16px', 'background:#fff', 'color:#1F2937',
+                    'width:324px', 'padding:16px', 'border-radius:16px', 'background:#fff', 'color:#1F2937',
                     'box-shadow:0 8px 28px rgba(15,23,42,.12),0 1px 3px rgba(15,23,42,.08)',
                     'font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif',
                 ].join(';');
                 el.innerHTML =
                     '<style>' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
+                    '#xxt-v41-panel .xxt-head{display:flex;align-items:center;gap:12px;cursor:grab;touch-action:none}' +
+                    '#xxt-v41-panel .xxt-head:active{cursor:grabbing}' +
+                    '#xxt-v41-panel .xxt-actions{align-self:flex-start;display:flex;align-items:center;gap:2px;margin-right:-6px}' +
+                    '#xxt-v41-panel .xxt-gear{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-gear:hover,#xxt-v41-panel .xxt-gear:focus-visible,#xxt-v41-panel .xxt-gear.on{background:#E3ECFD;color:#2563EB;outline:none}' +
+                    '#xxt-v41-panel .xxt-prog{margin-top:8px}' +
+                    '#xxt-v41-panel .xxt-prog-track{height:4px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
+                    '#xxt-v41-panel .xxt-prog-bar{height:100%;border-radius:2px;background:#3B82F6;transition:width .4s ease}' +
+                    '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-settings{margin-top:12px;padding:10px 12px;border-radius:10px;background:#F6F8FB}' +
+                    '#xxt-v41-panel .xxt-set-row{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-set-row span{flex:1;min-width:0;font-size:13px;color:#374151}' +
+                    '#xxt-v41-panel .xxt-set-row small{display:block;font-size:11px;color:#9CA3AF;line-height:1.35}' +
+                    '#xxt-v41-panel .xxt-switch{appearance:none;-webkit-appearance:none;flex:none;width:32px;height:18px;border-radius:9px;background:#D1D5DB;position:relative;cursor:pointer;margin:0;transition:background .15s}' +
+                    '#xxt-v41-panel .xxt-switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}' +
+                    '#xxt-v41-panel .xxt-switch:checked{background:#3B82F6}' +
+                    '#xxt-v41-panel .xxt-switch:checked::after{transform:translateX(14px)}' +
+                    '#xxt-v41-panel .xxt-switch:focus-visible{outline:2px solid #93C5FD;outline-offset:2px}' +
+                    '#xxt-v41-panel .xxt-set-actions{display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid #E5E9F0}' +
+                    '#xxt-v41-panel .xxt-set-btn{flex:1;font:inherit;font-size:12px;border:0;border-radius:7px;padding:6px 0;background:#fff;color:#374151;cursor:pointer;box-shadow:inset 0 0 0 1px #E5E9F0}' +
+                    '#xxt-v41-panel .xxt-set-btn:hover,#xxt-v41-panel .xxt-set-btn:focus-visible{background:#E3ECFD;color:#2563EB;outline:none}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-prog-bar,#xxt-v41-panel .xxt-switch,#xxt-v41-panel .xxt-switch::after{transition:none}}' +
                     '#xxt-v41-panel .xxt-power{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-power:hover,#xxt-v41-panel .xxt-power:focus-visible{background:#FEE2E2;color:#DC2626;outline:none}' +
                     '#xxt-v41-panel .xxt-power.paused{color:#16A34A}' +
@@ -1489,7 +1825,7 @@
                     '#xxt-v41-panel .xxt-ver-wrap:hover .xxt-tip,#xxt-v41-panel [data-k="ver"]:focus-visible + .xxt-tip{opacity:1;transform:translateY(0)}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-tip{transition:none}#xxt-v41-panel .xxt-upd::after{animation:none;opacity:0}}' +
                     '</style>' +
-                    '<div style="display:flex;align-items:center;gap:12px">' +
+                    '<div data-k="head" class="xxt-head" title="按住拖动浮窗">' +
                       '<div style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
                         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
                           '<path d="M12 6.5C10.3 5.2 7.9 4.6 4 4.8v13.4c3.9-.2 6.3.4 8 1.7 1.7-1.3 4.1-1.9 8-1.7V4.8c-3.9-.2-6.3.4-8 1.7z"/>' +
@@ -1508,13 +1844,26 @@
                           '<span data-k="label"></span>' +
                         '</div>' +
                       '</div>' +
+                      '<div class="xxt-actions">' +
+                      '<button type="button" data-k="gear" class="xxt-gear" title="设置" aria-label="设置" aria-expanded="false">' +
+                        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>' +
+                      '</button>' +
                       '<button type="button" data-k="power" class="xxt-power"></button>' +
-                      '<span data-k="toggle" style="align-self:flex-start;cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
+                      '<span data-k="toggle" style="cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
+                      '</div>' +
                     '</div>' +
                     '<div data-k="box" style="margin-top:14px;padding:11px 14px;border-radius:10px;background:#F6F8FB;border-left:3px solid #A7C7F2">' +
                       '<div data-k="chap" style="margin-bottom:4px;font-size:12px;color:#6B7280;word-break:break-all"></div>' +
                       '<div data-k="text" style="color:#374151;word-break:break-all"></div>' +
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
+                      '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
+                    '</div>' +
+                    '<div data-k="settings" class="xxt-settings" style="display:none">' +
+                      SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
+                      '<div class="xxt-set-actions">' +
+                        '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
+                        '<button type="button" data-k="resetpos" class="xxt-set-btn">浮窗回到左下角</button>' +
+                      '</div>' +
                     '</div>' +
                     '<div data-k="rates" class="xxt-rate-row">' +
                       '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
@@ -1548,6 +1897,17 @@
                     this._doUpdate(true);
                 });
                 el.querySelector('[data-k="livebtn"]').addEventListener('click', () => this._openNextLive());
+                el.querySelector('[data-k="gear"]').addEventListener('click', () => {
+                    this._settingsOpen = !this._settingsOpen;
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
+                for (const inp of el.querySelectorAll('[data-set]')) {
+                    inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
+                }
+                el.querySelector('[data-k="diag"]').addEventListener('click', () => this._copyDiagnostics());
+                el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
+                this._bindDrag(el, el.querySelector('[data-k="head"]'));
                 el.querySelector('[data-k="noticex"]').addEventListener('click', () => {
                     this._notice = null;
                     this._panelKey = '';
@@ -1568,6 +1928,7 @@
                     el.addEventListener('animationend', (e) => { if (e.target === el) el.classList.remove('xxt-enter'); });
                 }
                 document.body.appendChild(el);
+                this._applyPanelPos(el);
                 this._panel = el;
                 this._panelKey = '';
                 return el;

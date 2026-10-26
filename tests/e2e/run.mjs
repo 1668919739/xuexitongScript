@@ -222,6 +222,102 @@ test('油猴更新后第一次打开：显示这一版的更新说明', async (b
     await ctx.close();
 });
 
+// ---------- v4.3 新功能 ----------
+test('计时器在后台线程（Worker）运行', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    const r = await p.evaluate(() => ({ worker: !!(app._timer && app._timer.worker), playing: !__v.paused }));
+    assert(r.worker && r.playing, `计时器不对：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
+test('课程总进度：统计完成/未完成小节并估算剩余时间', async (b) => {
+    const page = coursePage({ nodes: ['1.1 导学', '2.1 第一部分', '2.2 第二部分', '2.3 第三部分'], active: 1, marks: ['done', 2, 3, 1] });
+    const ctx = await newContext(b, { routes: { '*': page } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=123');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-dur-123', JSON.stringify({ sum: 1800, count: 1 })));
+    await addFakeVideo(p);
+    await inject(p); await sleep(7000);
+    const t = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=progtext]').textContent);
+    // 3 节未完成 × 平均时长（1800s 与本节 1540s 的平均）÷ 1.5 倍速 ≈ 56 分钟
+    assert(/课程进度 1\/4 节/.test(t) && /预计还需约 5\d 分钟/.test(t), `进度文字不对：${t}`);
+    await ctx.close();
+});
+
+test('设置面板：关闭自动更新后保存，发现新版本也不自动更新', async (b) => {
+    const nv = nextVersion();
+    const ctx = await newContext(b, { latest: nv, versionDelay: 3000 });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await inject(p); await sleep(500);
+    await p.click('[data-k=gear]'); await sleep(200);
+    await p.click('.xxt-set-row:has([data-set=autoUpdate])'); await sleep(200);
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).autoUpdate);
+    assert(saved === false, '设置没有保存');
+    await sleep(6000);
+    const info = await panelInfo(p);
+    assert(info.ver === `v${VERSION}`, `关闭自动更新后不应更新：${info.ver}`);
+    assert(/点击立即更新/.test(info.tip2 || ''), `应提示手动更新：${info.tip2}`);
+    await ctx.close();
+});
+
+test('一键复制诊断信息：包含版本、状态和最近日志', async (b) => {
+    const ctx = await newContext(b);
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'https://mooc1.chaoxing.com' });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=1&enc=secret');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.click('[data-k=gear]'); await sleep(200);
+    await p.click('[data-k=diag]'); await sleep(500);
+    const text = await p.evaluate(() => navigator.clipboard.readText());
+    assert(text.includes(`v${VERSION}`) && text.includes('最近日志') && text.includes('接管视频'), `诊断信息不完整：${text.slice(0, 200)}`);
+    assert(!text.includes('secret'), '诊断信息不应包含网址参数');
+    assert(/已复制诊断信息/.test((await panelInfo(p)).notice || ''), '没有复制成功提示');
+    await ctx.close();
+});
+
+test('浮窗可拖动并记住位置，可以回到左下角', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await inject(p); await sleep(1500);
+    const h = await (await p.$('#xxt-v41-panel [data-k=head]')).boundingBox();
+    await p.mouse.move(h.x + 120, h.y + 20); await p.mouse.down();
+    await p.mouse.move(h.x + 320, h.y - 200, { steps: 8 }); await p.mouse.up();
+    const moved = await p.evaluate(() => document.getElementById('xxt-v41-panel').getBoundingClientRect().left);
+    assert(moved > 150, `没有拖动：left=${moved}`);
+    await p.reload(); await inject(p); await sleep(1500);
+    const kept = await p.evaluate(() => document.getElementById('xxt-v41-panel').getBoundingClientRect().left);
+    assert(Math.abs(kept - moved) < 2, `刷新后位置没保持：${kept} vs ${moved}`);
+    await p.click('[data-k=gear]'); await p.click('[data-k=resetpos]'); await sleep(200);
+    const reset = await p.evaluate(() => document.getElementById('xxt-v41-panel').getBoundingClientRect().left);
+    assert(reset === 20, `没有回到左下角：${reset}`);
+    await ctx.close();
+});
+
+test('需要处理时提醒一次；登录过期时提示重新登录', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate(() => { window.__alerts = []; app._alert = (t, body) => window.__alerts.push(body); });
+    for (let i = 0; i < 3; i++) { await p.evaluate(() => __v.pause()); await sleep(100); }
+    await sleep(2500);
+    const alerts = await p.evaluate(() => window.__alerts);
+    assert(alerts.length === 1 && /暂停了视频/.test(alerts[0]), `提醒次数不对：${JSON.stringify(alerts)}`);
+    await p.evaluate(() => { const f = document.createElement('iframe'); f.setAttribute('src', 'https://passport2.chaoxing.com/login?refer=x'); document.body.appendChild(f); });
+    await sleep(6500);
+    const info = await panelInfo(p);
+    assert(info.label === '需要登录', `没有登录过期提示：${JSON.stringify(info)}`);
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
