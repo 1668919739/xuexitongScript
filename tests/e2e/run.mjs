@@ -648,6 +648,49 @@ test('反馈：在浮窗里写问题或建议，可复制内容或在 GitHub 打
     await ctx.close();
 });
 
+test('后台防卡顿：转到后台时以极小音量播放、持有保活锁，回到前台恢复静音', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    // 模拟浏览器真实的“页面隐藏”状态
+    await p.evaluate(() => { window.__hid = false; Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get() { return window.__hid; } }); });
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    const locks = await p.evaluate(async () => (await navigator.locks.query()).held.map((l) => l.name));
+    assert(locks.some((n) => n.startsWith('xxt-v41-keepalive')), `没有持有保活锁：${JSON.stringify(locks)}`);
+    const st = () => p.evaluate(() => ({ muted: __v.muted, volume: __v.volume, paused: __v.paused }));
+    assert((await st()).muted, '前台应静音');
+    await p.evaluate(() => { window.__hid = true; document.dispatchEvent(new Event('visibilitychange')); });
+    await sleep(1500);
+    let r = await st();
+    assert(!r.muted && Math.abs(r.volume - 0.03) < 0.001 && !r.paused, `后台没有切到极小音量：${JSON.stringify(r)}`);
+    await p.evaluate(() => { window.__hid = false; document.dispatchEvent(new Event('visibilitychange')); });
+    await sleep(300);
+    r = await st();
+    assert(r.muted && r.volume > 0.5, `回到前台没有恢复静音：${JSON.stringify(r)}`);
+    assert(/后台：防卡顿/.test(await p.evaluate(() => app._diagnostics())), '诊断信息里没有后台状态');
+    await ctx.close();
+});
+
+test('后台防卡顿：浏览器不允许取消静音时，恢复静音继续播放', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await p.evaluate(() => { window.__hid = false; Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get() { return window.__hid; } }); });
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    // 模拟浏览器：取消静音就暂停视频
+    await p.evaluate(() => {
+        const v = __v; let m = true;
+        Object.defineProperty(v, 'muted', { configurable: true, get: () => m, set: (x) => { m = x; if (!x) v.pause(); } });
+        window.__hid = true; document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await sleep(2500);
+    const r = await p.evaluate(() => ({ muted: __v.muted, paused: __v.paused, blocked: app._bgAudioBlocked }));
+    assert(r.muted && !r.paused && r.blocked, `没有回退到静音播放：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();

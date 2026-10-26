@@ -6,9 +6,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.4.3';
+    const VERSION = '4.4.4';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.4.4': '后台防卡顿：切到别的窗口时以极小音量播放，并防止浏览器冻结页面',
         '4.4.3': '弹题等需要处理时改用急促的警示音，和普通提示音区分开',
         '4.4.2': '浮窗设置里可以直接反馈问题或提建议',
         '4.4.1': '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间',
@@ -130,6 +131,8 @@
             showPanel: true,            // 页面左下角显示运行状态浮窗
             alertSound: true,           // 需要人工处理 / 课程完成时播放提示音
             alertNotify: false,         // 同时弹出系统通知（需要浏览器授权）
+            bgAudio: true,              // 后台防卡顿：页面在后台时以极小音量播放（浏览器不会给“正在播放声音”的页面限速、冻结或暂停视频）
+            bgVolume: 0.03,             // 后台防卡顿时的音量（0~1）
             alertRepeatMs: 15000,       // 需要人工处理时，每隔多久再响一次提示音，直到处理完
             completedPageDwellMs: 2000, // 无视频且已完成的小节，停留多久后进入下一小节
             readDocs: true,             // 自动翻看课件（PPT/PDF/文档）任务点：逐步滚动到底部
@@ -174,6 +177,7 @@
             ['autoUpdate', '自动更新', '发现新版本后，在两个小节之间自动静默更新'],
             ['autoOpenLive', '自动打开直播回放', '有未完成的直播回放时自动打开回放页'],
             ['muted', '静音播放', '接管视频时静音（关闭后浏览器可能阻止自动播放）'],
+            ['bgAudio', '后台防卡顿', '切到别的窗口时以极小音量播放，浏览器就不会给页面限速、暂停视频'],
             ['alertSound', '提示音', '需要处理时（弹题等）响急促的警示音，每 15 秒一次直到处理完；完成等普通提醒响柔和的提示音'],
             ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
             ['breakRemind', '休息提醒', '连续学习 45 分钟后，提醒起来活动一下'],
@@ -408,6 +412,7 @@
             // 对 Worker 宽松得多，页面在后台时也能更及时地恢复播放、切换下一节。创建失败时回退到普通定时器。
             _startTimer() {
                 this._stopTimer();
+                this._holdLock();
                 const fallback = () => {
                     const pending = this._timer && this._timer.fns ? [...this._timer.fns.values()] : [];
                     if (this._timer && this._timer.worker) { try { this._timer.worker.terminate(); URL.revokeObjectURL(this._timer.url); } catch (e) { /* ignore */ } }
@@ -432,7 +437,57 @@
                 }
             },
 
+            // 持有一个 Web Lock：浏览器不会冻结 / 丢弃持有锁的标签页
+            _holdLock() {
+                if (this._lockRelease || this._mode === 'list') return;
+                try {
+                    if (!navigator.locks || !navigator.locks.request) return;
+                    navigator.locks.request('xxt-v41-keepalive-' + Math.random().toString(36).slice(2), () => new Promise((res) => { this._lockRelease = res; })).catch(() => {});
+                } catch (e) { /* ignore */ }
+            },
+            _releaseLock() {
+                if (this._lockRelease) { try { this._lockRelease(); } catch (e) { /* ignore */ } }
+                this._lockRelease = null;
+            },
+
+            // 后台防卡顿：页面真正转到后台、视频静音播放时，改为极小音量播放；回到前台恢复静音。
+            // 浏览器不允许取消静音（会把视频暂停）时，恢复静音并在本页不再尝试。
+            _syncBgAudio() {
+                const v = this._video;
+                const want = C.bgAudio && C.muted && this._mode === 'course' && !this._userStopped && !this._bgAudioBlocked &&
+                    this._state === 'playing' && this._isValid(v) && reallyHidden();
+                if (want && !this._bgAudio) {
+                    if (!v.muted) return;
+                    this._bgAudio = { v, volume: v.volume };
+                    try {
+                        this._selfActionUntil = Date.now() + 1500;
+                        v.volume = C.bgVolume;
+                        v.muted = false;
+                    } catch (e) { /* ignore */ }
+                    log('页面转到后台：以极小音量播放，防止浏览器限速、暂停视频', '#607D8B');
+                    this._wait(() => {
+                        const b = this._bgAudio;
+                        if (b && b.v === v && v.paused && !v.ended) {
+                            this._bgAudioBlocked = true;
+                            this._restoreBgAudio();
+                            log('浏览器不允许在后台取消静音，已恢复静音播放（本页不再尝试）', '#FF9800', 'warn');
+                            this._lastResumeTs = 0;
+                            this._resume('bg-audio-blocked');
+                        }
+                    }, 900);
+                } else if (!want && this._bgAudio) {
+                    this._restoreBgAudio();
+                }
+            },
+            _restoreBgAudio() {
+                const b = this._bgAudio;
+                this._bgAudio = null;
+                if (!b) return;
+                try { b.v.muted = true; b.v.volume = b.volume; } catch (e) { /* ignore */ }
+            },
+
             _stopTimer() {
+                this._releaseLock();
                 const t = this._timer;
                 if (!t) return;
                 if (t.worker) { try { t.worker.terminate(); URL.revokeObjectURL(t.url); } catch (e) { /* ignore */ } }
@@ -459,6 +514,7 @@
                 this._lastTickTs = now;
                 try {
                     this._tickInner();
+                    this._syncBgAudio();
                 } finally {
                     this._renderPanel();
                 }
@@ -617,6 +673,7 @@
                 if (now < this._selfActionUntil) return;      // 脚本自己 seek/重载引起的暂停
                 if (v.ended || this._nearEnd(v)) return;
                 if (this._quizVisible(v)) return;             // 弹题由主循环处理
+                if (reallyHidden()) this._bgPauseCount = (this._bgPauseCount || 0) + 1;
 
                 const ct = v.currentTime || 0;
                 this._pauseLog = this._pauseLog.filter((p) => now - p.t < C.blockedWindowMs);
@@ -879,6 +936,7 @@
                 if (C.debugPause) this._installPauseTracer(win);
                 this._bindVideoEvents(v);
 
+                if (this._bgAudio && this._bgAudio.v !== v) this._restoreBgAudio();
                 if (C.muted) v.muted = true;
                 if (!this._rateGaveUp) this._setRate(v, this._rate);
 
@@ -990,6 +1048,7 @@
             // 页面真正的可见状态（不受上面伪装的影响）：回到前台时立刻补一次检查，不等下一个计时
             _onRealVisibility() {
                 const hidden = reallyHidden();
+                try { this._syncBgAudio(); } catch (e) { /* ignore */ }
                 if (hidden) { this._hiddenSince = Date.now(); return; }
                 if (this._visTimer) return;
                 this._visTimer = true;
@@ -1899,7 +1958,8 @@
                 }
                 C[k] = on;
                 saveSettings();
-                if (k === 'muted' && this._isValid(this._video)) { try { this._video.muted = on; } catch (e) { /* ignore */ } }
+                if (k === 'muted' && this._isValid(this._video)) { this._restoreBgAudio(); try { this._video.muted = on; } catch (e) { /* ignore */ } }
+                if (k === 'bgAudio' && !on) this._restoreBgAudio();
                 log(`设置：${(SETTING_ITEMS.find((x) => x[0] === k) || [k, k])[1]} ${on ? '开启' : '关闭'}`, '#2196F3');
                 this._panelKey = '';
                 this._renderPanel();
@@ -1921,6 +1981,7 @@
                     `学习记录：今日 ${fmtDur(this._statSummary().todaySec)} · 本周 ${fmtDur(this._statSummary().weekSec)}`,
                     `设置：倍速 ${C.playbackRate}x · 每日目标 ${C.dailyGoal} 分钟 · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
+                    `后台：防卡顿${C.bgAudio ? (this._bgAudioBlocked ? '（浏览器不允许）' : this._bgAudio ? '（生效中）' : '开') : '关'} · 后台被暂停 ${this._bgPauseCount || 0} 次 · 保活锁${this._lockRelease ? '有' : '无'} · 当前${reallyHidden() ? '在后台' : '在前台'}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
                     `浏览器：${navigator.userAgent}`,
                     '',
