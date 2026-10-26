@@ -394,6 +394,41 @@ test('控制台版：30 秒后提示安装油猴版，关闭后不再出现', as
     await ctx.close();
 });
 
+test('课程列表页：显示课程总览，可一键继续上次的课程', async (b) => {
+    const card = (id, name, done, total) => `<div class="course clearfix learnCourse" id="c_${id}"><div class="course-cover">
+        <input type="hidden" class="courseId" value="${id}"><a href="https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=${id}"><img src=""></a>
+        <div class="btm-cover"><div class="fl l-txt">任务点进度: ${done}/${total}</div></div></div>
+        <div class="course-info"><h3><a class="color1" href="https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=${id}"><span class="course-name" title="${name}">${name}</span></a></h3></div></div>`;
+    const html = `<html><head><meta charset="utf-8"></head><body style="height:800px">${card(1, '大学生创业基础', 12, 61)}${card(2, '市场营销学', 30, 30)}${card(3, '电影艺术鉴赏', 5, 44)}${card(4, '无任务点的课', 0, 0)}</body></html>`;
+    const ctx = await newContext(b, { routes: { 'mooc2-ans': html }, viewport: { width: 800, height: 800 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc2-ans.chaoxing.com/visit/interaction');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-last-course', JSON.stringify({ cid: '3', url: 'https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=3&chapterId=9', ts: Date.now() })));
+    await inject(p); await sleep(2000);
+    const r = await p.evaluate(() => ({
+        text: document.querySelector('#xxt-v41-panel [data-k=text]').textContent,
+        rows: [...document.querySelectorAll('#xxt-v41-panel .xxt-crow .xxt-cname')].map((e) => e.textContent),
+        cont: (document.querySelector('#xxt-v41-panel .xxt-continue') || {}).textContent,
+    }));
+    assert(/共 4 门课 · 已完成 1 门 · 进行中 2 门/.test(r.text), `总览文字不对：${r.text}`);
+    assert(r.rows.length === 2 && !r.rows.includes('市场营销学'), `进行中列表不对：${JSON.stringify(r.rows)}`);
+    assert(/继续上次的课程/.test(r.cont || '') && /电影艺术鉴赏/.test(r.cont || ''), `继续按钮不对：${r.cont}`);
+    const opened = []; ctx.on('page', async (pg) => { await pg.waitForLoadState().catch(() => {}); opened.push(pg.url()); });
+    await p.click('#xxt-v41-panel .xxt-continue'); await sleep(800);
+    assert(opened.length === 1 && /courseId=3/.test(opened[0]), `没有打开上次的课程：${JSON.stringify(opened)}`);
+    await ctx.close();
+});
+
+test('播放页记录“上次学习的课程”', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=42&chapterId=7');
+    await inject(p); await sleep(1500);
+    const last = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-last-course')));
+    assert(last && last.cid === '42' && /chapterId=7/.test(last.url), `没有记录上次课程：${JSON.stringify(last)}`);
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();

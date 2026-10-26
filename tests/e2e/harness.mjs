@@ -56,6 +56,7 @@ export async function newContext(browser, { routes = {}, latest = VERSION, remot
         const html = routes['zhibo:' + new URL(r.request().url()).pathname] ?? '<html><body>replay</body></html>';
         return r.fulfill({ contentType: 'text/html; charset=utf-8', body: html });
     });
+    await ctx.route('https://mooc2-ans.chaoxing.com/**', (r) => r.fulfill({ contentType: 'text/html; charset=utf-8', body: routes['mooc2-ans'] ?? '<html><body></body></html>' }));
     await ctx.route('https://live-rk.chaoxing.com/**', (r) => r.fulfill({ contentType: 'text/html; charset=utf-8', body: routes['live-rk'] ?? '<html><body></body></html>' }));
     await ctx.route('https://mooc1.chaoxing.com/**', (r) => {
         const path = new URL(r.request().url()).pathname;

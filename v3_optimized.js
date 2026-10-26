@@ -61,6 +61,8 @@
         const $ = window.jQuery;
         let attempts = 0;
         const isLive = /(^|\.)zhibo\.chaoxing\.com$/i.test(location.hostname) || IS_LIVE_PLAYER;
+        // 课程列表页：个人空间（i.chaoxing.com，课程在内嵌页面里）或直接打开的课程列表
+        const isList = /^i\.chaoxing\.com$/i.test(location.hostname) || /\/visit\/interaction/i.test(location.pathname);
         window[BOOT_TIMER_KEY] = setInterval(() => {
             if (isLive && document.body) {
                 clearInterval(window[BOOT_TIMER_KEY]);
@@ -69,6 +71,15 @@
                 window.app = app;
                 window[APP_KEY] = app;
                 app.startLive(IS_LIVE_PLAYER);
+                return;
+            }
+            if (isList && document.body) {
+                clearInterval(window[BOOT_TIMER_KEY]);
+                window[BOOT_TIMER_KEY] = null;
+                const app = createApp($);
+                window.app = app;
+                window[APP_KEY] = app;
+                app.startList();
                 return;
             }
             if ($('#coursetree').length > 0) {
@@ -83,7 +94,7 @@
             if (++attempts >= 20) {
                 clearInterval(window[BOOT_TIMER_KEY]);
                 window[BOOT_TIMER_KEY] = null;
-                console.error('%c脚本启动超时：未检测到课程目录（#coursetree）。请确认当前处于课程播放页或直播回放页。', 'color:#F44336;font-weight:bold');
+                console.error('%c脚本启动超时：未检测到课程目录（#coursetree）。请确认当前处于课程播放页、课程列表页或直播回放页。', 'color:#F44336;font-weight:bold');
             }
         }, 1000);
     }
@@ -129,6 +140,8 @@
         const POS_KEY = 'xxt-v41-panel-pos';
         const STATS_KEY = 'xxt-v41-stats';
         const TMHINT_KEY = 'xxt-v41-tm-hint-dismissed';
+        const LAST_KEY = 'xxt-v41-last-course';
+        const NAMES_KEY = 'xxt-v41-course-names';
         const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const fmtShort = (sec) => {
             sec = Math.round(sec);
@@ -234,6 +247,8 @@
             _statsDirty: 0,
             _statsOpen: false,
             _prevDone: null,
+            _courses: null,
+            _coursesTs: 0,
             _lives: [],
             _liveOpened: new WeakSet(),
             _liveScanTs: 0,
@@ -256,6 +271,7 @@
                 this._renderPanel();
                 this._startUpdateCheck();
                 this._maybeTmHint();
+                this._rememberLastCourse();
             },
             run() {
                 this._userStopped = false;
@@ -384,7 +400,7 @@
             _tick() {
                 const now = Date.now();
                 // 定时器间隔被浏览器拉长（页面在后台/最小化）时记录下来，回到前台后提示
-                if (this._lastTickTs && now - this._lastTickTs > 8000 && !this._userStopped) {
+                if (this._lastTickTs && now - this._lastTickTs > 8000 && !this._userStopped && this._mode !== 'list') {
                     const sec = Math.round((now - this._lastTickTs) / 1000);
                     if (!this._notice || this._notice.kind !== 'upd') {
                         this._notice = { kind: 'bg', until: now + 30000, text: `页面刚才在后台，脚本有约 ${sec} 秒没能及时运行。保持窗口显示、不要最小化，可以避免变慢` };
@@ -402,6 +418,7 @@
 
             _tickInner() {
                 if (this._mode === 'live') { this._liveTick(); return; }
+                if (this._mode === 'list') { this._scanCourseList(); return; }
                 this._maybeAutoUpdate();
                 this._scanLiveCards();
                 this._scanCourse();
@@ -1386,6 +1403,120 @@
                 if (this._state === 'loading' || this._state === 'waiting' || this._state === 'stopped') this._doUpdate(false);
             },
 
+            // ================= 课程列表页总览 =================
+            startList() {
+                this._mode = 'list';
+                this._state = 'list';
+                log(`=== 学习通助手 课程总览 === v${VERSION}`, '#4CAF50');
+                this._startTimer();
+                this._scanCourseList(true);
+                this._showUpdatedNotice();
+                this._renderPanel();
+                this._startUpdateCheck();
+            },
+
+            // 在播放页记下“上次学习的课程”，课程列表页上可以一键继续
+            _rememberLastCourse() {
+                try {
+                    const cid = this._courseKey();
+                    if (cid === 'default') return;
+                    localStorage.setItem(LAST_KEY, JSON.stringify({ cid, url: location.href, ts: Date.now() }));
+                } catch (e) { /* ignore */ }
+            },
+
+            _scanCourseList(force) {
+                const now = Date.now();
+                if (!force && now - this._coursesTs < 4000) return;
+                this._coursesTs = now;
+                const list = [];
+                for (const doc of this._sameOriginDocs()) {
+                    let cards = [];
+                    try { cards = doc.querySelectorAll('.course.learnCourse, .course[info]'); } catch (e) { continue; }
+                    for (const c of cards) {
+                        const idEl = c.querySelector('input.courseId');
+                        const cid = idEl ? idEl.value : (c.id || '').replace(/^c_/, '');
+                        const nameEl = c.querySelector('.course-name');
+                        const name = nameEl ? (nameEl.getAttribute('title') || nameEl.textContent || '').trim() : '';
+                        const link = c.querySelector('.course-info a[href], a[href*="stucoursemiddle"], a[href*="course"]');
+                        const m = /(\d+)\s*\/\s*(\d+)/.exec((c.querySelector('.l-txt') || {}).textContent || '');
+                        const done = m ? Number(m[1]) : 0, total = m ? Number(m[2]) : 0;
+                        if (!cid || !name) continue;
+                        list.push({ cid, name, href: link ? link.href : '', done, total, finished: total > 0 && done >= total });
+                    }
+                    if (list.length) break;
+                }
+                if (!list.length) { this._courses = []; return; }
+                // 记住课程名称，播放页上可以用到
+                try {
+                    const names = JSON.parse(localStorage.getItem(NAMES_KEY) || '{}');
+                    for (const c of list) names[c.cid] = c.name;
+                    localStorage.setItem(NAMES_KEY, JSON.stringify(names));
+                } catch (e) { /* ignore */ }
+                const st = this._loadStats();
+                for (const c of list) {
+                    const s2 = st.courses[c.cid];
+                    c.studied = s2 ? s2.sec : 0;
+                    c.last = s2 ? s2.last : '';
+                }
+                this._courses = list;
+            },
+
+            _lastCourse() {
+                try {
+                    const o = JSON.parse(localStorage.getItem(LAST_KEY) || 'null');
+                    if (!o || !o.url) return null;
+                    const names = JSON.parse(localStorage.getItem(NAMES_KEY) || '{}');
+                    const c = (this._courses || []).find((x) => x.cid === o.cid);
+                    return { ...o, name: (c && c.name) || names[o.cid] || '上次的课程', course: c };
+                } catch (e) { return null; }
+            },
+
+            _listPanelStatus(c) {
+                const list = this._courses;
+                if (!list || !list.length) return { color: c.BLUE, label: '课程总览', text: '在左侧点击「课程」后，这里会显示所有课程的进度' };
+                const withTasks = list.filter((x) => x.total > 0);
+                const fin = withTasks.filter((x) => x.finished).length;
+                return { color: c.GREEN, label: '课程总览', text: `共 ${list.length} 门课 · 已完成 ${fin} 门 · 进行中 ${withTasks.length - fin} 门` };
+            },
+
+            _renderCourseList(el) {
+                const box = el.querySelector('[data-k="courses"]');
+                const list = this._courses || [];
+                const todo = list.filter((x) => x.total > 0 && !x.finished)
+                    .sort((a, b) => (b.last || '').localeCompare(a.last || '') || (b.done / b.total) - (a.done / a.total));
+                const last = this._lastCourse();
+                const esc = (t) => String(t).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+                let html = '';
+                if (last) {
+                    const p = last.course && last.course.total ? ` · ${Math.round((last.course.done / last.course.total) * 100)}%` : '';
+                    html += `<button type="button" class="xxt-continue" data-open="last"><b>▶ 继续上次的课程</b><span>${esc(last.name)}${p}</span></button>`;
+                }
+                if (todo.length) {
+                    html += '<div class="xxt-clist">' + todo.slice(0, 5).map((x) => {
+                        const pct = Math.round((x.done / x.total) * 100);
+                        return `<button type="button" class="xxt-crow" data-open="${esc(x.cid)}" title="${esc(x.name)}">` +
+                            `<span class="xxt-cname">${esc(x.name)}</span>` +
+                            `<span class="xxt-cmeta">${x.done}/${x.total} 任务点${x.studied >= 60 ? ` · 已学 ${fmtShort(x.studied)}` : ''}<em>${pct}%</em></span>` +
+                            `<span class="xxt-ctrack"><i style="width:${pct}%"></i></span></button>`;
+                    }).join('') + '</div>';
+                    if (todo.length > 5) html += `<div class="xxt-cmore">还有 ${todo.length - 5} 门进行中的课程</div>`;
+                } else if (list.length) {
+                    html += '<div class="xxt-cmore">🎉 所有课程的任务点都完成了</div>';
+                }
+                box.innerHTML = html;
+                box.style.display = html && !this._panelCollapsed ? 'block' : 'none';
+            },
+
+            _openFromList(key) {
+                if (key === 'last') {
+                    const last = this._lastCourse();
+                    if (last) window.open(last.url, '_blank');
+                    return;
+                }
+                const c = (this._courses || []).find((x) => x.cid === key);
+                if (c && c.href) window.open(c.href, '_blank');
+            },
+
             // ================= 学习记录 =================
             // 只记在本地浏览器里，不上传：每天的学习时长、完成小节数，以及每门课的累计时长
             _loadStats() {
@@ -1796,6 +1927,7 @@
                 };
                 const GREEN = '#22B573', ORANGE = '#F5A524', RED = '#E5484D', BLUE = '#3B82F6', GREY = '#9CA3AF';
                 if (this._mode === 'live') return this._livePanelStatus(fmt, { GREEN, ORANGE, RED, BLUE, GREY });
+                if (this._mode === 'list') return this._listPanelStatus({ GREEN, ORANGE, RED, BLUE, GREY });
                 if (this._loginExpired) return { color: RED, label: '需要登录', text: '登录可能已过期，请重新登录后刷新页面' };
                 switch (this._state) {
                     case 'reading': {
@@ -1842,10 +1974,10 @@
             _renderPanel() {
                 if (!C.showPanel) { this._removePanel(); return; }
                 const st = this._panelStatus();
-                if (this._mode !== 'live') st.chap = this._chapterLine();
+                if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
-                const prog = this._mode !== 'live' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
+                const prog = this._mode === 'course' ? this._progressLine() : null;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1867,6 +1999,8 @@
                     q('prog').title = prog.title;
                 }
                 q('settings').style.display = this._settingsOpen && !this._panelCollapsed ? 'block' : 'none';
+                if (this._mode === 'list') this._renderCourseList(el);
+                else q('courses').style.display = 'none';
                 const ss = this._statSummary();
                 const showStats = !this._panelCollapsed && !this._settingsOpen;
                 q('stats').style.display = showStats ? 'flex' : 'none';
@@ -1901,7 +2035,7 @@
                 q('tip2').textContent = this._updating ? '请稍候' : hasUpd
                     ? (this._updateFailed ? '更新失败，点击重试' : C.autoUpdate ? '将在下一小节开始前自动更新 · 点击立即更新' : '点击立即更新，无需刷新页面')
                     : '已是最新版本 · 点击查看源码、反馈问题';
-                const showRates = this._mode !== 'live' && !this._panelCollapsed && !this._settingsOpen;
+                const showRates = this._mode === 'course' && !this._panelCollapsed && !this._settingsOpen;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
                 const nt = this._notice && Date.now() < this._notice.until ? this._notice : null;
@@ -1917,7 +2051,7 @@
                         q('noticetext').appendChild(a);
                     }
                 }
-                const livePending = this._mode !== 'live' ? this._lives.filter((l) => !l.done) : [];
+                const livePending = this._mode === 'course' ? this._lives.filter((l) => !l.done) : [];
                 q('liverow').style.display = livePending.length && !this._panelCollapsed ? 'flex' : 'none';
                 if (livePending.length) {
                     const p = livePending.map((l) => `${Math.floor(l.pct)}%`).join('、');
@@ -1960,6 +2094,20 @@
                     '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:#3B82F6;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-courses{margin-top:10px}' +
+                    '#xxt-v41-panel .xxt-continue{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:#3B82F6;color:#fff;font:inherit;text-align:left;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-continue:hover,#xxt-v41-panel .xxt-continue:focus-visible{background:#2563EB;outline:none}' +
+                    '#xxt-v41-panel .xxt-continue b{font-size:14px;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-continue span{font-size:12px;opacity:.9;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+                    '#xxt-v41-panel .xxt-clist{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto}' +
+                    '#xxt-v41-panel .xxt-crow{display:flex;flex-direction:column;gap:3px;width:100%;padding:8px 10px;border:0;border-radius:9px;background:#F6F8FB;font:inherit;text-align:left;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-crow:hover,#xxt-v41-panel .xxt-crow:focus-visible{background:#E3ECFD;outline:none}' +
+                    '#xxt-v41-panel .xxt-cname{font-size:13px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}' +
+                    '#xxt-v41-panel .xxt-cmeta{display:flex;font-size:11px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-cmeta em{margin-left:auto;font-style:normal;color:#2563EB;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-ctrack{display:block;height:3px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
+                    '#xxt-v41-panel .xxt-ctrack i{display:block;height:100%;background:#3B82F6}' +
+                    '#xxt-v41-panel .xxt-cmore{margin-top:6px;font-size:12px;color:#6B7280}' +
                     '#xxt-v41-panel .xxt-stats{display:flex;align-items:center;gap:6px;width:100%;margin-top:10px;padding:0;border:0;background:none;font:inherit;font-size:12px;color:#6B7280;cursor:pointer;text-align:left}' +
                     '#xxt-v41-panel .xxt-stats span{flex:1;min-width:0;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-stats b{color:#111827;font-weight:600}' +
@@ -2066,6 +2214,7 @@
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
+                    '<div data-k="courses" class="xxt-courses" style="display:none"></div>' +
                     '<button type="button" data-k="stats" class="xxt-stats" aria-expanded="false" title="点击查看最近 7 天">' +
                       '<span data-k="statstext"></span><i class="xxt-chev">›</i>' +
                     '</button>' +
@@ -2109,6 +2258,10 @@
                     this._doUpdate(true);
                 });
                 el.querySelector('[data-k="livebtn"]').addEventListener('click', () => this._openNextLive());
+                el.querySelector('[data-k="courses"]').addEventListener('click', (e) => {
+                    const b = e.target.closest('[data-open]');
+                    if (b) this._openFromList(b.getAttribute('data-open'));
+                });
                 el.querySelector('[data-k="stats"]').addEventListener('click', () => {
                     this._statsOpen = !this._statsOpen;
                     this._panelKey = '';

@@ -16,6 +16,8 @@ const metadata = `// ==UserScript==
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc2-ans/mycourse/studentstudy*
 // @match        *://zhibo.chaoxing.com/*
+// @match        *://i.chaoxing.com/base*
+// @match        *://mooc2-ans.chaoxing.com/*visit/interaction*
 // @include      /^https?:\\/\\/live[\\w-]*\\.chaoxing\\.com\\//
 // @updateURL    https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
 // @downloadURL  https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
