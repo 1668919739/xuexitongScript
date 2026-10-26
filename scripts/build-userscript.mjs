@@ -19,8 +19,8 @@ const metadata = `// ==UserScript==
 // @match        *://i.chaoxing.com/base*
 // @match        *://mooc2-ans.chaoxing.com/*visit/interaction*
 // @include      /^https?:\\/\\/live[\\w-]*\\.chaoxing\\.com\\//
-// @updateURL    https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
-// @downloadURL  https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==

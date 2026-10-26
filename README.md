@@ -8,8 +8,8 @@
 
 1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展
 2. 点击下面任一链接，在弹出的页面中点「安装」：
-   - 👉 [GitHub 安装链接](https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js)
-   - 👉 [国内备用链接（jsDelivr）](https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js)
+   - 👉 [安装链接（国内可用）](https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js)
+   - 👉 [GitHub 备用链接](https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js)
 3. 打开学习通课程播放页（刷新一次），脚本会自动开始运行
 
 > 新版 Chrome / Edge 如果装好后不运行：进入 `chrome://extensions`，打开右上角「开发者模式」，再在 Tampermonkey 的「详情」里打开「允许运行用户脚本」。

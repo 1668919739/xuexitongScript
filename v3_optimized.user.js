@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.3.0
+// @version      4.3.1
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -11,8 +11,8 @@
 // @match        *://i.chaoxing.com/base*
 // @match        *://mooc2-ans.chaoxing.com/*visit/interaction*
 // @include      /^https?:\/\/live[\w-]*\.chaoxing\.com\//
-// @updateURL    https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
-// @downloadURL  https://github.com/1668919739/xuexitongScript/raw/master/v3_optimized.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -25,9 +25,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.3.0';
+    const VERSION = '4.3.1';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.3.1': '油猴版改为通过国内 CDN 检查更新，不再因 GitHub 访问慢而更新失败',
         '4.3.0': '课程总进度与剩余时间、设置面板、一键复制诊断信息、提示音与系统通知、浮窗可拖动、登录过期提醒',
         '4.2.8': '页面在后台时给出提示、更新后显示更新说明、增加问题反馈入口',
         '4.2.7': '直播回放自动打开，浮窗显示回放进度',
