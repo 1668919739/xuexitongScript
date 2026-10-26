@@ -144,6 +144,20 @@
         const SEEN_KEY = 'xxt-v41-seen-version';
         const SETTINGS_KEY = 'xxt-v41-settings';
         const POS_KEY = 'xxt-v41-panel-pos';
+        const STATS_KEY = 'xxt-v41-stats';
+        const TMHINT_KEY = 'xxt-v41-tm-hint-dismissed';
+        const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const fmtShort = (sec) => {
+            sec = Math.round(sec);
+            const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+            return h ? `${h}小时${m ? m + '分' : ''}` : `${m}分钟`;
+        };
+        const fmtDur = (sec) => {
+            sec = Math.round(sec);
+            if (sec < 60) return `${sec} 秒`;
+            const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+            return h ? `${h} 小时${m ? ' ' + m + ' 分钟' : ''}` : `${m} 分钟`;
+        };
         // 设置面板里可以开关的项，保存在本地
         const SETTING_ITEMS = [
             ['autoUpdate', '自动更新', '发现新版本后，在两个小节之间自动静默更新'],
@@ -233,6 +247,10 @@
             _lastActiveTitle: '',
             _lastAlertKey: '',
             _audioCtx: null,
+            _stats: null,
+            _statsDirty: 0,
+            _statsOpen: false,
+            _prevDone: null,
             _lives: [],
             _liveOpened: new WeakSet(),
             _liveScanTs: 0,
@@ -254,6 +272,7 @@
                 this._showUpdatedNotice();
                 this._renderPanel();
                 this._startUpdateCheck();
+                this._maybeTmHint();
             },
             run() {
                 this._userStopped = false;
@@ -317,6 +336,8 @@
             destroy() {
                 this._state = 'stopped';
                 this._stopTimer();
+                this._saveStats(true);
+                if (this._onPageHide) window.removeEventListener('pagehide', this._onPageHide);
                 if (this._updateTimer) clearInterval(this._updateTimer);
                 this._updateTimer = null;
                 this._clearTimeouts();
@@ -387,6 +408,7 @@
                     }
                     log(`页面在后台，定时器被浏览器延迟了 ${sec} 秒`, '#FF9800', 'warn');
                 }
+                if (this._lastTickTs) this._statTick(Math.min(now - this._lastTickTs, 5000) / 1000);
                 this._lastTickTs = now;
                 try {
                     this._tickInner();
@@ -1381,6 +1403,104 @@
                 if (this._state === 'loading' || this._state === 'waiting' || this._state === 'stopped') this._doUpdate(false);
             },
 
+            // ================= 学习记录 =================
+            // 只记在本地浏览器里，不上传：每天的学习时长、完成小节数，以及每门课的累计时长
+            _loadStats() {
+                if (this._stats) return this._stats;
+                let o = null;
+                try { o = JSON.parse(localStorage.getItem(STATS_KEY) || 'null'); } catch (e) { o = null; }
+                if (!o || typeof o !== 'object') o = {};
+                o.days = o.days || {};
+                o.courses = o.courses || {};
+                this._stats = o;
+                if (!this._onPageHide) {
+                    this._onPageHide = () => this._saveStats(true);
+                    window.addEventListener('pagehide', this._onPageHide);
+                }
+                return o;
+            },
+            _saveStats(force) {
+                if (!this._stats) return;
+                if (!force && Date.now() - this._statsDirty < 10000) return;
+                this._statsDirty = Date.now();
+                try {
+                    const keys = Object.keys(this._stats.days).sort();
+                    for (const k of keys.slice(0, Math.max(0, keys.length - 120))) delete this._stats.days[k];
+                    localStorage.setItem(STATS_KEY, JSON.stringify(this._stats));
+                } catch (e) { /* ignore */ }
+            },
+            // 正在学习（视频在走、在翻课件、回放在计时）时累计时长
+            _isStudying() {
+                if (this._userStopped) return false;
+                const now = Date.now();
+                if (this._mode === 'live') {
+                    if (this._livePlayerOnly) return false;
+                    const m = this._liveMsg;
+                    return !!(m && now - m.lastGrowTs < 5000);
+                }
+                if (this._state === 'reading') return true;
+                const v = this._video;
+                return this._state === 'playing' && this._isValid(v) && !v.paused && now - this._lastProgressTs < 5000;
+            },
+            _statTick(dt) {
+                if (!(dt > 0) || !this._isStudying()) return;
+                const st = this._loadStats();
+                const d = dayKey();
+                const day = st.days[d] || (st.days[d] = { sec: 0, nodes: 0 });
+                day.sec += dt;
+                const ck = this._courseKey();
+                const c = st.courses[ck] || (st.courses[ck] = { sec: 0, first: d, last: d });
+                c.sec += dt; c.last = d;
+                this._saveStats(false);
+            },
+            _statAddNodes(n) {
+                const st = this._loadStats();
+                const d = dayKey();
+                const day = st.days[d] || (st.days[d] = { sec: 0, nodes: 0 });
+                day.nodes += n;
+                this._saveStats(true);
+            },
+            _statSummary() {
+                const st = this._loadStats();
+                const today = new Date();
+                const get = (offset) => {
+                    const d = new Date(today); d.setDate(d.getDate() - offset);
+                    return { key: dayKey(d), date: d, ...(st.days[dayKey(d)] || { sec: 0, nodes: 0 }) };
+                };
+                const week = [6, 5, 4, 3, 2, 1, 0].map(get);
+                const todaySec = week[6].sec;
+                const weekSec = week.reduce((a, x) => a + x.sec, 0);
+                let streak = 0;
+                for (let i = (todaySec >= 60 ? 0 : 1); i < 120; i++) {
+                    if (get(i).sec >= 60) streak++; else break;
+                }
+                return { todaySec, todayNodes: week[6].nodes, weekSec, streak, week };
+            },
+            _courseSummary() {
+                const c = this._loadStats().courses[this._courseKey()];
+                if (!c || c.sec < 60) return '';
+                const days = Math.max(1, Math.round((new Date(c.last) - new Date(c.first)) / 86400000) + 1);
+                return ` · 共学习 ${fmtDur(c.sec)}，历时 ${days} 天`;
+            },
+
+            // ================= 引导安装油猴版 =================
+            _maybeTmHint() {
+                let isUs = false;
+                try { isUs = typeof GM_info !== 'undefined'; } catch (e) { isUs = false; }
+                if (isUs || this._mode === 'live') return;
+                try { if (localStorage.getItem(TMHINT_KEY)) return; } catch (e) { return; }
+                this._later(() => {
+                    if (this._notice) return;   // 有其他提示时不打扰
+                    this._notice = {
+                        kind: 'tip', until: Date.now() + 60000,
+                        text: '装上油猴版，以后打开学习通自动运行，不用每次粘贴代码。',
+                        link: { href: REPO_URL + '#-快速安装', label: '查看安装方法' },
+                    };
+                    this._panelKey = '';
+                    this._renderPanel();
+                }, 30000);
+            },
+
             // ================= 课程总进度 / 登录状态 =================
             _courseKey() {
                 const m = /[?&]courseId=(\d+)/i.exec(location.search) || /[?&]courseid=(\d+)/i.exec(location.search);
@@ -1469,6 +1589,8 @@
                         else pending++;
                     });
                     if (changed) this._saveManualSet(manualSet);
+                    if (this._prevDone !== null && done > this._prevDone && done - this._prevDone <= 3) this._statAddNodes(done - this._prevDone);
+                    this._prevDone = done;
                     let avg = 0;
                     try {
                         const o = JSON.parse(localStorage.getItem('xxt-v41-dur-' + this._courseKey()) || 'null');
@@ -1600,6 +1722,7 @@
                     `课程进度：${this._progress ? `${this._progress.done}/${this._progress.total}，需手动 ${this._progress.manual.length} 节` : '-'}`,
                     `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
                     `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
+                    `学习记录：今日 ${fmtDur(this._statSummary().todaySec)} · 本周 ${fmtDur(this._statSummary().weekSec)}`,
                     `设置：倍速 ${C.playbackRate}x · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
@@ -1739,7 +1862,7 @@
                 if (this._mode !== 'live') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode !== 'live' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -1761,6 +1884,20 @@
                     q('prog').title = prog.title;
                 }
                 q('settings').style.display = this._settingsOpen && !this._panelCollapsed ? 'block' : 'none';
+                const ss = this._statSummary();
+                const showStats = !this._panelCollapsed && !this._settingsOpen;
+                q('stats').style.display = showStats ? 'flex' : 'none';
+                q('stats').setAttribute('aria-expanded', String(this._statsOpen));
+                q('statstext').innerHTML = `今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}`;
+                q('chart').style.display = showStats && this._statsOpen ? 'block' : 'none';
+                if (showStats && this._statsOpen) {
+                    const max = Math.max(60, ...ss.week.map((x) => x.sec));
+                    const wd = '日一二三四五六';
+                    q('chart').innerHTML =
+                        '<div class="xxt-bars">' + ss.week.map((x, i) =>
+                            `<div class="xxt-bar${i === 6 ? ' today' : ''}" title="${x.key}：${fmtDur(x.sec)}，完成 ${x.nodes} 节"><em>${x.sec >= 60 ? Math.round(x.sec / 60) : ''}</em><i style="height:${Math.round((x.sec / max) * 46)}px"></i></div>`).join('') + '</div>' +
+                        '<div class="xxt-days">' + ss.week.map((x, i) => `<span>${i === 6 ? '今天' : '周' + wd[x.date.getDay()]}</span>`).join('') + '</div>';
+                }
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
                 for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
@@ -1789,7 +1926,13 @@
                 q('notice').style.display = nt && !this._panelCollapsed ? 'flex' : 'none';
                 if (nt) {
                     q('notice').className = 'xxt-notice ' + nt.kind;
-                    q('noticetext').textContent = nt.text;
+                    q('noticetext').textContent = nt.text + (nt.link ? ' ' : '');
+                    if (nt.link) {
+                        const a = document.createElement('a');
+                        a.href = nt.link.href; a.target = '_blank'; a.rel = 'noopener';
+                        a.textContent = nt.link.label + ' ›';
+                        q('noticetext').appendChild(a);
+                    }
                 }
                 const livePending = this._mode !== 'live' ? this._lives.filter((l) => !l.done) : [];
                 q('liverow').style.display = livePending.length && !this._panelCollapsed ? 'flex' : 'none';
@@ -1834,6 +1977,19 @@
                     '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:#3B82F6;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-stats{display:flex;align-items:center;gap:6px;width:100%;margin-top:10px;padding:0;border:0;background:none;font:inherit;font-size:12px;color:#6B7280;cursor:pointer;text-align:left}' +
+                    '#xxt-v41-panel .xxt-stats span{flex:1;min-width:0;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-stats b{color:#111827;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-stats:hover span{color:#374151}' +
+                    '#xxt-v41-panel .xxt-stats[aria-expanded="true"] .xxt-chev{transform:rotate(90deg)}' +
+                    '#xxt-v41-panel .xxt-chart{margin-top:8px;padding:10px 10px 6px;border-radius:10px;background:#F6F8FB}' +
+                    '#xxt-v41-panel .xxt-bars{display:flex;align-items:flex-end;gap:6px;height:64px}' +
+                    '#xxt-v41-panel .xxt-bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px}' +
+                    '#xxt-v41-panel .xxt-bar i{display:block;width:100%;max-width:22px;min-height:2px;border-radius:4px 4px 2px 2px;background:#BFD3F6}' +
+                    '#xxt-v41-panel .xxt-bar.today i{background:#3B82F6}' +
+                    '#xxt-v41-panel .xxt-bar em{font-style:normal;font-size:10px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-days{display:flex;gap:6px;margin-top:4px}' +
+                    '#xxt-v41-panel .xxt-days span{flex:1;text-align:center;font-size:10px;color:#9CA3AF}' +
                     '#xxt-v41-panel .xxt-settings{margin-top:12px;padding:10px 12px;border-radius:10px;background:#F6F8FB}' +
                     '#xxt-v41-panel .xxt-set-row{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-set-row span{flex:1;min-width:0;font-size:13px;color:#374151}' +
@@ -1858,6 +2014,8 @@
                     '#xxt-v41-panel .xxt-notice{display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;line-height:1.5}' +
                     '#xxt-v41-panel .xxt-notice.upd{background:#EFF6FF;color:#1D4ED8}' +
                     '#xxt-v41-panel .xxt-notice.bg{background:#FFFBEB;color:#92400E}' +
+                    '#xxt-v41-panel .xxt-notice.tip{background:#F0FDF4;color:#166534}' +
+                    '#xxt-v41-panel .xxt-notice a{color:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px}' +
                     '#xxt-v41-panel .xxt-notice-text{flex:1;min-width:0}' +
                     '#xxt-v41-panel .xxt-notice-x{flex:none;border:0;background:transparent;color:inherit;opacity:.6;font-size:15px;line-height:1;cursor:pointer;padding:0 2px}' +
                     '#xxt-v41-panel .xxt-notice-x:hover{opacity:1}' +
@@ -1925,6 +2083,10 @@
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
+                    '<button type="button" data-k="stats" class="xxt-stats" aria-expanded="false" title="点击查看最近 7 天">' +
+                      '<span data-k="statstext"></span><i class="xxt-chev">›</i>' +
+                    '</button>' +
+                    '<div data-k="chart" class="xxt-chart" style="display:none"></div>' +
                     '<div data-k="settings" class="xxt-settings" style="display:none">' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
@@ -1964,6 +2126,11 @@
                     this._doUpdate(true);
                 });
                 el.querySelector('[data-k="livebtn"]').addEventListener('click', () => this._openNextLive());
+                el.querySelector('[data-k="stats"]').addEventListener('click', () => {
+                    this._statsOpen = !this._statsOpen;
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
                 el.querySelector('[data-k="gear"]').addEventListener('click', () => {
                     this._settingsOpen = !this._settingsOpen;
                     this._panelKey = '';
@@ -1976,6 +2143,7 @@
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
                 this._bindDrag(el, el.querySelector('[data-k="head"]'));
                 el.querySelector('[data-k="noticex"]').addEventListener('click', () => {
+                    if (this._notice && this._notice.kind === 'tip') { try { localStorage.setItem(TMHINT_KEY, '1'); } catch (e) { /* ignore */ } }
                     this._notice = null;
                     this._panelKey = '';
                     this._renderPanel();
@@ -2041,7 +2209,7 @@
                 if (idx >= nodes.length) {
                     log('============== 本课程学习完成了 ==============', '#4CAF50');
                     this._stop();
-                    this._note = '🎉 本课程已全部学习完成';
+                    this._note = `🎉 本课程已全部学习完成${this._courseSummary()}`;
                     return;
                 }
                 const span = $(nodes.get(idx)).find('.posCatalog_name');

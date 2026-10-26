@@ -349,6 +349,51 @@ test('需要处理时提醒一次；登录过期时提示重新登录', async (b
     await ctx.close();
 });
 
+test('学习记录：播放时累计今日时长，显示连续天数和 7 天图表', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=5');
+    await p.evaluate(() => {
+        const k = (o) => { const d = new Date(); d.setDate(d.getDate() - o); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+        localStorage.setItem('xxt-v41-stats', JSON.stringify({ days: { [k(1)]: { sec: 3600, nodes: 3 }, [k(2)]: { sec: 1800, nodes: 2 } }, courses: {} }));
+    });
+    await addFakeVideo(p);
+    await inject(p); await sleep(6000);
+    const r = await p.evaluate(() => ({ today: app._statSummary().todaySec, text: document.querySelector('#xxt-v41-panel [data-k=statstext]').textContent }));
+    assert(r.today >= 3, `今日时长没有累计：${r.today}`);
+    assert(/本周 1小时30分/.test(r.text), `本周时长不对：${r.text}`);
+    // 今天还不到 1 分钟，不计入连续天数：昨天、前天共 2 天
+    assert(/连续 2 天/.test(r.text), `连续天数不对：${r.text}`);
+    await p.click('[data-k=stats]'); await sleep(300);
+    const bars = await p.evaluate(() => document.querySelectorAll('#xxt-v41-panel .xxt-bar').length);
+    assert(bars === 7, `图表柱子数量不对：${bars}`);
+    await ctx.close();
+});
+
+test('课程完成时显示本课程总学习时长', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': coursePage({ nodes: ['9.1 最后一节'], active: 0, completed: true }) } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=8');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-stats', JSON.stringify({ days: {}, courses: { 8: { sec: 67200, first: '2026-10-18', last: '2026-10-26' } } })));
+    await inject(p); await sleep(7000);
+    const info = await panelInfo(p);
+    assert(/本课程已全部学习完成 · 共学习 18 小时 40 分钟，历时 9 天/.test(info.text || ''), `完成总结不对：${info.text}`);
+    await ctx.close();
+});
+
+test('控制台版：30 秒后提示安装油猴版，关闭后不再出现', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(32000);
+    const info = await panelInfo(p);
+    assert(/装上油猴版/.test(info.notice || ''), `没有油猴提示：${info.notice}`);
+    await p.click('[data-k=noticex]');
+    assert(await p.evaluate(() => localStorage.getItem('xxt-v41-tm-hint-dismissed') === '1'), '关闭后没有记住');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
