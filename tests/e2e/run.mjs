@@ -519,6 +519,7 @@ test('学习助手总开关：关闭后只保留一行学习时长，不再提�
     await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
     await sleep(2500);
     assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '关闭后仍然提醒休息');
+    assert(!(await vis('progtext')), '没有课程进度时不应显示进度行');
     await p.reload(); await addFakeVideo(p); await inject(p); await sleep(2000);
     assert(!(await vis('tabs')) && await vis('assist'), '刷新后没有记住关闭状态');
     await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(300);
@@ -595,6 +596,25 @@ test('弹题等需要处理时，提示音每隔一会儿重复，处理完就�
     await p.evaluate(() => { document.getElementById('f').contentDocument.getElementById('quiz').remove(); app._lastBeepTs = Date.now() - 15000; });
     await sleep(2500);
     assert(await p.evaluate(() => window.__beeps) === 2, '处理完后还在响');
+    await ctx.close();
+});
+
+test('剩余时间：关闭学习助手时显示在状态框，打开时移到「课程」页', async (b) => {
+    const page = coursePage({ nodes: ['1.1 a', '1.2 b', '1.3 c'], active: 1, marks: ['done', 2, 2] });
+    const ctx = await newContext(b, { routes: { '*': page } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=124');
+    await addFakeVideo(p);
+    await inject(p); await sleep(6500);
+    const st = () => p.evaluate(() => {
+        const e = document.querySelector('#xxt-v41-panel [data-k=progtext]');
+        return { box: e.offsetParent !== null, text: e.textContent, course: document.querySelector('#xxt-v41-panel [data-k=cdetail]').textContent };
+    });
+    let r = await st();
+    assert(!r.box && /预计还需约/.test(r.course), `打开学习助手时应显示在课程页：${JSON.stringify(r)}`);
+    await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(600);
+    r = await st();
+    assert(r.box && /课程进度 1\/3 节.*预计还需约/.test(r.text), `关闭学习助手时状态框里没有剩余时间：${JSON.stringify(r)}`);
     await ctx.close();
 });
 

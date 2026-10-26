@@ -6,9 +6,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.4.0';
+    const VERSION = '4.4.1';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.4.1': '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间',
         '4.4.0': '浮窗改版为学习助手：今天 / 课程 / 记录三个标签页、本节笔记、每日目标、休息提醒、学习日历',
         '4.3.1': '油猴版改为通过国内 CDN 检查更新，不再因 GitHub 访问慢而更新失败',
         '4.3.0': '课程总进度与剩余时间、设置面板、一键复制诊断信息、提示音与系统通知、浮窗可拖动、登录过期提醒',
@@ -2283,6 +2284,8 @@
                     q('progbar').style.width = prog.pct + '%';
                     q('progman').style.width = prog.manualPct + '%';
                     q('progtext').textContent = prog.text;
+                    // 打开学习助手时，进度和剩余时间显示在「课程」页里；关闭时显示在状态框里
+                    q('progtext').style.display = C.assistMode ? 'none' : 'block';
                     q('prog').title = prog.title;
                 }
                 const open = !this._panelCollapsed;
@@ -2476,7 +2479,7 @@
                     '#xxt-v41-panel .xxt-prog-track{display:flex;height:4px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
                     '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:#3B82F6;transition:width .4s ease}' +
-                    '#xxt-v41-panel .xxt-prog-text{display:none}' +
+                    '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-courses{margin-top:0}' +
                     '#xxt-v41-panel .xxt-continue{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:#3B82F6;color:#fff;font:inherit;text-align:left;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-continue:hover,#xxt-v41-panel .xxt-continue:focus-visible{background:#2563EB;outline:none}' +
