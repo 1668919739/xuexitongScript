@@ -6,9 +6,10 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.3.1';
+    const VERSION = '4.4.0';
     // 每个版本的一句话更新说明：更新后浮窗会短暂显示当前版本这一条（同步记录在 CHANGELOG.md）
     const CHANGELOG = {
+        '4.4.0': '浮窗改版为学习助手：今天 / 课程 / 记录三个标签页、本节笔记、每日目标、休息提醒、学习日历',
         '4.3.1': '油猴版改为通过国内 CDN 检查更新，不再因 GitHub 访问慢而更新失败',
         '4.3.0': '课程总进度与剩余时间、设置面板、一键复制诊断信息、提示音与系统通知、浮窗可拖动、登录过期提醒',
         '4.2.8': '页面在后台时给出提示、更新后显示更新说明、增加问题反馈入口',
@@ -130,6 +131,9 @@
             liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
             autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
+            dailyGoal: 60,              // 每日学习目标（分钟）
+            breakRemind: true,          // 连续学习一段时间后提醒休息
+            breakAfterMin: 45,          // 连续学习多少分钟提醒休息
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -143,6 +147,8 @@
         const TMHINT_KEY = 'xxt-v41-tm-hint-dismissed';
         const LAST_KEY = 'xxt-v41-last-course';
         const NAMES_KEY = 'xxt-v41-course-names';
+        const NOTES_PREFIX = 'xxt-v41-notes-';
+        const GOAL_OPTIONS = [30, 60, 90, 120];
         const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const fmtShort = (sec) => {
             sec = Math.round(sec);
@@ -162,15 +168,18 @@
             ['muted', '静音播放', '接管视频时静音（关闭后浏览器可能阻止自动播放）'],
             ['alertSound', '提示音', '弹题、需要处理、课程完成时播放提示音'],
             ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
+            ['breakRemind', '休息提醒', '连续学习 45 分钟后，提醒起来活动一下'],
         ];
         try {
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
             for (const [k] of SETTING_ITEMS) if (typeof saved[k] === 'boolean') C[k] = saved[k];
+            if (GOAL_OPTIONS.includes(saved.dailyGoal)) C.dailyGoal = saved.dailyGoal;
         } catch (e) { /* 读取失败时使用默认设置 */ }
         const saveSettings = () => {
             try {
                 const o = {};
                 for (const [k] of SETTING_ITEMS) o[k] = C[k];
+                o.dailyGoal = C.dailyGoal;
                 localStorage.setItem(SETTINGS_KEY, JSON.stringify(o));
             } catch (e) { /* ignore */ }
         };
@@ -290,7 +299,7 @@
             stop() {
                 this._userStopped = true;
                 this._stop();
-                this._note = '脚本已停止，点击右上角 ▶ 继续运行';
+                this._note = '学习已暂停，点击右上角 ▶ 继续';
                 log('脚本已停止，点击浮窗右上角的 ▶ 或执行 app.run() 继续', '#FF9800');
                 this._panelKey = '';
                 this._renderPanel();
@@ -408,7 +417,11 @@
                     }
                     log(`页面在后台，定时器被浏览器延迟了 ${sec} 秒`, '#FF9800', 'warn');
                 }
-                if (this._lastTickTs) this._statTick(Math.min(now - this._lastTickTs, 5000) / 1000);
+                if (this._lastTickTs) {
+                    const dt = Math.min(now - this._lastTickTs, 5000) / 1000;
+                    this._statTick(dt);
+                    this._assistTick(dt);
+                }
                 this._lastTickTs = now;
                 try {
                     this._tickInner();
@@ -1301,7 +1314,7 @@
             _livePanelStatus(fmt, c) {
                 const v = this._video;
                 if (this._state === 'stopped') {
-                    if (this._userStopped) return { color: c.GREY, label: '已停止', text: this._note };
+                    if (this._userStopped) return { color: c.GREY, label: '已暂停', text: this._note };
                     return { color: c.GREEN, label: '已完成', text: this._note };
                 }
                 if (!v) {
@@ -1505,7 +1518,7 @@
                     html += '<div class="xxt-cmore">🎉 所有课程的任务点都完成了</div>';
                 }
                 box.innerHTML = html;
-                box.style.display = html && !this._panelCollapsed ? 'block' : 'none';
+                box.style.display = html ? 'block' : 'none';
             },
 
             _openFromList(key) {
@@ -1740,11 +1753,12 @@
             _progressLine() {
                 const p = this._progress;
                 if (!p) return null;
-                let eta = '';
+                let eta = '', etaStr = '';
                 if (p.pending && p.avg) {
                     const sec = (p.pending * p.avg) / (C.playbackRate || 1);
                     const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
-                    eta = ` · 预计还需约 ${h ? h + ' 小时 ' : ''}${h && !m ? '' : m + ' 分钟'}`;
+                    etaStr = `预计还需约 ${h ? h + ' 小时 ' : ''}${h && !m ? '' : m + ' 分钟'}`;
+                    eta = ` · ${etaStr}`;
                 }
                 const manual = p.manual.length ? ` · ${p.manual.length} 节需手动完成` : '';
                 const tail = p.pending ? eta : p.manual.length ? ' · 视频等已全部完成' : ' · 已全部完成';
@@ -1752,6 +1766,7 @@
                     pct: Math.round((p.done / p.total) * 100),
                     manualPct: Math.round((p.manual.length / p.total) * 100),
                     text: `课程进度 ${p.done}/${p.total} 节${manual}${tail}`,
+                    etaText: p.pending ? (etaStr || `还剩 ${p.pending} 节`) : p.manual.length ? '视频等已全部完成，剩下的需手动完成' : '已全部完成',
                     title: p.manual.length ? '需手动完成（章节测验、讨论等）：\n' + p.manual.join('\n') : '',
                 };
             },
@@ -1838,7 +1853,7 @@
                     `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
                     `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
                     `学习记录：今日 ${fmtDur(this._statSummary().todaySec)} · 本周 ${fmtDur(this._statSummary().weekSec)}`,
-                    `设置：倍速 ${C.playbackRate}x · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
+                    `设置：倍速 ${C.playbackRate}x · 每日目标 ${C.dailyGoal} 分钟 · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
                     `浏览器：${navigator.userAgent}`,
@@ -1850,25 +1865,7 @@
             },
 
             _copyDiagnostics() {
-                const text = this._diagnostics();
-                const done = (ok) => {
-                    this._notice = { kind: ok ? 'upd' : 'bg', until: Date.now() + 8000, text: ok ? '已复制诊断信息，可以直接粘贴到仓库的 Issues 里反馈' : '复制失败，请按 F12 在控制台执行 copy(app._diagnostics())' };
-                    this._panelKey = '';
-                    this._renderPanel();
-                };
-                const legacy = () => {
-                    try {
-                        const ta = document.createElement('textarea');
-                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-                        document.body.appendChild(ta); ta.select();
-                        const ok = document.execCommand('copy');
-                        ta.remove(); done(ok);
-                    } catch (e) { done(false); }
-                };
-                try {
-                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), legacy);
-                    else legacy();
-                } catch (e) { legacy(); }
+                this._copyText(this._diagnostics(), '已复制诊断信息，可以直接粘贴到仓库的 Issues 里反馈', '复制失败，请按 F12 在控制台执行 copy(app._diagnostics())');
             },
 
             _applyPanelPos(el) {
@@ -1916,6 +1913,214 @@
                 if (this._panel) this._applyPanelPos(this._panel);
             },
 
+            // ================= 学习助手：今日目标 / 休息提醒 / 章节小结 / 笔记 =================
+            // 提示不覆盖“更新”这类更重要的提示
+            _softNotice(n) {
+                const cur = this._notice;
+                if (cur && Date.now() < cur.until && (cur.kind === 'upd' || cur.kind === 'tip')) return false;
+                this._notice = n;
+                return true;
+            },
+            _goalInfo() {
+                const goal = (C.dailyGoal || 60) * 60;
+                const sec = this._statSummary().todaySec;
+                return { goal, sec, pct: Math.min(100, Math.round((sec / goal) * 100)), done: sec >= goal };
+            },
+            _assistTick(dt) {
+                if (this._mode === 'list') return;
+                const now = Date.now();
+                if (this._isStudying()) {
+                    // 连续学习：中断超过 5 分钟就重新计时
+                    if (this._restLastTs && now - this._restLastTs > 5 * 60000) this._restSec = 0;
+                    this._restSec = (this._restSec || 0) + dt;
+                    this._restLastTs = now;
+                    if (C.breakRemind && this._restSec >= C.breakAfterMin * 60) {
+                        this._restSec = 0;
+                        if (this._softNotice({ kind: 'rest', until: now + 5 * 60000, text: `☕ 已经连续学习 ${C.breakAfterMin} 分钟了，起来活动一下、看看远处吧` })) {
+                            if (C.alertSound) this._beep();
+                            log(`休息提醒：已连续学习 ${C.breakAfterMin} 分钟`, '#22B573');
+                        }
+                    }
+                    if (this._mode === 'course') {
+                        const ch = this._chapterName();
+                        if (ch && this._chapAcc && this._chapAcc.name === ch) this._chapAcc.sec += dt;
+                    }
+                }
+                // 章节小结：进入新的一章时，总结上一章
+                if (this._mode === 'course') {
+                    const ch = this._chapterName();
+                    if (ch && (!this._chapAcc || this._chapAcc.name !== ch)) {
+                        const prev = this._chapAcc;
+                        if (prev && prev.sec >= 120) {
+                            const notes = Object.values(this._loadNotes()).filter((x) => x.chap === prev.name).length;
+                            this._softNotice({ kind: 'rest', until: now + 20000, text: `✅ 学完「${prev.name}」· 本章用时 ${fmtShort(prev.sec)}${notes ? ` · 记了 ${notes} 条笔记` : ''}` });
+                        }
+                        this._chapAcc = { name: ch, sec: 0 };
+                    }
+                }
+                // 今日目标完成时提醒一次
+                const g = this._goalInfo();
+                if (g.done) {
+                    const day = this._loadStats().days[dayKey()];
+                    if (day && !day.goalHit) {
+                        day.goalHit = 1;
+                        this._saveStats(true);
+                        if (this._softNotice({ kind: 'rest', until: now + 20000, text: `🎯 今日目标 ${C.dailyGoal} 分钟已完成，继续保持！` }) && C.alertSound) this._beep();
+                    }
+                }
+            },
+            _setGoal(m) {
+                if (!GOAL_OPTIONS.includes(m)) return;
+                C.dailyGoal = m;
+                saveSettings();
+                const day = this._loadStats().days[dayKey()];
+                if (day && !this._goalInfo().done) delete day.goalHit;
+                this._panelKey = '';
+                this._renderPanel();
+            },
+
+            _notesKey() { return NOTES_PREFIX + this._courseKey(); },
+            _loadNotes() {
+                try {
+                    const o = JSON.parse(localStorage.getItem(this._notesKey()) || '{}');
+                    return o && typeof o === 'object' ? o : {};
+                } catch (e) { return {}; }
+            },
+            _saveNote(title, text) {
+                if (!title) return;
+                const notes = this._loadNotes();
+                text = String(text || '').replace(/\s+$/, '');
+                if (text) notes[title] = { t: text, chap: this._chapterName(), ts: Date.now() };
+                else delete notes[title];
+                try {
+                    if (Object.keys(notes).length) localStorage.setItem(this._notesKey(), JSON.stringify(notes));
+                    else localStorage.removeItem(this._notesKey());
+                } catch (e) { /* ignore */ }
+                this._notesVer = (this._notesVer || 0) + 1;
+            },
+            _notesText() {
+                const notes = this._loadNotes();
+                const order = (() => { try { return this._nodes().toArray().map((n) => this._nodeTitle(n)); } catch (e) { return []; } })();
+                const titles = Object.keys(notes).sort((a, b) => {
+                    const ia = order.indexOf(a), ib = order.indexOf(b);
+                    return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib) || notes[a].ts - notes[b].ts;
+                });
+                let name = '';
+                try { name = (JSON.parse(localStorage.getItem(NAMES_KEY) || '{}') || {})[this._courseKey()] || ''; } catch (e) { name = ''; }
+                const out = [`【${name || '课程'}笔记】`];
+                let chap = null;
+                for (const t of titles) {
+                    const n = notes[t];
+                    if (n.chap !== chap) { chap = n.chap; if (chap) out.push('', `## ${chap}`); }
+                    out.push('', `### ${t}`, n.t);
+                }
+                return out.join('\n');
+            },
+            _copyText(text, okMsg, failMsg) {
+                const done = (ok) => {
+                    this._notice = { kind: ok ? 'upd' : 'bg', until: Date.now() + 8000, text: ok ? okMsg : failMsg };
+                    this._panelKey = '';
+                    this._renderPanel();
+                };
+                const legacy = () => {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+                        document.body.appendChild(ta); ta.select();
+                        const ok = document.execCommand('copy');
+                        ta.remove(); done(ok);
+                    } catch (e) { done(false); }
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), legacy);
+                    else legacy();
+                } catch (e) { legacy(); }
+            },
+
+            // 进度环
+            _ring(pct, color, size, label) {
+                const r = (size - 6) / 2, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+                return `<span class="xxt-ring" style="width:${size}px;height:${size}px"><svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+                    `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#E5E9F0" stroke-width="5"/>` +
+                    `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>` +
+                    `</svg><b>${label}</b></span>`;
+            },
+
+            _esc(t) { return String(t).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); },
+
+            _renderToday(el, ss) {
+                const q = (k) => el.querySelector(`[data-k="${k}"]`);
+                const g = this._goalInfo();
+                q('goal').innerHTML = this._ring(g.pct, g.done ? '#22B573' : '#3B82F6', 48, `${Math.floor(g.sec / 60)}′`) +
+                    `<span class="xxt-goal-text"><b>${g.done ? '🎯 今日目标已完成' : `今日目标 ${C.dailyGoal} 分钟`}</b>` +
+                    `<span>已学 ${fmtShort(g.sec)} · 完成 ${ss.todayNodes} 节${g.done ? '' : ` · 还差 ${fmtShort(g.goal - g.sec)}`}</span></span>`;
+                const nt = this._mode === 'course' ? this._currentNodeTitle() : '';
+                q('notewrap').style.display = nt ? 'block' : 'none';
+                const ta = q('note');
+                if (nt && ta.getAttribute('data-title') !== nt && document.activeElement !== ta) {
+                    ta.setAttribute('data-title', nt);
+                    ta.value = (this._loadNotes()[nt] || {}).t || '';
+                    q('notestate').textContent = ta.value ? '已保存在本机' : '';
+                }
+                q('statstext').innerHTML = `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`;
+            },
+
+            _renderCourseDetail(el, prog) {
+                const box = el.querySelector('[data-k="cdetail"]');
+                const p = this._progress;
+                if (!p || !prog) { box.innerHTML = '<div class="xxt-empty">正在读取课程目录…</div>'; return; }
+                const esc = (t) => this._esc(t);
+                let h = `<div class="xxt-goal">${this._ring(prog.pct, '#3B82F6', 48, prog.pct + '%')}<span class="xxt-goal-text"><b>已完成 ${p.done} / ${p.total} 节</b><span>${esc(prog.etaText)}</span></span></div>`;
+                if (p.manual.length) {
+                    h += `<div class="xxt-sec-title"><span>待手动完成</span><small>章节测验、讨论等 · ${p.manual.length} 节</small></div><div class="xxt-todo">` +
+                        p.manual.slice(0, 6).map((t) => `<div title="${esc(t)}"><i></i>${esc(t)}</div>`).join('') +
+                        (p.manual.length > 6 ? `<div class="xxt-more">还有 ${p.manual.length - 6} 节</div>` : '') + '</div>';
+                }
+                const notes = this._loadNotes();
+                const list = Object.entries(notes).sort((a, b) => b[1].ts - a[1].ts);
+                h += `<div class="xxt-sec-title"><span>本课程笔记</span><small>${list.length} 条</small></div>`;
+                if (list.length) {
+                    h += '<div class="xxt-nlist">' + list.slice(0, 4).map(([t, n]) =>
+                        `<div class="xxt-nitem" title="${esc(n.t)}"><b>${esc(t)}</b><span>${esc(n.t.split('\n')[0])}</span></div>`).join('') + '</div>' +
+                        '<button type="button" class="xxt-set-btn xxt-wide" data-act="copynotes">复制全部笔记</button>';
+                } else {
+                    h += '<div class="xxt-empty">还没有笔记。在「今天」里可以随手记下每一节的要点，会按章节整理在这里。</div>';
+                }
+                box.innerHTML = h;
+            },
+
+            _renderRecord(el, ss) {
+                const q = (k) => el.querySelector(`[data-k="${k}"]`);
+                const st = this._loadStats();
+                const total = Object.values(st.days).reduce((a, x) => a + (x.sec || 0), 0);
+                const tile = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
+                q('recsum').innerHTML = tile(fmtShort(ss.todaySec), '今日') + tile(fmtShort(ss.weekSec), '本周') + tile(`${ss.streak} 天`, '连续学习') + tile(fmtShort(total), '累计');
+                const max = Math.max(60, ...ss.week.map((x) => x.sec));
+                const wd = '日一二三四五六';
+                q('chart').innerHTML =
+                    '<div class="xxt-sec-title" style="margin-top:0"><span>最近 7 天</span><small>分钟</small></div>' +
+                    '<div class="xxt-bars">' + ss.week.map((x, i) =>
+                        `<div class="xxt-bar${i === 6 ? ' today' : ''}" title="${x.key}：${fmtDur(x.sec)}，完成 ${x.nodes} 节"><em>${x.sec >= 60 ? Math.round(x.sec / 60) : ''}</em><i style="height:${Math.round((x.sec / max) * 46)}px"></i></div>`).join('') + '</div>' +
+                    '<div class="xxt-days">' + ss.week.map((x, i) => `<span>${i === 6 ? '今天' : '周' + wd[x.date.getDay()]}</span>`).join('') + '</div>';
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const start = new Date(today); start.setDate(start.getDate() - today.getDay() - 7 * 11);
+                let cols = '';
+                for (let w = 0; w < 12; w++) {
+                    cols += '<span class="xxt-hcol">';
+                    for (let d = 0; d < 7; d++) {
+                        const dt = new Date(start); dt.setDate(start.getDate() + w * 7 + d);
+                        if (dt > today) { cols += '<i class="lx"></i>'; continue; }
+                        const k = dayKey(dt), sec = (st.days[k] || {}).sec || 0, m = sec / 60;
+                        const lv = m < 1 ? 0 : m < 15 ? 1 : m < 30 ? 2 : m < 60 ? 3 : 4;
+                        cols += `<i class="l${lv}" title="${k}：${sec >= 60 ? fmtShort(sec) : '未学习'}"></i>`;
+                    }
+                    cols += '</span>';
+                }
+                q('heat').innerHTML = '<div class="xxt-sec-title"><span>学习日历</span><small>最近 12 周 · 颜色越深学得越久</small></div>' +
+                    `<div class="xxt-hgrid">${cols}</div>` +
+                    '<div class="xxt-hlegend">少<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>多</div>';
+            },
+
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -1933,26 +2138,27 @@
                 switch (this._state) {
                     case 'reading': {
                         const d = this._docProgress || { i: 1, n: 1, pct: 0 };
-                        return { color: BLUE, label: '阅读中', text: `正在翻看课件 ${d.i}/${d.n}`, sub: `本份已翻到 ${d.pct}%` };
+                        return { color: BLUE, label: '阅读课件', text: `正在阅读课件 ${d.i}/${d.n}`, sub: `本份已读到 ${d.pct}%` };
                     }
                     case 'stopped':
                         if (this._note.startsWith('🎉')) return { color: GREEN, label: '已完成', text: this._note };
-                        return { color: GREY, label: '已停止', text: this._note || '脚本已停止，执行 app.run() 继续' };
+                        return { color: GREY, label: '已暂停', text: this._note || '学习已暂停，点击右上角 ▶ 继续' };
                     case 'advancing':
-                        return { color: BLUE, label: '切换中', text: '即将进入下一小节…' };
+                        return { color: BLUE, label: '下一节', text: '本节完成，正在进入下一节…' };
                     case 'waiting':
                         return { color: ORANGE, label: '等待中', text: this._note || '等待中…' };
                     case 'playing': {
                         if (!v) break;
                         if (this._quizNotified) return { color: RED, label: '需要处理', text: '检测到视频内弹题，请手动作答，答完自动继续' };
                         if (this._blocked) return { color: RED, label: '需要处理', text: '页面暂停了视频，请手动处理后点击播放' };
-                        const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · ${v.playbackRate}x`;
+                        const vp = isFinite(v.duration) && v.duration > 0 ? Math.min(100, Math.round((v.currentTime / v.duration) * 100)) : 0;
+                        const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · 本节 ${vp}%`;
                         if (!v.paused && (v.readyState < 3 || this._waiting)) return { color: ORANGE, label: '缓冲中', text: `网络缓冲中：${this._title}`, sub };
-                        if (v.paused) return { color: ORANGE, label: '恢复中', text: `正在恢复播放：${this._title}`, sub };
-                        return { color: GREEN, label: '播放中', text: `正在播放：${this._title}`, sub };
+                        if (v.paused) return { color: ORANGE, label: '继续中', text: `正在继续播放：${this._title}`, sub };
+                        return { color: GREEN, label: '学习中', text: `正在学习：${this._title}`, sub };
                     }
                 }
-                return { color: BLUE, label: '加载中', text: '正在加载视频…' };
+                return { color: BLUE, label: '准备中', text: '正在打开本节内容…' };
             },
 
             // 当前所在章节：如“2 第一单元 · 第 2/10 节”
@@ -1961,12 +2167,28 @@
                     const nodes = this._nodes();
                     const idx = this._currentIndex();
                     if (idx < 0) return '';
-                    const node = $(nodes.get(idx));
-                    let chapter = '';
-                    const cell = node.closest('#coursetree > ul > li');
-                    const head = cell.find('.firstLayer .posCatalog_name, .firstLayer .posCatalog_title').first();
-                    if (head.length) chapter = (head.attr('title') || head.text() || '').trim();
+                    const chapter = this._chapterName(nodes, idx);
                     return `${chapter ? chapter + ' · ' : ''}第 ${idx + 1} / ${nodes.length} 节`;
+                } catch (e) {
+                    return '';
+                }
+            },
+
+            _chapterName(nodes, idx) {
+                try {
+                    if (!nodes) { nodes = this._nodes(); idx = this._currentIndex(); }
+                    if (idx < 0) return '';
+                    const head = $(nodes.get(idx)).closest('#coursetree > ul > li').find('.firstLayer .posCatalog_name, .firstLayer .posCatalog_title').first();
+                    return head.length ? (head.attr('title') || head.text() || '').trim() : '';
+                } catch (e) {
+                    return '';
+                }
+            },
+
+            _currentNodeTitle() {
+                try {
+                    const idx = this._currentIndex();
+                    return idx >= 0 ? this._nodeTitle(this._nodes().get(idx)) : '';
                 } catch (e) {
                     return '';
                 }
@@ -1978,13 +2200,14 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
                 const q = (k) => el.querySelector(`[data-k="${k}"]`);
                 q('dot').style.background = st.color;
-                q('label').textContent = st.label;
+                el.classList.toggle('xxt-collapsed', !!this._panelCollapsed);
+                q('label').textContent = this._panelCollapsed && prog ? `${st.label} · ${prog.pct}%` : st.label;
                 q('text').textContent = st.text;
                 q('sub').textContent = st.sub || '';
                 q('sub').style.display = st.sub ? 'block' : 'none';
@@ -1999,28 +2222,34 @@
                     q('progtext').textContent = prog.text;
                     q('prog').title = prog.title;
                 }
-                q('settings').style.display = this._settingsOpen && !this._panelCollapsed ? 'block' : 'none';
-                if (this._mode === 'list') this._renderCourseList(el);
-                else q('courses').style.display = 'none';
-                const ss = this._statSummary();
-                const showStats = !this._panelCollapsed && !this._settingsOpen;
-                q('stats').style.display = showStats ? 'flex' : 'none';
-                q('stats').setAttribute('aria-expanded', String(this._statsOpen));
-                q('statstext').innerHTML = `今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}`;
-                q('chart').style.display = showStats && this._statsOpen ? 'block' : 'none';
-                if (showStats && this._statsOpen) {
-                    const max = Math.max(60, ...ss.week.map((x) => x.sec));
-                    const wd = '日一二三四五六';
-                    q('chart').innerHTML =
-                        '<div class="xxt-bars">' + ss.week.map((x, i) =>
-                            `<div class="xxt-bar${i === 6 ? ' today' : ''}" title="${x.key}：${fmtDur(x.sec)}，完成 ${x.nodes} 节"><em>${x.sec >= 60 ? Math.round(x.sec / 60) : ''}</em><i style="height:${Math.round((x.sec / max) * 46)}px"></i></div>`).join('') + '</div>' +
-                        '<div class="xxt-days">' + ss.week.map((x, i) => `<span>${i === 6 ? '今天' : '周' + wd[x.date.getDay()]}</span>`).join('') + '</div>';
+                const open = !this._panelCollapsed;
+                q('settings').style.display = this._settingsOpen && open ? 'block' : 'none';
+                // 三个标签页：今天 / 课程 / 记录（回放页只显示“今天”）
+                const tab = this._mode === 'live' ? 'today' : (this._tab || (this._mode === 'list' ? 'course' : 'today'));
+                const showMain = open && !this._settingsOpen;
+                q('tabs').style.display = showMain && this._mode !== 'live' ? 'flex' : 'none';
+                for (const b of el.querySelectorAll('[data-tab]')) {
+                    const on = b.getAttribute('data-tab') === tab;
+                    b.classList.toggle('on', on);
+                    b.setAttribute('aria-selected', String(on));
+                    b.tabIndex = on ? 0 : -1;
                 }
+                const ss = this._statSummary();
+                for (const n of ['today', 'course', 'record']) q('pane-' + n).style.display = showMain && tab === n ? 'block' : 'none';
+                if (showMain && tab === 'today') this._renderToday(el, ss);
+                if (showMain && tab === 'course') {
+                    q('cdetail').style.display = this._mode === 'course' ? 'block' : 'none';
+                    if (this._mode === 'list') this._renderCourseList(el);
+                    else { q('courses').style.display = 'none'; this._renderCourseDetail(el, prog); }
+                }
+                if (showMain && tab === 'record') this._renderRecord(el, ss);
+                for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
                 for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
                 q('toggle').textContent = this._panelCollapsed ? '+' : '–';
                 q('toggle').title = this._panelCollapsed ? '展开' : '收起';
+                q('toggle').setAttribute('aria-label', q('toggle').title);
                 const pw = q('power');
                 const paused = this._userStopped;
                 pw.classList.toggle('paused', paused);
@@ -2036,7 +2265,7 @@
                 q('tip2').textContent = this._updating ? '请稍候' : hasUpd
                     ? (this._updateFailed ? '更新失败，点击重试' : C.autoUpdate ? '将在下一小节开始前自动更新 · 点击立即更新' : '点击立即更新，无需刷新页面')
                     : '已是最新版本 · 点击查看源码、反馈问题';
-                const showRates = this._mode === 'course' && !this._panelCollapsed && !this._settingsOpen;
+                const showRates = this._mode === 'course' && !this._panelCollapsed && this._settingsOpen;
                 q('rates').style.display = showRates ? 'flex' : 'none';
                 q('ratehint').style.display = showRates && this._rateGaveUp ? 'block' : 'none';
                 const nt = this._notice && Date.now() < this._notice.until ? this._notice : null;
@@ -2085,6 +2314,52 @@
                 el.innerHTML =
                     '<style>' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
+                    '#xxt-v41-panel.xxt-collapsed{width:auto!important;min-width:230px;padding:10px 12px!important}' +
+                    '#xxt-v41-panel.xxt-collapsed .xxt-logo{width:32px!important;height:32px!important;border-radius:9px!important}' +
+                    '#xxt-v41-panel .xxt-toggle{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:#9CA3AF;font:20px/1 sans-serif;cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-toggle:hover,#xxt-v41-panel .xxt-toggle:focus-visible{background:#F1F3F6;color:#374151;outline:none}' +
+                    '#xxt-v41-panel .xxt-tabs{display:flex;gap:2px;margin-top:12px;padding:3px;border-radius:10px;background:#F1F3F6}' +
+                    '#xxt-v41-panel .xxt-tabs button{flex:1;font:inherit;font-size:13px;border:0;border-radius:8px;padding:5px 0;background:transparent;color:#6B7280;cursor:pointer;transition:background .15s,color .15s}' +
+                    '#xxt-v41-panel .xxt-tabs button:hover{color:#111827}' +
+                    '#xxt-v41-panel .xxt-tabs button.on{background:#fff;color:#111827;font-weight:600;box-shadow:0 1px 2px rgba(15,23,42,.08)}' +
+                    '#xxt-v41-panel .xxt-tabs button:focus-visible{outline:2px solid #93C5FD;outline-offset:1px}' +
+                    '#xxt-v41-panel .xxt-pane{margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-goal{display:flex;align-items:center;gap:12px}' +
+                    '#xxt-v41-panel .xxt-ring{position:relative;flex:none;display:inline-flex}' +
+                    '#xxt-v41-panel .xxt-ring circle{transition:stroke-dashoffset .5s ease}' +
+                    '#xxt-v41-panel .xxt-ring b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#111827;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-goal-text{display:flex;flex-direction:column;min-width:0;gap:2px}' +
+                    '#xxt-v41-panel .xxt-goal-text b{font-size:14px;font-weight:600;color:#111827}' +
+                    '#xxt-v41-panel .xxt-goal-text span{font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-sec-title{display:flex;align-items:baseline;gap:6px;margin:12px 0 6px;font-size:12px;font-weight:600;color:#374151}' +
+                    '#xxt-v41-panel .xxt-sec-title small{margin-left:auto;font-weight:400;font-size:11px;color:#9CA3AF}' +
+                    '#xxt-v41-panel .xxt-note{display:block;box-sizing:border-box;width:100%;min-height:62px;max-height:160px;resize:vertical;margin:0;padding:8px 10px;border:1px solid #E5E9F0;border-radius:9px;background:#FBFCFD;font:inherit;font-size:13px;line-height:1.5;color:#1F2937}' +
+                    '#xxt-v41-panel .xxt-note:focus{outline:none;border-color:#93C5FD;background:#fff;box-shadow:0 0 0 3px rgba(59,130,246,.12)}' +
+                    '#xxt-v41-panel .xxt-note::placeholder{color:#9CA3AF}' +
+                    '#xxt-v41-panel .xxt-todo{display:flex;flex-direction:column;gap:4px}' +
+                    '#xxt-v41-panel .xxt-todo div{display:flex;align-items:center;gap:8px;font-size:12px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-panel .xxt-todo i{flex:none;width:11px;height:11px;border-radius:3px;border:1.5px solid #F5A524}' +
+                    '#xxt-v41-panel .xxt-todo .xxt-more{color:#9CA3AF;padding-left:19px}' +
+                    '#xxt-v41-panel .xxt-nlist{display:flex;flex-direction:column;gap:6px}' +
+                    '#xxt-v41-panel .xxt-nitem{padding:7px 10px;border-radius:9px;background:#F6F8FB}' +
+                    '#xxt-v41-panel .xxt-nitem b{display:block;font-size:12px;font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-panel .xxt-nitem span{display:block;font-size:12px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-panel .xxt-wide{display:block;width:100%;margin-top:8px;flex:none}' +
+                    '#xxt-v41-panel .xxt-empty{font-size:12px;color:#9CA3AF;line-height:1.6}' +
+                    '#xxt-v41-panel .xxt-recsum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}' +
+                    '#xxt-v41-panel .xxt-recsum div{display:flex;flex-direction:column;align-items:center;padding:8px 2px;border-radius:9px;background:#F6F8FB}' +
+                    '#xxt-v41-panel .xxt-recsum b{font-size:13px;font-weight:700;color:#111827;white-space:nowrap;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-recsum span{font-size:11px;color:#6B7280}' +
+                    '#xxt-v41-panel .xxt-hgrid{display:flex;gap:3px;justify-content:center}' +
+                    '#xxt-v41-panel .xxt-hcol{display:flex;flex-direction:column;gap:3px}' +
+                    '#xxt-v41-panel .xxt-hgrid i,#xxt-v41-panel .xxt-hlegend i{display:block;width:14px;height:14px;border-radius:3px}' +
+                    '#xxt-v41-panel .xxt-hlegend{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:6px;font-size:10px;color:#9CA3AF}' +
+                    '#xxt-v41-panel .xxt-hlegend i{width:10px;height:10px;border-radius:2px}' +
+                    '#xxt-v41-panel .l0{background:#EEF1F5}#xxt-v41-panel .l1{background:#D6E4FB}#xxt-v41-panel .l2{background:#A9C6F5}#xxt-v41-panel .l3{background:#6FA0EE}#xxt-v41-panel .l4{background:#3B82F6}#xxt-v41-panel .lx{background:transparent}' +
+                    '#xxt-v41-panel .xxt-set-label{margin-top:10px;font-size:13px;color:#374151}' +
+                    '#xxt-v41-panel .xxt-goal-opts{display:flex;gap:6px;margin:6px 0 4px}' +
+                    '#xxt-v41-panel .xxt-notice.rest{background:#ECFDF5;color:#065F46}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-ring circle,#xxt-v41-panel .xxt-tabs button{transition:none}}' +
                     '#xxt-v41-panel .xxt-head{display:flex;align-items:center;gap:12px;cursor:grab;touch-action:none}' +
                     '#xxt-v41-panel .xxt-head:active{cursor:grabbing}' +
                     '#xxt-v41-panel .xxt-actions{align-self:flex-start;display:flex;align-items:center;gap:2px;margin-right:-6px}' +
@@ -2094,8 +2369,8 @@
                     '#xxt-v41-panel .xxt-prog-track{display:flex;height:4px;border-radius:2px;background:#E5E9F0;overflow:hidden}' +
                     '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:#3B82F6;transition:width .4s ease}' +
-                    '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums}' +
-                    '#xxt-v41-panel .xxt-courses{margin-top:10px}' +
+                    '#xxt-v41-panel .xxt-prog-text{display:none}' +
+                    '#xxt-v41-panel .xxt-courses{margin-top:0}' +
                     '#xxt-v41-panel .xxt-continue{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:#3B82F6;color:#fff;font:inherit;text-align:left;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-continue:hover,#xxt-v41-panel .xxt-continue:focus-visible{background:#2563EB;outline:none}' +
                     '#xxt-v41-panel .xxt-continue b{font-size:14px;font-weight:600}' +
@@ -2113,8 +2388,8 @@
                     '#xxt-v41-panel .xxt-stats span{flex:1;min-width:0;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-stats b{color:#111827;font-weight:600}' +
                     '#xxt-v41-panel .xxt-stats:hover span{color:#374151}' +
-                    '#xxt-v41-panel .xxt-stats[aria-expanded="true"] .xxt-chev{transform:rotate(90deg)}' +
-                    '#xxt-v41-panel .xxt-chart{margin-top:8px;padding:10px 10px 6px;border-radius:10px;background:#F6F8FB}' +
+
+                    '#xxt-v41-panel .xxt-chart{margin-top:12px}' +
                     '#xxt-v41-panel .xxt-bars{display:flex;align-items:flex-end;gap:6px;height:64px}' +
                     '#xxt-v41-panel .xxt-bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px}' +
                     '#xxt-v41-panel .xxt-bar i{display:block;width:100%;max-width:22px;min-height:2px;border-radius:4px 4px 2px 2px;background:#BFD3F6}' +
@@ -2142,7 +2417,7 @@
                     '#xxt-v41-panel.xxt-enter{animation:xxt-enter .32s cubic-bezier(.2,.8,.2,1) both}' +
                     '@keyframes xxt-enter{from{opacity:0;transform:translateY(12px)}to{opacity:.999;transform:none}}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel.xxt-enter{animation:none}}' +
-                    '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin-top:12px}' +
+                    '#xxt-v41-panel .xxt-rate-row{display:flex;align-items:center;gap:6px;margin:2px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice{display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;line-height:1.5}' +
                     '#xxt-v41-panel .xxt-notice.upd{background:#EFF6FF;color:#1D4ED8}' +
                     '#xxt-v41-panel .xxt-notice.bg{background:#FFFBEB;color:#92400E}' +
@@ -2183,7 +2458,7 @@
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-tip{transition:none}#xxt-v41-panel .xxt-upd::after{animation:none;opacity:0}}' +
                     '</style>' +
                     '<div data-k="head" class="xxt-head" title="按住拖动浮窗">' +
-                      '<div style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
+                      '<div class="xxt-logo" style="width:44px;height:44px;border-radius:12px;background:#EAF2FE;display:flex;align-items:center;justify-content:center;flex:none">' +
                         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
                           '<path d="M12 6.5C10.3 5.2 7.9 4.6 4 4.8v13.4c3.9-.2 6.3.4 8 1.7 1.7-1.3 4.1-1.9 8-1.7V4.8c-3.9-.2-6.3.4-8 1.7z"/>' +
                           '<path d="M12 6.5v13.4M7 9h2.5M7 12h2.5M14.5 9H17M14.5 12H17"/></svg>' +
@@ -2206,7 +2481,7 @@
                         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>' +
                       '</button>' +
                       '<button type="button" data-k="power" class="xxt-power"></button>' +
-                      '<span data-k="toggle" style="cursor:pointer;color:#9CA3AF;font-size:20px;line-height:1;padding:2px 6px;user-select:none"></span>' +
+                      '<button type="button" data-k="toggle" class="xxt-toggle"></button>' +
                       '</div>' +
                     '</div>' +
                     '<div data-k="box" style="margin-top:14px;padding:11px 14px;border-radius:10px;background:#F6F8FB;border-left:3px solid #A7C7F2">' +
@@ -2215,25 +2490,44 @@
                       '<div data-k="sub" style="margin-top:4px;font-size:12px;color:#9CA3AF;font-variant-numeric:tabular-nums"></div>' +
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
-                    '<div data-k="courses" class="xxt-courses" style="display:none"></div>' +
-                    '<button type="button" data-k="stats" class="xxt-stats" aria-expanded="false" title="点击查看最近 7 天">' +
-                      '<span data-k="statstext"></span><i class="xxt-chev">›</i>' +
-                    '</button>' +
-                    '<div data-k="chart" class="xxt-chart" style="display:none"></div>' +
+                    '<div data-k="tabs" class="xxt-tabs" role="tablist" aria-label="学习助手">' +
+                      '<button type="button" role="tab" data-tab="today">今天</button>' +
+                      '<button type="button" role="tab" data-tab="course">课程</button>' +
+                      '<button type="button" role="tab" data-tab="record">记录</button>' +
+                    '</div>' +
+                    '<div data-k="pane-today" class="xxt-pane" role="tabpanel">' +
+                      '<div data-k="goal" class="xxt-goal"></div>' +
+                      '<div data-k="notewrap" class="xxt-notewrap" style="display:none">' +
+                        '<div class="xxt-sec-title"><span>本节笔记</span><small data-k="notestate"></small></div>' +
+                        '<textarea data-k="note" class="xxt-note" rows="3" maxlength="2000" placeholder="随手记下这一节的要点…（只保存在本机）"></textarea>' +
+                      '</div>' +
+                      '<button type="button" data-k="stats" class="xxt-stats" title="查看学习记录"><span data-k="statstext"></span><i class="xxt-chev">›</i></button>' +
+                    '</div>' +
+                    '<div data-k="pane-course" class="xxt-pane" role="tabpanel">' +
+                      '<div data-k="cdetail"></div>' +
+                      '<div data-k="courses" class="xxt-courses" style="display:none"></div>' +
+                    '</div>' +
+                    '<div data-k="pane-record" class="xxt-pane" role="tabpanel">' +
+                      '<div data-k="recsum" class="xxt-recsum"></div>' +
+                      '<div data-k="chart" class="xxt-chart"></div>' +
+                      '<div data-k="heat" class="xxt-heat"></div>' +
+                    '</div>' +
                     '<div data-k="settings" class="xxt-settings" style="display:none">' +
+                      '<div data-k="rates" class="xxt-rate-row">' +
+                        '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
+                        '<div data-k="rateopts" class="xxt-rate-opts">' +
+                          RATE_OPTIONS.map((r) => `<button type="button" data-rate="${r}" class="xxt-rate-opt">${r}x</button>`).join('') +
+                        '</div>' +
+                      '</div>' +
+                      '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
+                      '<div class="xxt-set-label">每日学习目标</div>' +
+                      '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div>' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
                         '<button type="button" data-k="resetpos" class="xxt-set-btn">浮窗回到左下角</button>' +
                       '</div>' +
                     '</div>' +
-                    '<div data-k="rates" class="xxt-rate-row">' +
-                      '<button type="button" data-k="ratebtn" class="xxt-rate-btn" aria-expanded="false">倍速 <b data-k="ratecur"></b><i class="xxt-chev">›</i></button>' +
-                      '<div data-k="rateopts" class="xxt-rate-opts">' +
-                        RATE_OPTIONS.map((r) => `<button type="button" data-rate="${r}" class="xxt-rate-opt">${r}x</button>`).join('') +
-                      '</div>' +
-                    '</div>' +
-                    '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
                     '<div data-k="liverow" class="xxt-live-row" style="display:none">' +
                       '<span data-k="livetext" class="xxt-live-text"></span>' +
                       '<button type="button" data-k="livebtn" class="xxt-live-btn">打开直播回放</button>' +
@@ -2264,10 +2558,50 @@
                     if (b) this._openFromList(b.getAttribute('data-open'));
                 });
                 el.querySelector('[data-k="stats"]').addEventListener('click', () => {
-                    this._statsOpen = !this._statsOpen;
+                    this._tab = 'record';
                     this._panelKey = '';
                     this._renderPanel();
                 });
+                const tabs = el.querySelector('[data-k="tabs"]');
+                tabs.addEventListener('click', (e) => {
+                    const b = e.target.closest('[data-tab]');
+                    if (!b) return;
+                    this._tab = b.getAttribute('data-tab');
+                    this._panelKey = '';
+                    this._renderPanel();
+                });
+                tabs.addEventListener('keydown', (e) => {
+                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                    const list = [...tabs.querySelectorAll('[data-tab]')];
+                    const i = list.findIndex((b) => b.classList.contains('on'));
+                    const nb = list[(i + (e.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
+                    this._tab = nb.getAttribute('data-tab');
+                    this._panelKey = '';
+                    this._renderPanel();
+                    nb.focus();
+                    e.preventDefault();
+                });
+                el.querySelector('[data-k="cdetail"]').addEventListener('click', (e) => {
+                    if (e.target.closest('[data-act="copynotes"]')) this._copyText(this._notesText(), '已复制本课程的全部笔记', '复制失败，请稍后再试');
+                });
+                for (const b of el.querySelectorAll('[data-goal]')) b.addEventListener('click', () => this._setGoal(Number(b.getAttribute('data-goal'))));
+                const note = el.querySelector('[data-k="note"]');
+                let noteTimer = 0;
+                const saveNote = () => {
+                    clearTimeout(noteTimer); noteTimer = 0;
+                    this._saveNote(note.getAttribute('data-title'), note.value);
+                    const st = el.querySelector('[data-k="notestate"]');
+                    if (st) st.textContent = note.value.trim() ? '已保存在本机' : '';
+                };
+                note.addEventListener('input', () => {
+                    const st = el.querySelector('[data-k="notestate"]');
+                    if (st) st.textContent = '正在保存…';
+                    clearTimeout(noteTimer);
+                    noteTimer = setTimeout(saveNote, 600);
+                });
+                note.addEventListener('blur', () => { if (noteTimer) saveNote(); this._panelKey = ''; });
+                // 在笔记里打字时，不让页面把按键当成播放器快捷键
+                for (const t of ['keydown', 'keyup', 'keypress']) note.addEventListener(t, (e) => e.stopPropagation());
                 el.querySelector('[data-k="gear"]').addEventListener('click', () => {
                     this._settingsOpen = !this._settingsOpen;
                     this._panelKey = '';

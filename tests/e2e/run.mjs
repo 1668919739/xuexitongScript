@@ -20,7 +20,7 @@ test('接管视频：静默音、按默认倍速播放，浮窗显示章节与�
     const v = await p.evaluate(() => ({ paused: __v.paused, muted: __v.muted, rate: __v.playbackRate }));
     const info = await panelInfo(p);
     assert(!v.paused && v.muted && v.rate === 1.5, `视频状态不对：${JSON.stringify(v)}`);
-    assert(info.label === '播放中' && /2\.1 第一部分/.test(info.text), `浮窗不对：${JSON.stringify(info)}`);
+    assert(info.label === '学习中' && /2\.1 第一部分/.test(info.text), `浮窗不对：${JSON.stringify(info)}`);
     assert(/第 1 \/ 2 节/.test(info.chap), `章节行不对：${info.chap}`);
     assert(info.ver === `v${VERSION}`, `版本号不对：${info.ver}`);
     await ctx.close();
@@ -47,6 +47,7 @@ test('倍速：点击展开选择 2x 后生效并在刷新后保持', async (b) 
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
     await addFakeVideo(p);
     await inject(p); await sleep(2500);
+    await p.click('[data-k=gear]'); await sleep(200);
     await p.click('[data-k=ratebtn]'); await sleep(400);
     await p.click('[data-rate="2"]'); await sleep(800);
     assert((await p.evaluate(() => __v.playbackRate)) === 2, '选择 2x 后视频倍速没变');
@@ -77,7 +78,7 @@ test('课件：逐步翻到底触发完成，然后进入下一小节', async (b
         document.querySelectorAll('.posCatalog_name').forEach((s) => s.addEventListener('click', () => { window.__clicked = s.title; }));
     });
     await inject(p); await sleep(5000);
-    assert((await panelInfo(p)).label === '阅读中', '没有开始翻看课件');
+    assert((await panelInfo(p)).label === '阅读课件', '没有开始翻看课件');
     await sleep(12000);
     const r = await p.evaluate(() => ({ cls: document.getElementById('w1').className, clicked: window.__clicked }));
     assert(/ans-job-finished/.test(r.cls), '课件没有翻到底');
@@ -162,7 +163,7 @@ test('静默更新：播放中不打断，视频结束后自动换成新版本�
     await addFakeVideo(p);
     await inject(p); await sleep(5000);
     const during = await panelInfo(p);
-    assert(during.ver === `v${VERSION}` && during.label === '播放中', `播放中不应更新：${JSON.stringify(during)}`);
+    assert(during.ver === `v${VERSION}` && during.label === '学习中', `播放中不应更新：${JSON.stringify(during)}`);
     await p.evaluate(() => __end()); await sleep(4000);
     const after = await panelInfo(p);
     assert(after.ver === `v${nv}` && after.panels === 1, `结束后没有更新：${JSON.stringify(after)}`);
@@ -191,10 +192,10 @@ test('一键停止：停止期间不自动更新，点继续后恢复', async (b
     await inject(p); await sleep(1500);
     await p.click('[data-k=power]'); await sleep(3500);
     const stopped = await panelInfo(p);
-    assert(stopped.label === '已停止' && stopped.ver === `v${VERSION}`, `停止状态不对：${JSON.stringify(stopped)}`);
+    assert(stopped.label === '已暂停' && stopped.ver === `v${VERSION}`, `停止状态不对：${JSON.stringify(stopped)}`);
     await p.click('[data-k=power]'); await sleep(4000);
     const resumed = await panelInfo(p);
-    assert(resumed.label === '播放中' || resumed.ver === `v${nv}`, `继续后没有恢复：${JSON.stringify(resumed)}`);
+    assert(resumed.label === '学习中' || resumed.ver === `v${nv}`, `继续后没有恢复：${JSON.stringify(resumed)}`);
     await ctx.close();
 });
 
@@ -426,6 +427,75 @@ test('播放页记录“上次学习的课程”', async (b) => {
     await inject(p); await sleep(1500);
     const last = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-last-course')));
     assert(last && last.cid === '42' && /chapterId=7/.test(last.url), `没有记录上次课程：${JSON.stringify(last)}`);
+    await ctx.close();
+});
+
+test('学习助手：三个标签页、本节笔记自动保存并可复制、每日目标、学习日历', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': coursePage({ nodes: ['2.1 第一部分', '2.2 第二部分'], active: 0, marks: [2, 3] }) } });
+    const p = await ctx.newPage();
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'https://mooc1.chaoxing.com' });
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=77');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
+    assert(await vis('pane-today') && await vis('note') && await vis('goal'), '默认应显示“今天”页和笔记框');
+    const goal = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=goal]').textContent);
+    assert(/今日目标 60 分钟/.test(goal), `今日目标不对：${goal}`);
+    // 按键不应传给页面
+    await p.evaluate(() => { window.__keys = 0; document.addEventListener('keydown', () => window.__keys++); });
+    await p.click('#xxt-v41-panel [data-k=note]');
+    await p.keyboard.type('需求曲线向右下倾斜');
+    await sleep(1000);
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-notes-77') || '{}'));
+    assert(saved['2.1 第一部分'] && saved['2.1 第一部分'].t === '需求曲线向右下倾斜' && saved['2.1 第一部分'].chap === '2 第一单元', `笔记没有保存：${JSON.stringify(saved)}`);
+    assert(await p.evaluate(() => window.__keys) === 0, '笔记里的按键传到了页面');
+    // 课程页：显示进度和笔记，复制全部笔记
+    await p.click('#xxt-v41-panel [data-tab=course]'); await sleep(300);
+    const cd = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=cdetail]').textContent);
+    assert(/已完成 0 \/ 2 节/.test(cd) && /本课程笔记1 条/.test(cd) && /需求曲线/.test(cd), `课程页内容不对：${cd}`);
+    await p.click('#xxt-v41-panel [data-act=copynotes]'); await sleep(400);
+    const clip = await p.evaluate(() => navigator.clipboard.readText());
+    assert(/## 2 第一单元/.test(clip) && /### 2\.1 第一部分\n需求曲线向右下倾斜/.test(clip), `复制的笔记不对：${clip}`);
+    // 记录页：4 个数字、7 天柱状图、12 周日历
+    await p.click('#xxt-v41-panel [data-tab=record]'); await sleep(300);
+    const rec = await p.evaluate(() => ({
+        tiles: document.querySelectorAll('#xxt-v41-panel .xxt-recsum > div').length,
+        bars: document.querySelectorAll('#xxt-v41-panel .xxt-bar').length,
+        cells: document.querySelectorAll('#xxt-v41-panel .xxt-hgrid i:not(.lx)').length,
+    }));
+    const dow = new Date().getDay();
+    assert(rec.tiles === 4 && rec.bars === 7 && rec.cells === 78 + dow, `记录页不对：${JSON.stringify(rec)}`);
+    // 设置：每日目标改为 30 分钟并保存；倍速在设置里
+    await p.click('[data-k=gear]'); await sleep(200);
+    assert(await vis('ratebtn'), '倍速应该在设置里');
+    await p.click('#xxt-v41-panel [data-goal="30"]'); await sleep(200);
+    assert(await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).dailyGoal) === 30, '每日目标没有保存');
+    // 收起：只剩标题栏，状态带上课程进度
+    await p.click('[data-k=gear]'); await p.click('[data-k=toggle]'); await sleep(200);
+    const col = await panelInfo(p);
+    assert(/学习中 · 0%/.test(col.label) && !(await vis('tabs')), `收起状态不对：${JSON.stringify(col)}`);
+    // 切到下一节后，笔记框换成新小节，刷新后旧笔记还在
+    await p.click('[data-k=toggle]'); await p.click('#xxt-v41-panel [data-tab=today]');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(2000);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=note]').value) === '需求曲线向右下倾斜', '刷新后笔记没有恢复');
+    await ctx.close();
+});
+
+test('学习助手：连续学习 45 分钟提醒休息，完成今日目标提醒一次', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=78');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
+    await sleep(2500);
+    let info = await panelInfo(p);
+    assert(/连续学习 45 分钟/.test(info.notice || ''), `没有休息提醒：${info.notice}`);
+    await p.click('[data-k=noticex]');
+    await p.evaluate(() => { const st = app._loadStats(); const d = st.days[Object.keys(st.days).pop()]; d.sec = 3600; });
+    await sleep(2000);
+    info = await panelInfo(p);
+    assert(/今日目标 60 分钟已完成/.test(info.notice || ''), `没有目标完成提醒：${info.notice}`);
     await ctx.close();
 });
 
