@@ -1492,14 +1492,14 @@
                     html += `<button type="button" class="xxt-continue" data-open="last"><b>▶ 继续上次的课程</b><span>${esc(last.name)}${p}</span></button>`;
                 }
                 if (todo.length) {
-                    html += '<div class="xxt-clist">' + todo.slice(0, 5).map((x) => {
+                    html += '<div class="xxt-clist">' + todo.slice(0, 15).map((x) => {
                         const pct = Math.round((x.done / x.total) * 100);
                         return `<button type="button" class="xxt-crow" data-open="${esc(x.cid)}" title="${esc(x.name)}">` +
                             `<span class="xxt-cname">${esc(x.name)}</span>` +
                             `<span class="xxt-cmeta">${x.done}/${x.total} 任务点${x.studied >= 60 ? ` · 已学 ${fmtShort(x.studied)}` : ''}<em>${pct}%</em></span>` +
                             `<span class="xxt-ctrack"><i style="width:${pct}%"></i></span></button>`;
                     }).join('') + '</div>';
-                    if (todo.length > 5) html += `<div class="xxt-cmore">还有 ${todo.length - 5} 门进行中的课程</div>`;
+                    if (todo.length > 15) html += `<div class="xxt-cmore">还有 ${todo.length - 15} 门进行中的课程</div>`;
                 } else if (list.length) {
                     html += '<div class="xxt-cmore">🎉 所有课程的任务点都完成了</div>';
                 }
@@ -2099,7 +2099,7 @@
                     '#xxt-v41-panel .xxt-continue:hover,#xxt-v41-panel .xxt-continue:focus-visible{background:#2563EB;outline:none}' +
                     '#xxt-v41-panel .xxt-continue b{font-size:14px;font-weight:600}' +
                     '#xxt-v41-panel .xxt-continue span{font-size:12px;opacity:.9;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-                    '#xxt-v41-panel .xxt-clist{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto}' +
+                    '#xxt-v41-panel .xxt-clist{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}' +
                     '#xxt-v41-panel .xxt-crow{display:flex;flex-direction:column;gap:3px;width:100%;padding:8px 10px;border:0;border-radius:9px;background:#F6F8FB;font:inherit;text-align:left;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-crow:hover,#xxt-v41-panel .xxt-crow:focus-visible{background:#E3ECFD;outline:none}' +
                     '#xxt-v41-panel .xxt-cname{font-size:13px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}' +
