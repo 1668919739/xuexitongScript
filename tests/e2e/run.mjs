@@ -221,7 +221,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     const info = await panelInfo(p);
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
-    assert(/后台防卡顿/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    assert(/浮窗可以拖动四边/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -710,6 +710,61 @@ test('后台防卡顿：浏览器不允许取消静音时，恢复静音继续�
     await sleep(2500);
     const r = await p.evaluate(() => ({ muted: __v.muted, paused: __v.paused, blocked: app._bgAudioBlocked }));
     assert(r.muted && !r.paused && r.blocked, `没有回退到静音播放：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
+test('版本号气泡不被浮窗裁剪；浮窗比屏幕高时才内部滚动', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 800, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.hover('#xxt-v41-panel [data-k=ver]'); await sleep(400);
+    const r = await p.evaluate(() => {
+        const el = document.getElementById('xxt-v41-panel'), tip = el.querySelector('.xxt-tip');
+        const t = tip.getBoundingClientRect();
+        const p = el.getBoundingClientRect();
+        return { scroll: el.classList.contains('xxt-scroll'), overflow: getComputedStyle(el).overflowY, visible: getComputedStyle(tip).opacity === '1' && t.top >= 0 && t.bottom <= p.top + 40, title: el.querySelector('[data-k=head]').title };
+    });
+    assert(!r.scroll && r.overflow === 'visible' && r.visible && !r.title, `版本号气泡显示不对：${JSON.stringify(r)}`);
+    await p.setViewportSize({ width: 800, height: 420 }); await sleep(600);
+    assert(await p.evaluate(() => document.getElementById('xxt-v41-panel').classList.contains('xxt-scroll')), '屏幕变矮后应允许内部滚动');
+    await ctx.close();
+});
+
+test('浮窗可拖动边缘放大缩小，大小会被记住；收起时恢复成一条；双击右下角恢复默认', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=5');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const rect = () => p.evaluate(() => { const r = document.getElementById('xxt-v41-panel').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+    const r0 = await rect();
+    // 拖右下角：变宽变高
+    const se = await (await p.$('#xxt-v41-panel [data-rz=se]')).boundingBox();
+    await p.mouse.move(se.x + se.width / 2, se.y + se.height / 2); await p.mouse.down();
+    await p.mouse.move(se.x + 300, se.y + 40, { steps: 8 }); await p.mouse.up(); await sleep(300);
+    // 拖上边：再拉高
+    const n = await (await p.$('#xxt-v41-panel [data-rz=n]')).boundingBox();
+    await p.mouse.move(n.x + n.width / 2, n.y + n.height / 2); await p.mouse.down();
+    await p.mouse.move(n.x + n.width / 2, n.y - 200, { steps: 8 }); await p.mouse.up(); await sleep(300);
+    const r1 = await rect();
+    assert(r1.w > r0.w + 250 && r1.h > r0.h + 150, `没有放大：${JSON.stringify([r0, r1])}`);
+    const note = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=note]').offsetHeight);
+    assert(note > 150, `放大后笔记框没有跟着变大：${note}`);
+    // 刷新后保持
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(2000);
+    const r2 = await rect();
+    assert(Math.abs(r2.w - r1.w) < 2 && Math.abs(r2.h - r1.h) < 2, `刷新后大小没有保持：${JSON.stringify([r1, r2])}`);
+    // 收起：恢复成一条
+    await p.click('[data-k=toggle]'); await sleep(800);
+    assert((await rect()).h < 100, '收起后应恢复成一条');
+    await p.click('[data-k=toggle]'); await sleep(800);
+    assert(Math.abs((await rect()).h - r1.h) < 2, '展开后应回到自定义大小');
+    // 双击右下角恢复默认
+    await p.dblclick('#xxt-v41-panel [data-rz=se]'); await sleep(800);
+    const r3 = await rect();
+    assert(Math.abs(r3.w - 324) < 2 && !(await p.evaluate(() => localStorage.getItem('xxt-v41-panel-size'))), `双击没有恢复默认：${JSON.stringify(r3)}`);
     await ctx.close();
 });
 
