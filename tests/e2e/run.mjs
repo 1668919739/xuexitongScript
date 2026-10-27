@@ -222,7 +222,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
     assert(/格式转换/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
-    assert(/RouteCC 吐槽/.test(info.whatsnew) && /\d+月\d+日更新/.test(info.whatsnew), `更新通知里缺少作者吐槽或日期：${info.whatsnew}`);
+    assert(/💬 作者RouteCC：/.test(info.whatsnew) && /\d+月\d+日更新/.test(info.whatsnew), `更新通知里缺少作者吐槽或日期：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -239,7 +239,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
         notes: [...document.querySelectorAll('#xxt-v41-panel .xxt-hv-note')].map((e) => e.textContent),
     }));
     assert(meta.dates.length === hist.n && meta.dates.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)), `更新记录缺少日期：${JSON.stringify(meta.dates)}`);
-    assert(meta.notes.length >= 1 && meta.notes.every((n) => n.startsWith('💬 作者RouteCC 吐槽')), `作者吐槽不对：${JSON.stringify(meta.notes)}`);
+    assert(meta.notes.length >= 1 && meta.notes.every((n) => n.startsWith('💬 作者RouteCC：')), `作者吐槽不对：${JSON.stringify(meta.notes)}`);
     await p.click('#xxt-v41-panel [data-k=histback]'); await sleep(700);
     const back = await panelInfo(p);
     assert(!back.whatsnew && await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=tabs]').offsetParent !== null), '返回后应回到主界面，且更新说明已关闭');

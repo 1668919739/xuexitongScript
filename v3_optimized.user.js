@@ -1635,7 +1635,7 @@
                 const latest = wn.entries[0];
                 const note = el.querySelector('[data-k="wnnote"]');
                 note.style.display = latest && latest.note ? 'block' : 'none';
-                if (latest && latest.note) note.innerHTML = `<b>💬 作者RouteCC 吐槽</b>${esc(latest.note)}`;
+                if (latest && latest.note) note.innerHTML = `<b>💬 作者RouteCC：</b>${esc(latest.note)}`;
                 el.querySelector('[data-k="wndate"]').textContent = latest && latest.date ? latest.date.replace(/^\d{4}-0?(\d+)-0?(\d+)$/, '$1月$2日') + '更新' : '';
             },
             _renderHistory(el) {
@@ -1643,7 +1643,7 @@
                 el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
                     `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
                     e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
-                    (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC 吐槽</b>${esc(e.note)}</div>` : '') + '</div>').join('');
+                    (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${esc(e.note)}</div>` : '') + '</div>').join('');
             },
             _startUpdateCheck() {
                 this._checkUpdate();
