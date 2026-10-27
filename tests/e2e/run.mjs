@@ -468,7 +468,7 @@ test('学习助手：三个标签页、本节笔记自动保存并可复制、�
     const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
     assert(await vis('pane-today') && await vis('note') && await vis('goal'), '默认应显示“今天”页和笔记框');
     const goal = await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=goal]').textContent);
-    assert(/今日目标 60 分钟/.test(goal), `今日目标不对：${goal}`);
+    assert(/今日已学/.test(goal) && !/目标/.test(goal), `今日学习概况不对：${goal}`);
     // 按键不应传给页面
     await p.evaluate(() => { window.__keys = 0; document.addEventListener('keydown', () => window.__keys++); });
     await p.click('#xxt-v41-panel [data-k=note]');
@@ -493,11 +493,10 @@ test('学习助手：三个标签页、本节笔记自动保存并可复制、�
     }));
     const dow = new Date().getDay();
     assert(rec.tiles === 4 && rec.bars === 7 && rec.cells === 78 + dow, `记录页不对：${JSON.stringify(rec)}`);
-    // 设置：每日目标改为 30 分钟并保存；倍速在设置里
+    // 设置：倍速在设置里；已经去掉每日目标和休息提醒
     await p.click('[data-k=gear]'); await sleep(200);
     assert(await vis('ratebtn'), '倍速应该在设置里');
-    await p.click('#xxt-v41-panel [data-goal="30"]'); await sleep(200);
-    assert(await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).dailyGoal) === 30, '每日目标没有保存');
+    assert(await p.evaluate(() => !document.querySelector('#xxt-v41-panel [data-goal], #xxt-v41-panel [data-set=breakRemind]')), '每日目标或休息提醒还在设置里');
     // 收起：只剩标题栏，状态带上课程进度
     await p.click('[data-k=gear]'); await p.click('[data-k=toggle]'); await sleep(200);
     const col = await panelInfo(p);
@@ -509,34 +508,10 @@ test('学习助手：三个标签页、本节笔记自动保存并可复制、�
     await ctx.close();
 });
 
-test('学习助手：连续学习 45 分钟提醒休息，完成今日目标提醒一次', async (b) => {
-    const ctx = await newContext(b);
-    const p = await ctx.newPage();
-    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=78');
-    await addFakeVideo(p);
-    await inject(p); await sleep(2500);
-    // 休息提醒默认关闭
-    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
-    await sleep(2500);
-    assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '休息提醒应默认关闭');
-    await p.click('[data-k=gear]'); await p.click('[data-set=breakRemind]'); await p.click('[data-k=gear]'); await sleep(200);
-    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
-    await sleep(2500);
-    let info = await panelInfo(p);
-    assert(/连续学习 45 分钟/.test(info.notice || ''), `没有休息提醒：${info.notice}`);
-    await p.click('[data-k=noticex]');
-    await p.evaluate(() => { const st = app._loadStats(); const d = st.days[Object.keys(st.days).pop()]; d.sec = 3600; });
-    await sleep(2000);
-    info = await panelInfo(p);
-    assert(/今日目标 60 分钟已完成/.test(info.notice || ''), `没有目标完成提醒：${info.notice}`);
-    await ctx.close();
-});
-
-test('学习助手总开关：关闭后只保留一行学习时长，不再提醒休息，设置会被记住', async (b) => {
+test('学习助手总开关：关闭后只保留一行学习时长，设置会被记住', async (b) => {
     const ctx = await newContext(b);
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=79');
-    await p.evaluate(() => localStorage.setItem('xxt-v41-settings', JSON.stringify({ breakRemind: true })));
     await addFakeVideo(p);
     await inject(p); await sleep(2500);
     const vis = (k) => p.evaluate((k) => { const e = document.querySelector(`#xxt-v41-panel [data-k="${k}"]`); return !!e && e.offsetParent !== null; }, k);
@@ -544,9 +519,6 @@ test('学习助手总开关：关闭后只保留一行学习时长，不再提�
     await p.click('#xxt-v41-panel [data-k=assist]'); await sleep(300);
     const st = await p.evaluate(() => ({ text: document.querySelector('#xxt-v41-panel [data-k=statsplain]').textContent, checked: document.querySelector('#xxt-v41-panel [data-k=assist]').getAttribute('aria-checked') }));
     assert(!(await vis('tabs')) && !(await vis('goal')) && await vis('statsplain') && /^今日 /.test(st.text) && st.checked === 'false', `关闭后显示不对：${JSON.stringify(st)}`);
-    await p.evaluate(() => { app._restSec = 45 * 60 - 1; });
-    await sleep(2500);
-    assert(!/连续学习/.test((await panelInfo(p)).notice || ''), '关闭后仍然提醒休息');
     assert(!(await vis('progtext')), '没有课程进度时不应显示进度行');
     await p.reload(); await addFakeVideo(p); await inject(p); await sleep(2000);
     assert(!(await vis('tabs')) && await vis('assist'), '刷新后没有记住关闭状态');

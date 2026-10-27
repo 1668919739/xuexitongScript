@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.5.0
+// @version      4.5.1
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.5.0';
+    const VERSION = '4.5.1';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.5.1', date: '2026-10-27', items: [
+            '精简：去掉每日学习目标和休息提醒，「今天」页改为显示今日已学时长和完成节数',
+        ] },
         { v: '4.5.0', date: '2026-10-27', note: '谁会在这里塞一个音乐播放器啊？？？怎么还有音频格式转换器？？？浮窗主题颜色自定义？这个东西有人用得上吗。。。\n我认为浮窗可随意拉动的确是个实用的功能，直接盖住整个学习通页面哈哈', items: [
             '唱片机新增「格式转换」：把音频或视频（MP3、M4A、AAC、FLAC、WAV、OGG、OPUS、MP4 等）转成 MP3（128~320 kbps）或 WAV，可选采样率和声道，转完自动加入唱片机，也可下载到电脑；添加音乐时遇到放不了的文件会自动放进转换列表。全部在本机浏览器里完成，不上传文件；音乐软件的加密格式不提供转换',
             '唱片机内置 5 种环境音：轻钢琴（专注）、窗外雨声、海浪、壁炉篝火、粉红噪音，由浏览器实时合成，不用下载、没有版权问题，打开就能听；唱片机改为紧挨着侧边功能栏展开',
@@ -244,13 +247,10 @@
             liveStallMs: 20000,         // 直播回放多久无进度判定为卡住
             autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
-            assistMode: true,           // 学习助手总开关：今日目标、笔记、学习记录、休息提醒
+            assistMode: true,           // 学习助手总开关：本节笔记、课程详情、学习记录
             theme: 'light',             // 浮窗主题：light / mint / sakura / violet / latte / dark / auto / custom
             customColor: '#3B82F6',     // 自定义主题的主色
             customBase: 'light',        // 自定义主题的底色：light 浅色 / dark 深色
-            dailyGoal: 60,              // 每日学习目标（分钟）
-            breakRemind: false,         // 连续学习一段时间后提醒休息（默认关闭）
-            breakAfterMin: 45,          // 连续学习多少分钟提醒休息
             videoSelector: 'video#video_html5_api, video[id*="video_html5"], .video-js video',
             quizSelector: '[class*="videoquiz"]', // 视频内弹题浮层
         };
@@ -268,7 +268,6 @@
         const LAST_KEY = 'xxt-v41-last-course';
         const NAMES_KEY = 'xxt-v41-course-names';
         const NOTES_PREFIX = 'xxt-v41-notes-';
-        const GOAL_OPTIONS = [30, 60, 90, 120];
         // 浮窗主题：每个主题只换一组颜色变量；“跟随系统”在浅色 / 深色之间自动切换
         const THEMES = [
             ['light', '清爽蓝', '#3B82F6'],
@@ -318,12 +317,10 @@
             ['bgAudio', '后台防卡顿', '切到别的窗口时以极小音量播放，浏览器就不会给页面限速、暂停视频'],
             ['alertSound', '提示音', '需要处理时（弹题等）响急促的警示音，每 15 秒一次直到处理完；完成等普通提醒响柔和的提示音'],
             ['alertNotify', '系统通知', '切到别的窗口也能收到提醒（需要允许通知）'],
-            ['breakRemind', '休息提醒', '连续学习 45 分钟后，提醒起来活动一下'],
         ];
         try {
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
             for (const [k] of SETTING_ITEMS) if (typeof saved[k] === 'boolean') C[k] = saved[k];
-            if (GOAL_OPTIONS.includes(saved.dailyGoal)) C.dailyGoal = saved.dailyGoal;
             if (typeof saved.assistMode === 'boolean') C.assistMode = saved.assistMode;
             if (typeof saved.theme === 'string' && THEMES.some((t) => t[0] === saved.theme)) C.theme = saved.theme;
             if (/^#[0-9a-f]{6}$/i.test(saved.customColor || '')) C.customColor = saved.customColor;
@@ -333,7 +330,6 @@
             try {
                 const o = {};
                 for (const [k] of SETTING_ITEMS) o[k] = C[k];
-                o.dailyGoal = C.dailyGoal;
                 o.assistMode = C.assistMode;
                 o.theme = C.theme;
                 o.customColor = C.customColor;
@@ -1633,9 +1629,11 @@
                     (shown.length ? shown.map((t) => `<li>${esc(t)}</li>`).join('') : '<li>修复了一些问题，体验更稳定</li>') +
                     (items.length > shown.length ? `<li class="xxt-wn-more">还有 ${items.length - shown.length} 项改进</li>` : '');
                 const latest = wn.entries[0];
+                // 跨多个版本更新时，显示其中最新的一条作者吐槽
+                const withNote = wn.entries.find((e) => e.note);
                 const note = el.querySelector('[data-k="wnnote"]');
-                note.style.display = latest && latest.note ? 'block' : 'none';
-                if (latest && latest.note) note.innerHTML = `<b>💬 作者RouteCC：</b>${this._noteHtml(latest.note)}`;
+                note.style.display = withNote ? 'block' : 'none';
+                if (withNote) note.innerHTML = `<b>💬 作者RouteCC：</b>${this._noteHtml(withNote.note)}`;
                 el.querySelector('[data-k="wndate"]').textContent = latest && latest.date ? latest.date.replace(/^\d{4}-0?(\d+)-0?(\d+)$/, '$1月$2日') + '更新' : '';
             },
             // 作者吐槽：换行分段显示
@@ -2167,7 +2165,7 @@
                     `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
                     `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
                     `学习记录：今日 ${fmtDur(this._statSummary().todaySec)} · 本周 ${fmtDur(this._statSummary().weekSec)}`,
-                    `设置：倍速 ${C.playbackRate}x · 每日目标 ${C.dailyGoal} 分钟 · 主题 ${C.theme}${C.theme === 'custom' ? `（${C.customColor} ${C.customBase}）` : ''} · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
+                    `设置：倍速 ${C.playbackRate}x · 主题 ${C.theme}${C.theme === 'custom' ? `（${C.customColor} ${C.customBase}）` : ''} · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `后台：防卡顿${C.bgAudio ? (this._bgAudioBlocked ? '（浏览器不允许）' : this._bgAudio ? '（生效中）' : '开') : '关'} · 后台被暂停 ${this._bgPauseCount || 0} 次 · 保活锁${this._lockRelease ? '有' : '无'} · 当前${reallyHidden() ? '在后台' : '在前台'}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
@@ -2378,7 +2376,7 @@
                 }
             },
 
-            // ================= 学习助手：今日目标 / 休息提醒 / 章节小结 / 笔记 =================
+            // ================= 学习助手：章节小结 / 笔记 =================
             // 提示不覆盖“更新”这类更重要的提示
             _softNotice(n) {
                 const cur = this._notice;
@@ -2386,26 +2384,10 @@
                 this._notice = n;
                 return true;
             },
-            _goalInfo() {
-                const goal = (C.dailyGoal || 60) * 60;
-                const sec = this._statSummary().todaySec;
-                return { goal, sec, pct: Math.min(100, Math.round((sec / goal) * 100)), done: sec >= goal };
-            },
             _assistTick(dt) {
                 if (this._mode === 'list' || !C.assistMode) return;
                 const now = Date.now();
                 if (this._isStudying()) {
-                    // 连续学习：中断超过 5 分钟就重新计时
-                    if (this._restLastTs && now - this._restLastTs > 5 * 60000) this._restSec = 0;
-                    this._restSec = (this._restSec || 0) + dt;
-                    this._restLastTs = now;
-                    if (C.breakRemind && this._restSec >= C.breakAfterMin * 60) {
-                        this._restSec = 0;
-                        if (this._softNotice({ kind: 'rest', until: now + 5 * 60000, text: `☕ 已经连续学习 ${C.breakAfterMin} 分钟了，起来活动一下、看看远处吧` })) {
-                            if (C.alertSound) this._beep();
-                            log(`休息提醒：已连续学习 ${C.breakAfterMin} 分钟`, '#22B573');
-                        }
-                    }
                     if (this._mode === 'course') {
                         const ch = this._chapterName();
                         if (ch && this._chapAcc && this._chapAcc.name === ch) this._chapAcc.sec += dt;
@@ -2423,16 +2405,6 @@
                         this._chapAcc = { name: ch, sec: 0 };
                     }
                 }
-                // 今日目标完成时提醒一次
-                const g = this._goalInfo();
-                if (g.done) {
-                    const day = this._loadStats().days[dayKey()];
-                    if (day && !day.goalHit) {
-                        day.goalHit = 1;
-                        this._saveStats(true);
-                        if (this._softNotice({ kind: 'rest', until: now + 20000, text: `🎯 今日目标 ${C.dailyGoal} 分钟已完成，继续保持！` }) && C.alertSound) this._beep();
-                    }
-                }
             },
             _toggleAssist() {
                 C.assistMode = !C.assistMode;
@@ -2440,15 +2412,6 @@
                 if (!C.assistMode && this._notice && this._notice.kind === 'rest') this._notice = null;
                 this._chapAcc = null;
                 log(`学习助手：${C.assistMode ? '开启' : '关闭'}`, '#2196F3');
-                this._panelKey = '';
-                this._renderPanel();
-            },
-            _setGoal(m) {
-                if (!GOAL_OPTIONS.includes(m)) return;
-                C.dailyGoal = m;
-                saveSettings();
-                const day = this._loadStats().days[dayKey()];
-                if (day && !this._goalInfo().done) delete day.goalHit;
                 this._panelKey = '';
                 this._renderPanel();
             },
@@ -2524,10 +2487,8 @@
 
             _renderToday(el, ss) {
                 const q = (k) => el.querySelector(`[data-k="${k}"]`);
-                const g = this._goalInfo();
-                q('goal').innerHTML = this._ring(g.pct, g.done ? '#22B573' : 'var(--x-accent)', 48, `${Math.floor(g.sec / 60)}′`) +
-                    `<span class="xxt-goal-text"><b>${g.done ? '🎯 今日目标已完成' : `今日目标 ${C.dailyGoal} 分钟`}</b>` +
-                    `<span>已学 ${fmtShort(g.sec)} · 完成 ${ss.todayNodes} 节${g.done ? '' : ` · 还差 ${fmtShort(g.goal - g.sec)}`}</span></span>`;
+                q('goal').innerHTML = `<span class="xxt-today-badge">${Math.floor(ss.todaySec / 60)}′</span>` +
+                    `<span class="xxt-goal-text"><b>今日已学 ${fmtShort(ss.todaySec)}</b><span>完成 ${ss.todayNodes} 节${ss.streak ? ` · 连续学习 ${ss.streak} 天` : ''}</span></span>`;
                 const nt = this._mode === 'course' ? this._currentNodeTitle() : '';
                 q('notewrap').style.display = nt ? 'flex' : 'none';
                 const ta = q('note');
@@ -3546,7 +3507,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -3651,10 +3612,6 @@
                 q('statstext').innerHTML = `本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''} · 查看学习记录`;
                 q('statsplain').style.display = showMain && !assist ? 'flex' : 'none';
                 q('statsplain').innerHTML = `<span>今日 <b>${fmtShort(ss.todaySec)}</b> · 本周 <b>${fmtShort(ss.weekSec)}</b>${ss.streak ? ` · 连续 <b>${ss.streak}</b> 天` : ''}</span>`;
-                q('goalset').style.display = assist ? 'block' : 'none';
-                const br = el.querySelector('[data-set="breakRemind"]');
-                if (br) br.closest('label').style.display = assist ? '' : 'none';
-                for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
                 q('restore').style.display = !this._panelCollapsed && this._loadSize() ? 'inline-flex' : 'none';
                 if (this._musicEl || this._musicOpen) this._renderMusic();
                 else this._renderSide();
@@ -3826,6 +3783,7 @@
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-pane,#xxt-v41-panel .xxt-pane.off{transition:none}}' +
                     '#xxt-v41-panel .xxt-goal{display:flex;align-items:center;gap:12px}' +
                     '#xxt-v41-panel .xxt-ring{position:relative;flex:none;display:inline-flex}' +
+                    '#xxt-v41-panel .xxt-today-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:var(--x-accent-soft);color:var(--x-accent-strong);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-ring circle{transition:stroke-dashoffset .5s ease}' +
                     '#xxt-v41-panel .xxt-ring b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--x-strong);font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-goal-text{display:flex;flex-direction:column;min-width:0;gap:2px}' +
@@ -4036,7 +3994,7 @@
                       '<button type="button" data-k="wnall" class="xxt-wn-all">查看全部更新记录 ›</button>' +
                     '</div>' +
                     '<button type="button" data-k="assist" class="xxt-assist" role="switch" aria-checked="true">' +
-                      '<span class="xxt-assist-t"><b>学习助手</b><small>今日目标 · 本节笔记 · 学习记录 · 休息提醒</small></span><i class="xxt-assist-sw"></i>' +
+                      '<span class="xxt-assist-t"><b>学习助手</b><small>本节笔记 · 课程详情 · 学习记录</small></span><i class="xxt-assist-sw"></i>' +
                     '</button>' +
                     '<div data-k="tabs" class="xxt-tabs" role="tablist" aria-label="学习助手"><i data-k="tabind" class="xxt-tab-ind"></i>' +
                       '<button type="button" role="tab" data-tab="today">今天</button>' +
@@ -4071,8 +4029,6 @@
                         '</div>' +
                       '</div>' +
                       '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
-                      '<div data-k="goalset"><div class="xxt-set-label">每日学习目标</div>' +
-                      '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div></div>' +
                       '<div class="xxt-set-label">浮窗主题</div>' +
                       '<div class="xxt-themes" role="radiogroup" aria-label="浮窗主题">' + THEMES.map(([k, name, color]) =>
                         `<button type="button" class="xxt-theme" data-theme-opt="${k}" role="radio" title="${name}"><i style="background:${color || THEME_SWATCH[k]}"></i>${name}</button>`).join('') + '</div>' +
@@ -4165,7 +4121,6 @@
                 el.querySelector('[data-k="cdetail"]').addEventListener('click', (e) => {
                     if (e.target.closest('[data-act="copynotes"]')) this._copyText(this._notesText(), '已复制本课程的全部笔记', '复制失败，请稍后再试');
                 });
-                for (const b of el.querySelectorAll('[data-goal]')) b.addEventListener('click', () => this._setGoal(Number(b.getAttribute('data-goal'))));
                 const note = el.querySelector('[data-k="note"]');
                 let noteTimer = 0;
                 const saveNote = () => {
