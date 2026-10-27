@@ -823,7 +823,7 @@ test('浮窗主题：可切换多种配色并记住，跟随系统时随系统�
     const cur = () => p.evaluate(() => { const el = document.getElementById('xxt-v41-panel'); const cs = getComputedStyle(el); return { theme: el.getAttribute('data-theme'), bg: cs.backgroundColor, accent: cs.getPropertyValue('--x-accent').trim() }; });
     assert((await cur()).theme === 'light', '默认应是清爽蓝');
     await p.click('[data-k=gear]'); await sleep(300);
-    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-panel [data-theme-opt]').length) === 7, '主题数量不对');
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-panel [data-theme-opt]').length) === 8, '主题数量不对');
     await p.click('#xxt-v41-panel [data-theme-opt=sakura]'); await sleep(300);
     let c = await cur();
     assert(c.theme === 'sakura' && c.accent === '#EC4899', `切换樱花粉失败：${JSON.stringify(c)}`);
@@ -838,6 +838,43 @@ test('浮窗主题：可切换多种配色并记住，跟随系统时随系统�
     assert((await cur()).theme === 'light', '跟随系统：系统浅色时应为清爽蓝');
     await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
     assert(await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).theme) === 'auto', '刷新后主题设置丢失');
+    await ctx.close();
+});
+
+test('自定义主题：调色盘自由选主色、可选浅色或深色底，按钮文字颜色自动保证看得清', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.click('[data-k=gear]'); await sleep(300);
+    const vis = (sel) => p.evaluate((sel) => { const e = document.querySelector(sel); return !!e && e.offsetParent !== null; }, sel);
+    assert(!(await vis('#xxt-v41-panel [data-k=cpick]')), '没选自定义时不应显示调色盘');
+    await p.click('#xxt-v41-panel [data-theme-opt=custom]'); await sleep(300);
+    assert(await vis('#xxt-v41-panel [data-k=cpick]'), '选自定义后应显示调色盘');
+    const cur = () => p.evaluate(() => {
+        const el = document.getElementById('xxt-v41-panel');
+        const probe = document.createElement('i'); probe.style.color = 'var(--x-accent)'; el.appendChild(probe);
+        const accent = getComputedStyle(probe).color; probe.style.color = 'var(--x-on-accent)'; const on = getComputedStyle(probe).color; probe.remove();
+        return { theme: el.getAttribute('data-theme'), custom: el.classList.contains('xxt-custom'), accent, on, hex: el.querySelector('[data-k=chex]').textContent };
+    });
+    // 拖动调色盘（input 事件）实时生效
+    await p.evaluate(() => { const c = document.querySelector('#xxt-v41-panel [data-k=cpick]'); c.value = '#e11d48'; c.dispatchEvent(new Event('input', { bubbles: true })); });
+    let c = await cur();
+    assert(c.custom && c.theme === 'light' && c.accent === 'rgb(225, 29, 72)' && c.on === 'rgb(255, 255, 255)' && c.hex === '#E11D48', `取色没有生效：${JSON.stringify(c)}`);
+    // 浅色主色：按钮文字自动换成深色
+    await p.click('#xxt-v41-panel [data-cpreset="#EAB308"]'); await sleep(300);
+    c = await cur();
+    assert(c.accent === 'rgb(234, 179, 8)' && c.on === 'rgb(17, 24, 39)', `浅色主色的文字颜色不对：${JSON.stringify(c)}`);
+    // 深色底
+    await p.click('#xxt-v41-panel [data-cbase=dark]'); await sleep(400);
+    c = await cur();
+    assert(c.theme === 'dark' && c.custom, `深色底没有生效：${JSON.stringify(c)}`);
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')));
+    assert(saved.theme === 'custom' && saved.customColor === '#eab308' && saved.customBase === 'dark', `自定义主题没有保存：${JSON.stringify(saved)}`);
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
+    c = await cur();
+    assert(c.custom && c.theme === 'dark' && c.accent === 'rgb(234, 179, 8)', `刷新后自定义主题丢失：${JSON.stringify(c)}`);
     await ctx.close();
 });
 

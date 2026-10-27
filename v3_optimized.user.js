@@ -29,7 +29,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
-            '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间和跟随系统 7 种配色，选择会被记住',
+            '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
             '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）',
             '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住。调过大小后标题栏会出现「还原大小」按钮，也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小',
             '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
@@ -240,7 +240,9 @@
             autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
             assistMode: true,           // 学习助手总开关：今日目标、笔记、学习记录、休息提醒
-            theme: 'light',             // 浮窗主题：light / mint / sakura / violet / latte / dark / auto
+            theme: 'light',             // 浮窗主题：light / mint / sakura / violet / latte / dark / auto / custom
+            customColor: '#3B82F6',     // 自定义主题的主色
+            customBase: 'light',        // 自定义主题的底色：light 浅色 / dark 深色
             dailyGoal: 60,              // 每日学习目标（分钟）
             breakRemind: false,         // 连续学习一段时间后提醒休息（默认关闭）
             breakAfterMin: 45,          // 连续学习多少分钟提醒休息
@@ -262,6 +264,25 @@
         const NAMES_KEY = 'xxt-v41-course-names';
         const NOTES_PREFIX = 'xxt-v41-notes-';
         const GOAL_OPTIONS = [30, 60, 90, 120];
+        // 浮窗主题：每个主题只换一组颜色变量；“跟随系统”在浅色 / 深色之间自动切换
+        const THEMES = [
+            ['light', '清爽蓝', '#3B82F6'],
+            ['mint', '薄荷绿', '#10B981'],
+            ['sakura', '樱花粉', '#EC4899'],
+            ['violet', '星空紫', '#8B5CF6'],
+            ['latte', '奶茶棕', '#B4835A'],
+            ['dark', '夜间', '#1E232B'],
+            ['auto', '跟随系统', ''],
+            ['custom', '自定义', ''],
+        ];
+        const THEME_SWATCH = { auto: 'linear-gradient(135deg,#fff 0 50%,#1E232B 50%)', custom: 'conic-gradient(#EF4444,#F59E0B,#10B981,#3B82F6,#8B5CF6,#EC4899,#EF4444)' };
+        // 自定义主色上用白字还是深色字：按亮度自动选择，保证看得清
+        const onAccent = (hex) => {
+            const n = parseInt(String(hex).slice(1), 16);
+            const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+            const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+            return L > 0.45 ? '#111827' : '#fff';
+        };
         const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const fmtShort = (sec) => {
             sec = Math.round(sec);
@@ -290,6 +311,8 @@
             if (GOAL_OPTIONS.includes(saved.dailyGoal)) C.dailyGoal = saved.dailyGoal;
             if (typeof saved.assistMode === 'boolean') C.assistMode = saved.assistMode;
             if (typeof saved.theme === 'string' && THEMES.some((t) => t[0] === saved.theme)) C.theme = saved.theme;
+            if (/^#[0-9a-f]{6}$/i.test(saved.customColor || '')) C.customColor = saved.customColor;
+            if (saved.customBase === 'light' || saved.customBase === 'dark') C.customBase = saved.customBase;
         } catch (e) { /* 读取失败时使用默认设置 */ }
         const saveSettings = () => {
             try {
@@ -298,20 +321,12 @@
                 o.dailyGoal = C.dailyGoal;
                 o.assistMode = C.assistMode;
                 o.theme = C.theme;
+                o.customColor = C.customColor;
+                o.customBase = C.customBase;
                 localStorage.setItem(SETTINGS_KEY, JSON.stringify(o));
             } catch (e) { /* ignore */ }
         };
         const RATE_OPTIONS = [1, 1.25, 1.5, 2];
-        // 浮窗主题：每个主题只换一组颜色变量；“跟随系统”在浅色 / 深色之间自动切换
-        const THEMES = [
-            ['light', '清爽蓝', '#3B82F6'],
-            ['mint', '薄荷绿', '#10B981'],
-            ['sakura', '樱花粉', '#EC4899'],
-            ['violet', '星空紫', '#8B5CF6'],
-            ['latte', '奶茶棕', '#B4835A'],
-            ['dark', '夜间', '#1E232B'],
-            ['auto', '跟随系统', ''],
-        ];
         try {
             const saved = parseFloat(localStorage.getItem(RATE_KEY));
             if (RATE_OPTIONS.includes(saved)) C.playbackRate = saved;
@@ -2127,7 +2142,7 @@
                     `视频：${v ? `${(v.currentTime || 0).toFixed(1)}/${(v.duration || 0).toFixed(1)}s 倍速 ${v.playbackRate} ${v.paused ? '暂停' : '播放'} readyState=${v.readyState} muted=${v.muted}` : '无'}`,
                     `直播回放：${this._lives.length ? this._lives.map((l) => `${l.pct}%${l.done ? '(完成)' : ''}`).join('、') : '无'}${this._liveMsg ? ` · 回放进度 ${Math.round(this._liveMsg.watch)}/${Math.round(this._liveMsg.duration)}s` : ''}`,
                     `学习记录：今日 ${fmtDur(this._statSummary().todaySec)} · 本周 ${fmtDur(this._statSummary().weekSec)}`,
-                    `设置：倍速 ${C.playbackRate}x · 每日目标 ${C.dailyGoal} 分钟 · 主题 ${C.theme} · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
+                    `设置：倍速 ${C.playbackRate}x · 每日目标 ${C.dailyGoal} 分钟 · 主题 ${C.theme}${C.theme === 'custom' ? `（${C.customColor} ${C.customBase}）` : ''} · ${SETTING_ITEMS.map(([k, name]) => `${name}${C[k] ? '开' : '关'}`).join(' · ')}`,
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `后台：防卡顿${C.bgAudio ? (this._bgAudioBlocked ? '（浏览器不允许）' : this._bgAudio ? '（生效中）' : '开') : '关'} · 后台被暂停 ${this._bgPauseCount || 0} 次 · 保活锁${this._lockRelease ? '有' : '无'} · 当前${reallyHidden() ? '在后台' : '在前台'}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
@@ -2242,7 +2257,32 @@
                 el.style.width = Math.round(Math.min(Math.max(PANEL_MIN_W, sz.w), window.innerWidth)) + 'px';
                 el.style.height = Math.round(Math.min(Math.max(PANEL_MIN_H, sz.h), window.innerHeight)) + 'px';
             },
+            _applyTheme(el) {
+                const theme = this._resolvedTheme();
+                if (el.getAttribute('data-theme') !== theme) el.setAttribute('data-theme', theme);
+                const custom = C.theme === 'custom';
+                el.classList.toggle('xxt-custom', custom);
+                if (custom) {
+                    el.style.setProperty('--x-c', C.customColor);
+                    el.style.setProperty('--x-on-accent', onAccent(C.customColor));
+                } else {
+                    el.style.removeProperty('--x-c');
+                    el.style.removeProperty('--x-on-accent');
+                }
+            },
+            _setCustom(color, base, save) {
+                if (color && /^#[0-9a-f]{6}$/i.test(color)) C.customColor = color.toLowerCase();
+                if (base === 'light' || base === 'dark') C.customBase = base;
+                C.theme = 'custom';
+                if (this._panel) {
+                    this._applyTheme(this._panel);
+                    const hex = this._panel.querySelector('[data-k="chex"]');
+                    if (hex) hex.textContent = C.customColor.toUpperCase();
+                }
+                if (save) { saveSettings(); this._panelKey = ''; this._renderPanel(); }
+            },
             _resolvedTheme() {
+                if (C.theme === 'custom') return C.customBase === 'dark' ? 'dark' : 'light';
                 if (C.theme !== 'auto') return C.theme;
                 try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) { return 'light'; }
             },
@@ -2604,15 +2644,24 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${C.theme}|${this._resolvedTheme()}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
                 Promise.resolve().then(() => this._fitPanel(el));
                 const q = (k) => el.querySelector(`[data-k="${k}"]`);
                 q('dot').style.background = st.color;
-                const theme = this._resolvedTheme();
-                if (el.getAttribute('data-theme') !== theme) el.setAttribute('data-theme', theme);
+                this._applyTheme(el);
+                q('customset').style.display = C.theme === 'custom' ? 'block' : 'none';
+                if (C.theme === 'custom') {
+                    if (document.activeElement !== q('cpick')) q('cpick').value = C.customColor;
+                    q('chex').textContent = C.customColor.toUpperCase();
+                    for (const b of el.querySelectorAll('[data-cbase]')) {
+                        const on = b.getAttribute('data-cbase') === C.customBase;
+                        b.classList.toggle('on', on);
+                        b.setAttribute('aria-checked', String(on));
+                    }
+                }
                 for (const b of el.querySelectorAll('[data-theme-opt]')) {
                     const on = b.getAttribute('data-theme-opt') === C.theme;
                     b.classList.toggle('on', on);
@@ -2783,12 +2832,24 @@
                 ].join(';');
                 el.innerHTML =
                     '<style>' +
-                    '#xxt-v41-panel{--x-bg:#fff;--x-fg:#1F2937;--x-strong:#111827;--x-text2:#374151;--x-muted:#6B7280;--x-faint:#9CA3AF;--x-soft:#F6F8FB;--x-soft2:#F1F3F6;--x-line:#E5E9F0;--x-line-strong:#CBD2DC;--x-input:#FBFCFD;--x-switch-off:#D1D5DB;--x-accent:#3B82F6;--x-accent-strong:#2563EB;--x-accent-soft:#E3ECFD;--x-accent-softer:#EEF4FF;--x-accent-ring:#93C5FD;--x-accent-text:#1D4ED8;--x-box-line:#A7C7F2;transition:background-color .35s ease,color .35s ease}' +
+                    '#xxt-v41-panel{--x-bg:#fff;--x-fg:#1F2937;--x-strong:#111827;--x-text2:#374151;--x-muted:#6B7280;--x-faint:#9CA3AF;--x-soft:#F6F8FB;--x-soft2:#F1F3F6;--x-line:#E5E9F0;--x-line-strong:#CBD2DC;--x-input:#FBFCFD;--x-switch-off:#D1D5DB;--x-accent:#3B82F6;--x-accent-strong:#2563EB;--x-accent-soft:#E3ECFD;--x-accent-softer:#EEF4FF;--x-accent-ring:#93C5FD;--x-accent-text:#1D4ED8;--x-box-line:#A7C7F2;--x-on-accent:#fff;transition:background-color .35s ease,color .35s ease}' +
                     '#xxt-v41-panel[data-theme="mint"]{--x-soft:#F4FAF7;--x-soft2:#EDF5F1;--x-line:#DDEBE4;--x-accent:#10B981;--x-accent-strong:#059669;--x-accent-soft:#D1FAE5;--x-accent-softer:#ECFDF5;--x-accent-ring:#6EE7B7;--x-accent-text:#047857;--x-box-line:#A7E3CC}' +
                     '#xxt-v41-panel[data-theme="sakura"]{--x-soft:#FCF6F9;--x-soft2:#F7EEF3;--x-line:#F0DDE7;--x-accent:#EC4899;--x-accent-strong:#DB2777;--x-accent-soft:#FCE7F3;--x-accent-softer:#FDF2F8;--x-accent-ring:#F9A8D4;--x-accent-text:#BE185D;--x-box-line:#F5B8D5}' +
                     '#xxt-v41-panel[data-theme="violet"]{--x-soft:#F8F7FD;--x-soft2:#F1EFFA;--x-line:#E4E0F3;--x-accent:#8B5CF6;--x-accent-strong:#7C3AED;--x-accent-soft:#EDE9FE;--x-accent-softer:#F5F3FF;--x-accent-ring:#C4B5FD;--x-accent-text:#6D28D9;--x-box-line:#CDBEF8}' +
                     '#xxt-v41-panel[data-theme="latte"]{--x-bg:#FFFDFA;--x-soft:#F8F3EC;--x-soft2:#F2EBE2;--x-line:#E9DFD3;--x-input:#FFFDF9;--x-accent:#B4835A;--x-accent-strong:#93643F;--x-accent-soft:#F3E8DD;--x-accent-softer:#FAF4EE;--x-accent-ring:#DDBF9F;--x-accent-text:#7C5130;--x-box-line:#E2C9B0}' +
                     '#xxt-v41-panel[data-theme="dark"]{color-scheme:dark;--x-bg:#1E232B;--x-fg:#E5E9F0;--x-strong:#F3F4F6;--x-text2:#CBD5E1;--x-muted:#9AA4B2;--x-faint:#6B7480;--x-soft:#262C36;--x-soft2:#2D3440;--x-line:#374151;--x-line-strong:#4B5563;--x-input:#232933;--x-switch-off:#4B5563;--x-accent:#60A5FA;--x-accent-strong:#93C5FD;--x-accent-soft:#1E3A5F;--x-accent-softer:#1C2A40;--x-accent-ring:#3B82F6;--x-accent-text:#BFDBFE;--x-box-line:#3B5B8A;box-shadow:0 10px 32px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.4)!important}' +
+                    '#xxt-v41-panel.xxt-custom{--x-accent:var(--x-c);--x-accent-strong:color-mix(in srgb,var(--x-c) 80%,#000);--x-accent-soft:color-mix(in srgb,var(--x-c) 16%,var(--x-bg));--x-accent-softer:color-mix(in srgb,var(--x-c) 8%,var(--x-bg));--x-accent-ring:color-mix(in srgb,var(--x-c) 50%,var(--x-bg));--x-accent-text:color-mix(in srgb,var(--x-c) 72%,var(--x-strong));--x-box-line:color-mix(in srgb,var(--x-c) 45%,var(--x-bg));--x-soft:color-mix(in srgb,var(--x-c) 4%,#F6F8FB);--x-soft2:color-mix(in srgb,var(--x-c) 6%,#F1F3F6);--x-line:color-mix(in srgb,var(--x-c) 10%,#E5E9F0)}' +
+                    '#xxt-v41-panel.xxt-custom[data-theme="dark"]{--x-accent-strong:color-mix(in srgb,var(--x-c) 70%,#fff);--x-soft:color-mix(in srgb,var(--x-c) 6%,#262C36);--x-soft2:color-mix(in srgb,var(--x-c) 8%,#2D3440);--x-line:color-mix(in srgb,var(--x-c) 12%,#374151)}' +
+                    '#xxt-v41-panel .xxt-custom-row{display:flex;align-items:center;gap:8px;margin:2px 0 6px;padding:8px 10px;border-radius:9px;background:var(--x-bg);box-shadow:inset 0 0 0 1px var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-custom-row input[type=color]{flex:none;width:34px;height:26px;padding:0;border:0;border-radius:7px;background:none;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-custom-row input[type=color]::-webkit-color-swatch-wrapper{padding:0}' +
+                    '#xxt-v41-panel .xxt-custom-row input[type=color]::-webkit-color-swatch{border:0;border-radius:7px}' +
+                    '#xxt-v41-panel .xxt-custom-row code{flex:1;font:12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--x-text2)}' +
+                    '#xxt-v41-panel .xxt-custom-row .xxt-goal-opts{margin:0}' +
+                    '#xxt-v41-panel .xxt-custom-row .xxt-rate-opt{flex:none;padding:3px 9px}' +
+                    '#xxt-v41-panel .xxt-presets{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px}' +
+                    '#xxt-v41-panel .xxt-presets button{width:20px;height:20px;padding:0;border:0;border-radius:50%;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}' +
+                    '#xxt-v41-panel .xxt-presets button:hover,#xxt-v41-panel .xxt-presets button:focus-visible{outline:2px solid var(--x-accent-ring);outline-offset:1px}' +
                     '#xxt-v41-panel[data-theme="dark"] .xxt-notice.upd{background:#1E3A5F;color:#BFDBFE}' +
                     '#xxt-v41-panel[data-theme="dark"] .xxt-notice.bg{background:#3B2F14;color:#FCD34D}' +
                     '#xxt-v41-panel[data-theme="dark"] .xxt-notice.tip,#xxt-v41-panel[data-theme="dark"] .xxt-notice.rest{background:#123326;color:#86EFAC}' +
@@ -2798,6 +2859,7 @@
                     '#xxt-v41-panel .xxt-themes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-theme{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 2px;border:0;border-radius:9px;background:var(--x-bg);box-shadow:inset 0 0 0 1px var(--x-line);font:inherit;font-size:11px;color:var(--x-text2);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-theme i{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}' +
+                    '#xxt-v41-panel[data-theme="dark"] .xxt-theme i,#xxt-v41-panel[data-theme="dark"] .xxt-presets button{box-shadow:inset 0 0 0 1px rgba(255,255,255,.28)}' +
                     '#xxt-v41-panel .xxt-theme:hover{box-shadow:inset 0 0 0 1px var(--x-accent-ring)}' +
                     '#xxt-v41-panel .xxt-theme.on{box-shadow:inset 0 0 0 2px var(--x-accent);color:var(--x-strong);font-weight:600}' +
                     '#xxt-v41-panel .xxt-theme:focus-visible{outline:2px solid var(--x-accent-ring);outline-offset:1px}' +
@@ -2909,7 +2971,7 @@
                     '#xxt-v41-panel .xxt-fb-back{border:0;background:none;font:inherit;font-size:12px;color:var(--x-muted);cursor:pointer;padding:2px 4px;border-radius:6px}' +
                     '#xxt-v41-panel .xxt-fb-back:hover,#xxt-v41-panel .xxt-fb-back:focus-visible{color:var(--x-accent-strong);background:var(--x-accent-soft);outline:none}' +
                     '#xxt-v41-panel .xxt-fb .xxt-note{margin-top:6px;min-height:84px}' +
-                    '#xxt-v41-panel .xxt-fb-send{background:var(--x-accent)!important;color:#fff!important;box-shadow:none!important;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-fb-send{background:var(--x-accent)!important;color:var(--x-on-accent)!important;box-shadow:none!important;font-weight:600}' +
                     '#xxt-v41-panel .xxt-fb-send:hover,#xxt-v41-panel .xxt-fb-send:focus-visible{background:var(--x-accent-strong)!important}' +
                     '#xxt-v41-panel .xxt-fb-hint{margin-top:6px;font-size:11px;color:var(--x-faint);line-height:1.5}' +
                     '#xxt-v41-panel .xxt-set-label{margin-top:10px;font-size:13px;color:var(--x-text2)}' +
@@ -2927,7 +2989,7 @@
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:var(--x-accent);transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:var(--x-muted);font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-courses{margin-top:0}' +
-                    '#xxt-v41-panel .xxt-continue{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--x-accent);color:#fff;font:inherit;text-align:left;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-continue{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--x-accent);color:var(--x-on-accent);font:inherit;text-align:left;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-continue:hover,#xxt-v41-panel .xxt-continue:focus-visible{background:var(--x-accent-strong);outline:none}' +
                     '#xxt-v41-panel .xxt-continue b{font-size:14px;font-weight:600}' +
                     '#xxt-v41-panel .xxt-continue span{font-size:12px;opacity:.9;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
@@ -2999,7 +3061,7 @@
                     '#xxt-v41-panel .xxt-rate-row.open .xxt-rate-opts{max-width:240px;opacity:1;transform:none;pointer-events:auto}' +
                     '#xxt-v41-panel .xxt-rate-opt{flex:1;min-width:0;font:inherit;font-size:12px;border:0;border-radius:7px;padding:4px 0;cursor:pointer;background:var(--x-soft2);color:var(--x-text2);white-space:nowrap}' +
                     '#xxt-v41-panel .xxt-rate-opt:hover{background:var(--x-accent-soft)}' +
-                    '#xxt-v41-panel .xxt-rate-opt.on{background:var(--x-accent);color:#fff;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-rate-opt.on{background:var(--x-accent);color:var(--x-on-accent);font-weight:600}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-rate-opts,#xxt-v41-panel .xxt-chev{transition:none}}' +
                     '#xxt-v41-panel [data-k="ver"]{white-space:nowrap;display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:var(--x-muted);background:var(--x-soft2);border-radius:6px;padding:1px 7px;text-decoration:none;font-variant-numeric:tabular-nums;transition:background .15s,color .15s}' +
                     '#xxt-v41-panel [data-k="ver"]:hover,#xxt-v41-panel [data-k="ver"]:focus-visible{background:var(--x-accent-soft);color:var(--x-accent-strong);outline:none}' +
@@ -3098,7 +3160,14 @@
                       '<div class="xxt-goal-opts">' + GOAL_OPTIONS.map((m) => `<button type="button" data-goal="${m}" class="xxt-rate-opt">${m} 分钟</button>`).join('') + '</div></div>' +
                       '<div class="xxt-set-label">浮窗主题</div>' +
                       '<div class="xxt-themes" role="radiogroup" aria-label="浮窗主题">' + THEMES.map(([k, name, color]) =>
-                        `<button type="button" class="xxt-theme" data-theme-opt="${k}" role="radio" title="${name}"><i style="background:${color || 'linear-gradient(135deg,#fff 0 50%,#1E232B 50%)'}"></i>${name}</button>`).join('') + '</div>' +
+                        `<button type="button" class="xxt-theme" data-theme-opt="${k}" role="radio" title="${name}"><i style="background:${color || THEME_SWATCH[k]}"></i>${name}</button>`).join('') + '</div>' +
+                      '<div data-k="customset" style="display:none">' +
+                        '<div class="xxt-custom-row"><input type="color" data-k="cpick" aria-label="选择主色"><code data-k="chex"></code>' +
+                          '<div class="xxt-goal-opts" role="radiogroup" aria-label="底色"><button type="button" class="xxt-rate-opt" data-cbase="light" role="radio">浅色</button><button type="button" class="xxt-rate-opt" data-cbase="dark" role="radio">深色</button></div>' +
+                        '</div>' +
+                        '<div class="xxt-presets" aria-label="常用颜色">' + ['#3B82F6', '#06B6D4', '#14B8A6', '#22C55E', '#84CC16', '#EAB308', '#F97316', '#EF4444', '#E11D48', '#D946EF', '#6366F1', '#64748B'].map((c) =>
+                          `<button type="button" data-cpreset="${c}" style="background:${c}" title="${c}" aria-label="${c}"></button>`).join('') + '</div>' +
+                      '</div>' +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
@@ -3227,6 +3296,11 @@
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
                 el.querySelector('[data-k="restore"]').addEventListener('click', () => this._restoreSize(false));
                 for (const b of el.querySelectorAll('[data-theme-opt]')) b.addEventListener('click', () => this._setTheme(b.getAttribute('data-theme-opt')));
+                const cpick = el.querySelector('[data-k="cpick"]');
+                cpick.addEventListener('input', () => this._setCustom(cpick.value, null, false));     // 拖动取色时实时预览
+                cpick.addEventListener('change', () => this._setCustom(cpick.value, null, true));    // 选定后保存
+                for (const b of el.querySelectorAll('[data-cbase]')) b.addEventListener('click', () => this._setCustom(null, b.getAttribute('data-cbase'), true));
+                for (const b of el.querySelectorAll('[data-cpreset]')) b.addEventListener('click', () => this._setCustom(b.getAttribute('data-cpreset'), null, true));
                 if (!this._onSchemeChange) {
                     this._onSchemeChange = () => { if (C.theme === 'auto') { this._panelKey = ''; this._renderPanel(); } };
                     try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', this._onSchemeChange); } catch (e) { /* ignore */ }
