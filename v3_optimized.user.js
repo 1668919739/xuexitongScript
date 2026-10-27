@@ -29,6 +29,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
+            '唱片机内置 5 种环境音：轻钢琴（专注）、窗外雨声、海浪、壁炉篝火、粉红噪音，由浏览器实时合成，不用下载、没有版权问题，打开就能听；唱片机改为紧挨着侧边功能栏展开',
             '浮窗右侧边缘新增可拉出的功能栏（点小把手展开），放着不常用的功能：唱片机、更新记录、反馈问题；浮窗靠屏幕右边时自动改到左侧。唱片机：从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
             '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
             '进度条里“需手动完成”的一段改为斜纹，并和“已完成”之间留一道缝；自定义主色接近橙色或黄色时，这一段自动换成紫色，不会混在一起',
@@ -2630,6 +2631,7 @@
                 if (n && !this._curTrack && this._tracks.length) this._musicPlay(this._tracks[this._tracks.length - n].id);
             },
             async _musicRemove(id) {
+                if (String(id).startsWith('gen:')) return;
                 if (this._curTrack === id) { this._musicStop(); }
                 try { await this._musicStore('readwrite', (s) => s.delete(id)); } catch (e) { /* ignore */ }
                 await this._musicLoad();
@@ -2650,9 +2652,142 @@
                 this._audio = a;
                 return a;
             },
+            // 内置环境音：由浏览器实时合成（不是音频文件），没有版权问题，也不占下载体积
+            _builtinTracks() {
+                return [
+                    { id: 'gen:piano', name: '轻钢琴 · 专注', builtin: true },
+                    { id: 'gen:rain', name: '窗外雨声', builtin: true },
+                    { id: 'gen:waves', name: '海浪', builtin: true },
+                    { id: 'gen:fire', name: '壁炉篝火', builtin: true },
+                    { id: 'gen:noise', name: '粉红噪音 · 屏蔽杂音', builtin: true },
+                ];
+            },
+            _allTracks() { return this._builtinTracks().concat(this._tracks || []); },
+            _musicVolume() {
+                if (this._audio) return this._audio.volume;
+                try { const x = parseFloat(localStorage.getItem('xxt-v41-music-vol')); return x >= 0 && x <= 1 ? x : 0.6; } catch (e) { return 0.6; }
+            },
+            _genStop() {
+                const g = this._gen;
+                this._gen = null;
+                if (!g) return;
+                g.stopped = true;
+                try { g.master.gain.setTargetAtTime(0, g.ctx.currentTime, 0.08); } catch (e) { /* ignore */ }
+                setTimeout(() => { for (const n of g.nodes) { try { n.stop(); } catch (e) { /* ignore */ } try { n.disconnect(); } catch (e) { /* ignore */ } } try { g.master.disconnect(); } catch (e) { /* ignore */ } }, 400);
+            },
+            _genStart(kind) {
+                this._genStop();
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return false;
+                const ctx = this._genCtx || (this._genCtx = new Ctx());
+                if (ctx.state === 'suspended') ctx.resume();
+                const g = { kind, ctx, nodes: [], stopped: false };
+                const master = ctx.createGain();
+                master.gain.setValueAtTime(0, ctx.currentTime);
+                master.gain.setTargetAtTime(this._musicVolume(), ctx.currentTime, 0.4);   // 淡入
+                master.connect(ctx.destination);
+                g.master = master;
+                const noise = (type, sec = 6) => {
+                    const len = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+                    let last = 0, b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+                    for (let i = 0; i < len; i++) {
+                        const w = Math.random() * 2 - 1;
+                        if (type === 'brown') { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+                        else if (type === 'pink') {
+                            b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+                            b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+                            d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926;
+                        } else d[i] = w;
+                    }
+                    return buf;
+                };
+                const bed = (type, gain, ftype, freq, q) => {
+                    const src = ctx.createBufferSource(); src.buffer = noise(type); src.loop = true;
+                    const f = ctx.createBiquadFilter(); f.type = ftype; f.frequency.value = freq; if (q) f.Q.value = q;
+                    const gn = ctx.createGain(); gn.gain.value = gain;
+                    src.connect(f).connect(gn).connect(master); src.start();
+                    g.nodes.push(src);
+                    return gn;
+                };
+                const lfo = (target, rate, depth) => {
+                    const o = ctx.createOscillator(), og = ctx.createGain();
+                    o.frequency.value = rate; og.gain.value = depth; o.connect(og).connect(target); o.start(); g.nodes.push(o);
+                };
+                // 用后台线程计时持续安排后面几秒的声音，页面在后台也不会断
+                const loop = (fn, everyMs) => { const step = () => { if (g.stopped) return; fn(); this._wait(step, everyMs); }; step(); };
+                const burst = (t, dur, freq, gain, type = 'bandpass') => {
+                    const src = ctx.createBufferSource(); src.buffer = g.click || (g.click = noise('white', 0.25));
+                    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = 1.2;
+                    const gn = ctx.createGain(); gn.gain.setValueAtTime(gain, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    src.connect(f).connect(gn).connect(master); src.start(t, Math.random() * 0.1, dur + 0.02);
+                };
+                if (kind === 'rain') {
+                    bed('brown', 0.55, 'lowpass', 1100);
+                    bed('pink', 0.16, 'highpass', 2500);
+                    loop(() => { const t0 = ctx.currentTime; for (let i = 0; i < 14; i++) burst(t0 + Math.random() * 0.5, 0.03 + Math.random() * 0.05, 2500 + Math.random() * 3500, 0.03 + Math.random() * 0.08); }, 500);
+                } else if (kind === 'waves') {
+                    const w = bed('brown', 0.35, 'lowpass', 700);
+                    lfo(w.gain, 0.085, 0.3);
+                    const hiss = bed('pink', 0.04, 'bandpass', 1800, 0.6);
+                    lfo(hiss.gain, 0.085, 0.035);
+                } else if (kind === 'fire') {
+                    bed('brown', 0.4, 'lowpass', 380);
+                    loop(() => {
+                        const t0 = ctx.currentTime;
+                        for (let i = 0; i < 6; i++) if (Math.random() < 0.7) burst(t0 + Math.random() * 0.5, 0.008 + Math.random() * 0.02, 1500 + Math.random() * 4000, 0.15 + Math.random() * 0.35, 'highpass');
+                    }, 500);
+                } else if (kind === 'noise') {
+                    bed('pink', 0.5, 'lowpass', 7000);
+                } else {
+                    // 轻钢琴：五声音阶随机生成，配上回声，不会重复也不会打扰
+                    const out = ctx.createGain(); out.gain.value = 0.9;
+                    const delay = ctx.createDelay(1.5); delay.delayTime.value = 0.42;
+                    const fb = ctx.createGain(); fb.gain.value = 0.38;
+                    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 2600;
+                    out.connect(tone).connect(master); tone.connect(delay); delay.connect(fb).connect(delay); delay.connect(master);
+                    g.nodes.push({ stop() {}, disconnect() { try { out.disconnect(); delay.disconnect(); fb.disconnect(); tone.disconnect(); } catch (e) { /* ignore */ } } });
+                    const scale = [261.63, 293.66, 329.63, 392, 440, 523.25, 587.33, 659.25, 783.99, 880];
+                    const note = (t, f, v) => {
+                        for (const [mul, type, amp] of [[1, 'triangle', 1], [2, 'sine', 0.25], [3, 'sine', 0.08]]) {
+                            const o = ctx.createOscillator(), gn = ctx.createGain();
+                            o.type = type; o.frequency.value = f * mul;
+                            gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(0.16 * v * amp, t + 0.015);
+                            gn.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+                            o.connect(gn).connect(out); o.start(t); o.stop(t + 3);
+                        }
+                    };
+                    let next = ctx.currentTime + 0.3, idx = 4;
+                    loop(() => {
+                        while (next < ctx.currentTime + 2) {
+                            idx = Math.max(0, Math.min(scale.length - 1, idx + Math.round((Math.random() - 0.5) * 4)));
+                            note(next, scale[idx], 0.6 + Math.random() * 0.4);
+                            if (Math.random() < 0.25) note(next + 0.02, scale[Math.max(0, idx - 2)] / 2, 0.5);
+                            next += [0.6, 0.9, 1.2, 1.8][Math.floor(Math.random() * 4)];
+                        }
+                    }, 700);
+                }
+                this._gen = g;
+                return true;
+            },
+
             _musicPlay(id) {
-                const t = (this._tracks || []).find((x) => x.id === id);
+                const t = this._allTracks().find((x) => x.id === id);
                 if (!t) return;
+                if (t.builtin) {
+                    // 内置环境音：停掉文件播放，改由合成器发声
+                    if (this._audio) { try { this._audio.pause(); } catch (e) { /* ignore */ } }
+                    if (this._curTrack !== id || !this._gen) {
+                        if (this._audioUrl) { URL.revokeObjectURL(this._audioUrl); this._audioUrl = null; }
+                        this._genStart(id.slice(4));
+                        this._curTrack = id;
+                        try { localStorage.setItem('xxt-v41-music-last', id); } catch (e) { /* ignore */ }
+                    } else if (this._genCtx && this._genCtx.state === 'suspended') this._genCtx.resume();
+                    this._genPaused = false;
+                    this._renderMusic();
+                    return;
+                }
+                this._genStop();
+                this._genPaused = false;
                 const a = this._musicAudio();
                 if (this._curTrack !== id) {
                     if (this._audioUrl) URL.revokeObjectURL(this._audioUrl);
@@ -2674,8 +2809,16 @@
             },
             _musicToggle() {
                 const a = this._audio;
+                if (this._curTrack && this._curTrack.startsWith('gen:')) {
+                    const ctx = this._genCtx;
+                    if (!this._gen) { this._musicPlay(this._curTrack); return; }
+                    if (this._genPaused) { this._genPaused = false; if (ctx) ctx.resume(); }
+                    else { this._genPaused = true; if (ctx) ctx.suspend(); }
+                    this._renderMusic();
+                    return;
+                }
                 if (!this._curTrack) {
-                    const list = this._tracks || [];
+                    const list = this._allTracks();
                     let last = null;
                     try { last = localStorage.getItem('xxt-v41-music-last'); } catch (e) { /* ignore */ }
                     const t = list.find((x) => x.id === last) || list[0];
@@ -2685,6 +2828,8 @@
                 if (a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => {}); } else a.pause();
             },
             _musicStop() {
+                this._genStop();
+                this._genPaused = false;
                 if (this._audio) { try { this._audio.pause(); this._audio.removeAttribute('src'); this._audio.load(); } catch (e) { /* ignore */ } }
                 if (this._audioUrl) { URL.revokeObjectURL(this._audioUrl); this._audioUrl = null; }
                 this._curTrack = null;
@@ -2692,11 +2837,11 @@
             },
             // auto：一首放完自动接下一首（按播放模式）；step：-1 上一首
             _musicNext(auto, step = 1) {
-                const list = this._tracks || [];
+                const list = this._allTracks();
                 if (!list.length) { this._musicStop(); return; }
                 const mode = this._musicMode();
                 const i = list.findIndex((x) => x.id === this._curTrack);
-                if (auto && mode === 'one' && i >= 0) { this._audio.currentTime = 0; this._musicPlay(list[i].id); return; }
+                if (auto && mode === 'one' && i >= 0 && this._audio) { this._audio.currentTime = 0; this._musicPlay(list[i].id); return; }
                 let j;
                 if (mode === 'shuffle' && list.length > 1) { do { j = Math.floor(Math.random() * list.length); } while (j === i); }
                 else j = ((i < 0 ? 0 : i + step) + list.length) % list.length;
@@ -2709,7 +2854,16 @@
             },
             _musicTick() {
                 const d = this._musicEl, a = this._audio;
-                if (!d || !a) return;
+                if (!d) return;
+                const seekEl = d.querySelector('[data-m="seek"]');
+                const gen = !!(this._curTrack && this._curTrack.startsWith('gen:'));
+                seekEl.disabled = gen;
+                if (gen) {
+                    d.querySelector('[data-m="time"]').textContent = '环境音 · 一直循环';
+                    seekEl.value = 1000; seekEl.style.setProperty('--p', '100%');
+                    return;
+                }
+                if (!a) return;
                 const fmt = (t) => { t = isFinite(t) ? Math.floor(t) : 0; return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
                 d.querySelector('[data-m="time"]').textContent = `${fmt(a.currentTime)} / ${fmt(a.duration)}`;
                 const seek = d.querySelector('[data-m="seek"]');
@@ -2774,9 +2928,10 @@
                     '#xxt-v41-music .xm-mode{font-size:11px;font-weight:600;width:auto;padding:0 8px;border-radius:12px;height:24px}' +
                     '#xxt-v41-music .xm-vol{display:flex;align-items:center;gap:8px;color:#A89D98;margin-bottom:8px}' +
                     '#xxt-v41-music .xm-vol input{margin:0}' +
-                    '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:200px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
+                    '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
                     '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
-                    '#xxt-v41-music .xm-item:first-child{margin-top:6px}' +
+                    '#xxt-v41-music .xm-sec{margin:10px 8px 2px;font-size:11px;font-weight:600;color:#7D726D;letter-spacing:.5px}' +
+                    '#xxt-v41-music input[type=range]:disabled{cursor:default;opacity:.45}' +
                     '#xxt-v41-music .xm-item:hover{background:rgba(255,255,255,.06)}' +
                     '#xxt-v41-music .xm-item.cur{background:rgba(255,255,255,.1)}' +
                     '#xxt-v41-music .xm-item.cur .xm-name{color:var(--xm-accent,#E8A87C);font-weight:600}' +
@@ -2790,7 +2945,7 @@
                     '#xxt-v41-music .xm-eq i:nth-child(2){animation-delay:-.3s}#xxt-v41-music .xm-eq i:nth-child(3){animation-delay:-.6s}' +
                     '#xxt-v41-music.playing .xm-eq i{animation-play-state:running}' +
                     '@keyframes xm-eq{0%,100%{height:3px}50%{height:12px}}' +
-                    '#xxt-v41-music .xm-empty{padding:16px 6px 8px;text-align:center;color:#A89D98;font-size:12px;line-height:1.7}' +
+                    '#xxt-v41-music .xm-empty{padding:6px 8px 4px;color:#7D726D;font-size:12px;line-height:1.6}' +
                     '#xxt-v41-music .xm-add{width:100%;margin-top:8px;padding:8px 0;border:1px dashed rgba(255,255,255,.22);border-radius:10px;background:none;color:#EDE6E2;font-size:12px;font-weight:600}' +
                     '#xxt-v41-music .xm-add:hover,#xxt-v41-music .xm-add:focus-visible,#xxt-v41-music.drag .xm-add{border-color:var(--xm-accent,#E8A87C);color:#fff;background:rgba(255,255,255,.05);outline:none}' +
                     '#xxt-v41-music .xm-hint{margin-top:6px;font-size:10.5px;color:#7D726D;text-align:center}' +
@@ -2838,6 +2993,7 @@
                 vol.addEventListener('input', () => {
                     const v = vol.value / 100;
                     this._musicAudio().volume = v;
+                    if (this._gen) { try { this._gen.master.gain.setTargetAtTime(v, this._gen.ctx.currentTime, 0.05); } catch (e) { /* ignore */ } }
                     vol.style.setProperty('--p', vol.value + '%');
                     try { localStorage.setItem('xxt-v41-music-vol', String(v)); } catch (e) { /* ignore */ }
                 });
@@ -2868,9 +3024,12 @@
                 const sb = this._sideEl && this._sideEl.classList.contains('show') ? this._sideEl.getBoundingClientRect() : null;
                 const right = sb && sb.left >= r.left ? Math.max(r.right, sb.right) : r.right;
                 const leftEdge = sb && sb.left < r.left ? Math.min(r.left, sb.left) : r.left;
-                let left = right + gap;
-                if (left + w > W - 8) left = leftEdge - gap - w >= 8 ? leftEdge - gap - w : Math.max(8, W - w - 8);
-                const top = Math.min(Math.max(8, r.bottom - h), Math.max(8, H - h - 8));
+                const g2 = sb ? 8 : gap;
+                let left = right + g2;
+                if (left + w > W - 8) left = leftEdge - g2 - w >= 8 ? leftEdge - g2 - w : Math.max(8, W - w - 8);
+                // 紧挨着侧边功能栏（或浮窗顶部）展开，不再沉到浮窗底部
+                const anchor = sb ? sb.top - 12 : r.top;
+                const top = Math.min(Math.max(8, anchor), Math.max(8, H - h - 8));
                 d.style.left = Math.round(left) + 'px';
                 d.style.top = Math.round(top) + 'px';
                 d.style.maxHeight = (H - 16) + 'px';
@@ -2882,15 +3041,17 @@
                 const d = this._ensureMusic();
                 const q = (k) => d.querySelector(`[data-m="${k}"]`);
                 const a = this._audio;
-                const playing = !!(a && this._curTrack && !a.paused);
+                const isGen = !!(this._curTrack && this._curTrack.startsWith('gen:'));
+                const playing = isGen ? !!this._gen && !this._genPaused : !!(a && this._curTrack && !a.paused);
                 d.classList.toggle('open', open);
                 d.classList.toggle('playing', playing);
                 d.setAttribute('aria-hidden', String(!open));
                 if (open) d.removeAttribute('inert'); else d.setAttribute('inert', '');
-                const list = this._tracks || [];
+                const list = this._allTracks();
+                const mine = this._tracks || [];
                 const cur = list.find((x) => x.id === this._curTrack);
                 const esc = (t) => this._esc(t);
-                q('title').textContent = cur ? cur.name : (list.length ? '点一首歌开始播放' : '还没有音乐');
+                q('title').textContent = cur ? cur.name : '点一首开始播放';
                 q('labeltxt').textContent = cur ? cur.name : '♪';
                 let hue = 24;
                 if (cur) { hue = 0; for (const ch of cur.name) hue = (hue * 31 + ch.charCodeAt(0)) % 360; }
@@ -2902,17 +3063,20 @@
                 const mode = this._musicMode();
                 q('mode').textContent = { all: '列表循环', one: '单曲循环', shuffle: '随机播放' }[mode];
                 const vol = q('vol');
-                const v = Math.round((a ? a.volume : (() => { try { const x = parseFloat(localStorage.getItem('xxt-v41-music-vol')); return x >= 0 && x <= 1 ? x : 0.6; } catch (e) { return 0.6; } })()) * 100);
+                const v = Math.round(this._musicVolume() * 100);
                 if (document.activeElement !== vol) vol.value = v;
                 vol.style.setProperty('--p', vol.value + '%');
                 const listKey = list.map((x) => x.id).join(',') + '|' + this._curTrack;
                 if (this._musicListKey !== listKey) {
                     this._musicListKey = listKey;
-                    q('list').innerHTML = list.length
-                        ? list.map((t, i) => `<div class="xm-item${t.id === this._curTrack ? ' cur' : ''}" data-track="${esc(t.id)}" role="listitem" tabindex="0" title="${esc(t.name)}">` +
-                            (t.id === this._curTrack ? '<span class="xm-eq"><i></i><i></i><i></i></span>' : `<span class="xm-no">${i + 1}</span>`) +
-                            `<span class="xm-name">${esc(t.name)}</span><button type="button" class="xm-del" data-del="${esc(t.id)}" aria-label="移除 ${esc(t.name)}">×</button></div>`).join('')
-                        : '<div class="xm-empty">点下面的按钮，从电脑里选几首喜欢的音乐<br>学习的时候放着听</div>';
+                    const row = (t, i) => `<div class="xm-item${t.id === this._curTrack ? ' cur' : ''}${t.builtin ? ' builtin' : ''}" data-track="${esc(t.id)}" role="listitem" tabindex="0" title="${esc(t.name)}">` +
+                        (t.id === this._curTrack ? '<span class="xm-eq"><i></i><i></i><i></i></span>' : `<span class="xm-no">${i + 1}</span>`) +
+                        `<span class="xm-name">${esc(t.name)}</span>` +
+                        (t.builtin ? '' : `<button type="button" class="xm-del" data-del="${esc(t.id)}" aria-label="移除 ${esc(t.name)}">×</button>`) + '</div>';
+                    const builtins = list.filter((t) => t.builtin);
+                    q('list').innerHTML = '<div class="xm-sec">内置环境音</div>' + builtins.map(row).join('') +
+                        '<div class="xm-sec">我的音乐</div>' +
+                        (mine.length ? mine.map((t, i) => row(t, i)).join('') : '<div class="xm-empty">点下面的按钮，从电脑里添加喜欢的音乐</div>');
                 }
                 this._musicTick();
                 if (open) this._positionMusic();
@@ -2921,6 +3085,7 @@
             },
             _removeMusic() {
                 this._musicStop();
+                if (this._genCtx) { try { this._genCtx.close(); } catch (e) { /* ignore */ } this._genCtx = null; }
                 if (this._musicEl) { try { this._musicEl.remove(); } catch (e) { /* ignore */ } }
                 this._musicEl = null;
             },

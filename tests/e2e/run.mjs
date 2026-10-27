@@ -221,7 +221,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     const info = await panelInfo(p);
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
-    assert(/唱片机/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    assert(/环境音/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -918,7 +918,7 @@ test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列�
         if (!d) return null;
         const r = d.getBoundingClientRect(), pr = panel.getBoundingClientRect();
         const sr = document.querySelector('#xxt-v41-side .xs-tray').getBoundingClientRect();
-        return { open: d.classList.contains('open'), playing: d.classList.contains('playing'), items: [...d.querySelectorAll('.xm-name')].map((e) => e.textContent),
+        return { open: d.classList.contains('open'), playing: d.classList.contains('playing'), items: [...d.querySelectorAll('.xm-item:not(.builtin) .xm-name')].map((e) => e.textContent),
             cur: (d.querySelector('.xm-item.cur .xm-name') || {}).textContent || '', title: d.querySelector('[data-m=title]').textContent,
             rightOfPanel: r.left >= pr.right && r.left >= sr.right, paused: app._audio ? app._audio.paused : true };
     });
@@ -926,6 +926,9 @@ test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列�
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(600);
     let s = await st();
     assert(s && s.open && s.items.length === 0 && s.rightOfPanel, `唱片机没有在浮窗旁打开：${JSON.stringify(s)}`);
+    // 紧挨着侧边功能栏，顶部对齐
+    const near = await p.evaluate(() => { const a = document.getElementById('xxt-v41-music').getBoundingClientRect(), b = document.querySelector('#xxt-v41-side .xs-tray').getBoundingClientRect(); return { dx: a.left - b.right, dy: Math.abs(a.top - Math.max(8, Math.min(b.top - 12, innerHeight - a.height - 8))) }; });
+    assert(near.dx >= 0 && near.dx <= 12 && near.dy <= 2, `唱片机离侧边栏太远：${JSON.stringify(near)}`);
     await p.setInputFiles('#xxt-v41-music [data-m=file]', [
         { name: '晨读.wav', mimeType: 'audio/wav', buffer: wav(3) },
         { name: '午后钢琴.wav', mimeType: 'audio/wav', buffer: wav(3) },
@@ -934,7 +937,7 @@ test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列�
     s = await st();
     assert(s.items.join('|') === '晨读|午后钢琴' && s.playing && !s.paused && s.cur === '晨读', `添加后没有开始播放：${JSON.stringify(s)}`);
     // 点列表里的第二首即播放
-    await p.click('#xxt-v41-music .xm-item:nth-child(2)'); await sleep(800);
+    await p.click('#xxt-v41-music .xm-item:not(.builtin) >> nth=1'); await sleep(800);
     s = await st();
     assert(s.cur === '午后钢琴' && s.title === '午后钢琴' && !s.paused, `点击列表没有切歌：${JSON.stringify(s)}`);
     // 暂停
@@ -950,8 +953,8 @@ test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列�
     s = await st();
     assert(s.items.join('|') === '晨读|午后钢琴', `刷新后列表丢失：${JSON.stringify(s)}`);
     // 移除一首
-    await p.hover('#xxt-v41-music .xm-item:nth-child(1)');
-    await p.click('#xxt-v41-music .xm-item:nth-child(1) .xm-del'); await sleep(600);
+    await p.hover('#xxt-v41-music .xm-item:not(.builtin) >> nth=0');
+    await p.click('#xxt-v41-music .xm-item:not(.builtin) .xm-del >> nth=0'); await sleep(600);
     assert((await st()).items.join('|') === '午后钢琴', '移除没生效');
     await ctx.close();
 });
@@ -987,6 +990,35 @@ test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片�
     await p.mouse.move(head.x + 60, head.y + 10); await p.mouse.down(); await p.mouse.move(1190, head.y + 10, { steps: 8 }); await p.mouse.up(); await sleep(400);
     s = await st();
     assert(s.left && s.handleAtLeft, `靠右时没有改到左侧：${JSON.stringify(s)}`);
+    await ctx.close();
+});
+
+test('唱片机内置环境音：轻钢琴、雨声等实时合成，点击即播放，可暂停，不能删除', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(400);
+    await p.click('#xxt-v41-side [data-s=music]'); await sleep(600);
+    const names = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-music .xm-item.builtin .xm-name')].map((e) => e.textContent));
+    assert(names.length === 5 && names[0].startsWith('轻钢琴'), `内置环境音不对：${JSON.stringify(names)}`);
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-music .xm-item.builtin .xm-del').length) === 0, '内置环境音不应能删除');
+    const st = () => p.evaluate(() => ({ playing: document.getElementById('xxt-v41-music').classList.contains('playing'), kind: app._gen && app._gen.kind, state: app._genCtx && app._genCtx.state,
+        title: document.querySelector('#xxt-v41-music [data-m=title]').textContent, time: document.querySelector('#xxt-v41-music [data-m=time]').textContent, seek: document.querySelector('#xxt-v41-music [data-m=seek]').disabled }));
+    for (const [i, kind] of [[0, 'piano'], [1, 'rain'], [2, 'waves'], [3, 'fire'], [4, 'noise']]) {
+        await p.click(`#xxt-v41-music .xm-item.builtin >> nth=${i}`); await sleep(700);
+        const s = await st();
+        assert(s.playing && s.kind === kind && s.state === 'running' && s.title === names[i] && /环境音/.test(s.time) && s.seek, `${kind} 播放不对：${JSON.stringify(s)}`);
+    }
+    await p.click('#xxt-v41-music [data-m=play]'); await sleep(500);
+    let s = await st();
+    assert(!s.playing && s.state === 'suspended', `暂停不对：${JSON.stringify(s)}`);
+    await p.click('#xxt-v41-music [data-m=play]'); await sleep(500);
+    s = await st();
+    assert(s.playing && s.state === 'running', `继续播放不对：${JSON.stringify(s)}`);
+    await p.click('#xxt-v41-music [data-m=next]'); await sleep(600);
+    assert((await st()).kind === 'piano', '下一首应循环回第一首');
     await ctx.close();
 });
 
