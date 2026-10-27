@@ -239,7 +239,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
         notes: [...document.querySelectorAll('#xxt-v41-panel .xxt-hv-note')].map((e) => e.textContent),
     }));
     assert(meta.dates.length === hist.n && meta.dates.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)), `更新记录缺少日期：${JSON.stringify(meta.dates)}`);
-    assert(meta.notes.length >= 1 && meta.notes.every((n) => n.startsWith('💬 RouteCC 吐槽')), `作者吐槽不对：${JSON.stringify(meta.notes)}`);
+    assert(meta.notes.length >= 1 && meta.notes.every((n) => n.startsWith('💬 作者RouteCC 吐槽')), `作者吐槽不对：${JSON.stringify(meta.notes)}`);
     await p.click('#xxt-v41-panel [data-k=histback]'); await sleep(700);
     const back = await panelInfo(p);
     assert(!back.whatsnew && await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=tabs]').offsetParent !== null), '返回后应回到主界面，且更新说明已关闭');
