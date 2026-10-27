@@ -10,7 +10,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
-        { v: '4.5.0', date: '2026-10-27', note: '谁会在这里塞一个音乐播放器啊？？？怎么还有音频格式转换器？？？浮窗主题颜色自定义？这个东西有人用得上吗。。。我认为浮窗可随意拉动的确是个实用的功能，直接盖住整个学习通页面哈哈', items: [
+        { v: '4.5.0', date: '2026-10-27', note: '谁会在这里塞一个音乐播放器啊？？？怎么还有音频格式转换器？？？浮窗主题颜色自定义？这个东西有人用得上吗。。。\n我认为浮窗可随意拉动的确是个实用的功能，直接盖住整个学习通页面哈哈', items: [
             '唱片机新增「格式转换」：把音频或视频（MP3、M4A、AAC、FLAC、WAV、OGG、OPUS、MP4 等）转成 MP3（128~320 kbps）或 WAV，可选采样率和声道，转完自动加入唱片机，也可下载到电脑；添加音乐时遇到放不了的文件会自动放进转换列表。全部在本机浏览器里完成，不上传文件；音乐软件的加密格式不提供转换',
             '唱片机内置 5 种环境音：轻钢琴（专注）、窗外雨声、海浪、壁炉篝火、粉红噪音，由浏览器实时合成，不用下载、没有版权问题，打开就能听；唱片机改为紧挨着侧边功能栏展开',
             '浮窗右侧边缘新增可拉出的功能栏（点小把手展开），放着不常用的功能：唱片机、更新记录、反馈问题；浮窗靠屏幕右边时自动改到左侧。唱片机：从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
@@ -1616,15 +1616,17 @@
                 const latest = wn.entries[0];
                 const note = el.querySelector('[data-k="wnnote"]');
                 note.style.display = latest && latest.note ? 'block' : 'none';
-                if (latest && latest.note) note.innerHTML = `<b>💬 作者RouteCC：</b>${esc(latest.note)}`;
+                if (latest && latest.note) note.innerHTML = `<b>💬 作者RouteCC：</b>${this._noteHtml(latest.note)}`;
                 el.querySelector('[data-k="wndate"]').textContent = latest && latest.date ? latest.date.replace(/^\d{4}-0?(\d+)-0?(\d+)$/, '$1月$2日') + '更新' : '';
             },
+            // 作者吐槽：换行分段显示
+            _noteHtml(t) { return String(t).split('\n').map((x) => `<p>${this._esc(x)}</p>`).join(''); },
             _renderHistory(el) {
                 const esc = (t) => this._esc(t);
                 el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
                     `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
                     e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
-                    (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${esc(e.note)}</div>` : '') + '</div>').join('');
+                    (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${this._noteHtml(e.note)}</div>` : '') + '</div>').join('');
             },
             _startUpdateCheck() {
                 this._checkUpdate();
@@ -3854,6 +3856,7 @@
                     '#xxt-v41-panel .xxt-hv-head span{font-size:10px;font-weight:600;color:var(--x-accent-strong);background:var(--x-accent-soft);border-radius:5px;padding:0 6px}' +
                     '#xxt-v41-panel .xxt-hv-head time{margin-left:auto;font-size:11px;color:var(--x-faint);font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-wn-date{font-size:11px;color:var(--x-muted);font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-wn-note p,#xxt-v41-panel .xxt-hv-note p{margin:0}#xxt-v41-panel .xxt-wn-note p + p,#xxt-v41-panel .xxt-hv-note p + p{margin-top:6px}' +
                     '#xxt-v41-panel .xxt-wn-note,#xxt-v41-panel .xxt-hv-note{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--x-bg);box-shadow:inset 3px 0 0 var(--x-accent);font-size:12px;line-height:1.6;color:var(--x-text2)}' +
                     '#xxt-v41-panel .xxt-hv-note{background:var(--x-soft2)}' +
                     '#xxt-v41-panel .xxt-wn-note b,#xxt-v41-panel .xxt-hv-note b{display:block;margin-bottom:2px;font-size:11px;font-weight:600;color:var(--x-accent-strong)}' +
