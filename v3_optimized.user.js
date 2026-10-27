@@ -29,7 +29,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
-            '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住，双击右下角或在设置里点「浮窗复位」恢复默认',
+            '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住。调过大小后标题栏会出现「还原大小」按钮，也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小',
             '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
             '设置里新增「更新记录」，可查看每个版本更新的内容',
             '后台防卡顿（默认开启，可在设置里关闭）：页面真正转到后台时，视频改为极小音量（3%）播放，回到前台恢复静音。浏览器不会给“正在播放声音”的页面限速、冻结或暂停视频；若浏览器不允许取消静音，自动恢复静音播放',
@@ -2227,6 +2227,14 @@
                 el.style.width = Math.round(Math.min(Math.max(PANEL_MIN_W, sz.w), window.innerWidth)) + 'px';
                 el.style.height = Math.round(Math.min(Math.max(PANEL_MIN_H, sz.h), window.innerHeight)) + 'px';
             },
+            // 一键还原默认大小（位置保留，超出屏幕时自动挪回来）
+            _restoreSize(withPos) {
+                const el = this._panel;
+                try { localStorage.removeItem(SIZE_KEY); if (withPos) localStorage.removeItem(POS_KEY); } catch (e) { /* ignore */ }
+                if (!el) return;
+                this._animatePanel(() => this._applySize(el));
+                log(withPos ? '浮窗已恢复默认位置和大小' : '浮窗已还原默认大小', '#2196F3');
+            },
             _bindResize(el) {
                 let st = null;
                 for (const h of el.querySelectorAll('[data-rz]')) {
@@ -2265,13 +2273,12 @@
                         }
                         st = null;
                         el.classList.remove('xxt-resizing');
+                        this._panelKey = '';
+                        this._renderPanel();
                     };
                     h.addEventListener('pointerup', end);
                     h.addEventListener('pointercancel', end);
-                    h.addEventListener('dblclick', () => {
-                        try { localStorage.removeItem(SIZE_KEY); } catch (err) { /* ignore */ }
-                        this._animatePanel(() => this._applySize(el));
-                    });
+                    h.addEventListener('dblclick', () => this._restoreSize(false));
                 }
             },
 
@@ -2570,7 +2577,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -2661,6 +2668,7 @@
                 const br = el.querySelector('[data-set="breakRemind"]');
                 if (br) br.closest('label').style.display = assist ? '' : 'none';
                 for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
+                q('restore').style.display = !this._panelCollapsed && this._loadSize() ? 'inline-flex' : 'none';
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
                 for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
@@ -2977,6 +2985,9 @@
                         '</div>' +
                       '</div>' +
                       '<div class="xxt-actions">' +
+                      '<button type="button" data-k="restore" class="xxt-gear" title="还原默认大小（Alt+Shift+R）" aria-label="还原默认大小" style="display:none">' +
+                        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' +
+                      '</button>' +
                       '<button type="button" data-k="gear" class="xxt-gear" title="设置" aria-label="设置" aria-expanded="false">' +
                         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>' +
                       '</button>' +
@@ -3040,7 +3051,7 @@
                       '</div>' +
                       '<div class="xxt-set-actions" style="border-top:0;padding-top:0">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
-                        '<button type="button" data-k="resetpos" class="xxt-set-btn">浮窗复位</button>' +
+                        '<button type="button" data-k="resetpos" class="xxt-set-btn" title="快捷键 Alt+Shift+R">浮窗复位</button>' +
                       '</div>' +
                     '</div>' +
                     '<div data-k="history" class="xxt-settings xxt-hist" style="display:none">' +
@@ -3159,6 +3170,18 @@
                 el.querySelector('[data-k="fbcopy"]').addEventListener('click', () => this._sendFeedback(false));
                 el.querySelector('[data-k="fbsend"]').addEventListener('click', () => this._sendFeedback(true));
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
+                el.querySelector('[data-k="restore"]').addEventListener('click', () => this._restoreSize(false));
+                if (!this._onRestoreKey) {
+                    // 快捷键 Alt+Shift+R：浮窗回到默认位置和大小（拉得太大、太小或拖到看不见时用）
+                    this._onRestoreKey = (e) => {
+                        if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyR' || /^r$/i.test(e.key))) {
+                            e.preventDefault();
+                            if (this._panelCollapsed) { this._panelCollapsed = false; }
+                            this._restoreSize(true);
+                        }
+                    };
+                    window.addEventListener('keydown', this._onRestoreKey, true);
+                }
                 this._bindDrag(el, el.querySelector('[data-k="head"]'));
                 this._bindResize(el);
                 el.querySelector('[data-k="noticex"]').addEventListener('click', () => {
@@ -3256,6 +3279,7 @@
             },
 
             _removePanel() {
+                if (this._onRestoreKey) { window.removeEventListener('keydown', this._onRestoreKey, true); this._onRestoreKey = null; }
                 if (this._panel) {
                     try { this._panel.remove(); } catch (e) { /* ignore */ }
                 }

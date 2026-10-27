@@ -768,6 +768,36 @@ test('浮窗可拖动边缘放大缩小，大小会被记住；收起时恢复�
     await ctx.close();
 });
 
+test('一键还原：调过大小后标题栏出现还原按钮；快捷键 Alt+Shift+R 恢复默认位置和大小', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const vis = () => p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=restore]').offsetParent !== null);
+    const rect = () => p.evaluate(() => { const r = document.getElementById('xxt-v41-panel').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+    assert(!(await vis()), '默认大小时不应显示还原按钮');
+    // 拉到最大
+    const se = await (await p.$('#xxt-v41-panel [data-rz=se]')).boundingBox();
+    await p.mouse.move(se.x + 8, se.y + 8); await p.mouse.down(); await p.mouse.move(1199, 899, { steps: 6 }); await p.mouse.up();
+    const nw = await (await p.$('#xxt-v41-panel [data-rz=nw]')).boundingBox();
+    await p.mouse.move(nw.x + 8, nw.y + 8); await p.mouse.down(); await p.mouse.move(0, 0, { steps: 6 }); await p.mouse.up(); await sleep(400);
+    const big = await rect();
+    assert(big.w > 1150 && big.h > 850 && await vis(), `没有拉到最大或没有还原按钮：${JSON.stringify(big)}`);
+    await p.click('#xxt-v41-panel [data-k=restore]'); await sleep(900);
+    const r1 = await rect();
+    assert(Math.abs(r1.w - 324) < 2 && r1.h < 800 && !(await vis()), `还原按钮没生效：${JSON.stringify(r1)}`);
+    // 拉到最小，再用快捷键恢复默认位置和大小
+    const se2 = await (await p.$('#xxt-v41-panel [data-rz=se]')).boundingBox();
+    await p.mouse.move(se2.x + 8, se2.y + 8); await p.mouse.down(); await p.mouse.move(se2.x - 400, se2.y - 800, { steps: 6 }); await p.mouse.up(); await sleep(300);
+    const small = await rect();
+    assert(small.w <= 302 && small.h <= 142, `没有拉到最小：${JSON.stringify(small)}`);
+    await p.keyboard.press('Alt+Shift+KeyR'); await sleep(900);
+    const r2 = await rect();
+    assert(Math.abs(r2.w - 324) < 2 && Math.abs(r2.x - 20) < 2 && Math.abs(r2.y + r2.h - 880) < 2, `快捷键没有恢复默认：${JSON.stringify(r2)}`);
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
