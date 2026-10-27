@@ -221,7 +221,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     const info = await panelInfo(p);
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
-    assert(/浮窗主题/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    assert(/唱片机/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -897,6 +897,59 @@ test('自定义主色接近橙色时，“需手动完成”进度段换成紫�
     assert(r.manual === '#8B5CF6' && r.gap === '2px' && r.w > 0 && r.bw > 0 && /repeating-linear-gradient/.test(r.bg), `进度条分不清：${JSON.stringify(r)}`);
     await p.evaluate(() => app._setCustom('#3b82f6', null, true)); await sleep(300);
     assert(await p.evaluate(() => document.getElementById('xxt-v41-panel').style.getPropertyValue('--x-manual')) === '#F5A524', '蓝色主色时应保持橙色');
+    await ctx.close();
+});
+
+test('唱片机：从浮窗打开侧边栏，添加本地音乐，点列表即播放，刷新后列表还在', async (b) => {
+    // 生成两段 3 秒的无声 WAV 当作“本地音乐”
+    const wav = (sec) => {
+        const rate = 8000, n = rate * sec, buf = Buffer.alloc(44 + n);
+        buf.write('RIFF', 0); buf.writeUInt32LE(36 + n, 4); buf.write('WAVEfmt ', 8); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+        buf.writeUInt32LE(rate, 24); buf.writeUInt32LE(rate, 28); buf.writeUInt16LE(1, 32); buf.writeUInt16LE(8, 34); buf.write('data', 36); buf.writeUInt32LE(n, 40); buf.fill(128, 44);
+        return buf;
+    };
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const st = () => p.evaluate(() => {
+        const d = document.getElementById('xxt-v41-music'), panel = document.getElementById('xxt-v41-panel');
+        if (!d) return null;
+        const r = d.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+        return { open: d.classList.contains('open'), playing: d.classList.contains('playing'), items: [...d.querySelectorAll('.xm-name')].map((e) => e.textContent),
+            cur: (d.querySelector('.xm-item.cur .xm-name') || {}).textContent || '', title: d.querySelector('[data-m=title]').textContent,
+            rightOfPanel: r.left >= pr.right, paused: app._audio ? app._audio.paused : true };
+    });
+    await p.click('#xxt-v41-panel [data-k=musicbtn]'); await sleep(600);
+    let s = await st();
+    assert(s && s.open && s.items.length === 0 && s.rightOfPanel, `唱片机没有在浮窗旁打开：${JSON.stringify(s)}`);
+    await p.setInputFiles('#xxt-v41-music [data-m=file]', [
+        { name: '晨读.wav', mimeType: 'audio/wav', buffer: wav(3) },
+        { name: '午后钢琴.wav', mimeType: 'audio/wav', buffer: wav(3) },
+    ]);
+    await sleep(1200);
+    s = await st();
+    assert(s.items.join('|') === '晨读|午后钢琴' && s.playing && !s.paused && s.cur === '晨读', `添加后没有开始播放：${JSON.stringify(s)}`);
+    // 点列表里的第二首即播放
+    await p.click('#xxt-v41-music .xm-item:nth-child(2)'); await sleep(800);
+    s = await st();
+    assert(s.cur === '午后钢琴' && s.title === '午后钢琴' && !s.paused, `点击列表没有切歌：${JSON.stringify(s)}`);
+    // 暂停
+    await p.click('#xxt-v41-music [data-m=play]'); await sleep(300);
+    s = await st();
+    assert(s.paused && !s.playing, `暂停没生效：${JSON.stringify(s)}`);
+    // 关闭侧边栏后刷新：列表还在
+    await p.click('#xxt-v41-music [data-m=close]'); await sleep(500);
+    assert(!(await st()).open, '关闭没生效');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-panel [data-k=musicbtn]'); await sleep(1000);
+    s = await st();
+    assert(s.items.join('|') === '晨读|午后钢琴', `刷新后列表丢失：${JSON.stringify(s)}`);
+    // 移除一首
+    await p.hover('#xxt-v41-music .xm-item:nth-child(1)');
+    await p.click('#xxt-v41-music .xm-item:nth-child(1) .xm-del'); await sleep(600);
+    assert((await st()).items.join('|') === '午后钢琴', '移除没生效');
     await ctx.close();
 });
 

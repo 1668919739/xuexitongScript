@@ -10,9 +10,10 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
+            '唱片机：点浮窗标题栏的唱片图标，在旁边打开唱片机侧边栏。从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
             '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
             '进度条里“需手动完成”的一段改为斜纹，并和“已完成”之间留一道缝；自定义主色接近橙色或黄色时，这一段自动换成紫色，不会混在一起',
-            '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）',
+            '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）；学习通页面自带的按钮样式不再影响浮窗里的按钮',
             '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住。调过大小后标题栏会出现「还原大小」按钮，也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小',
             '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
             '设置里新增「更新记录」，可查看每个版本更新的内容',
@@ -478,6 +479,7 @@
                 });
             },
             destroy() {
+                this._removeMusic();
                 this._state = 'stopped';
                 this._stopTimer();
                 this._saveStats(true);
@@ -2216,6 +2218,7 @@
                     const left = Math.min(Math.max(0, start.left + dx), window.innerWidth - el.offsetWidth);
                     const top = Math.min(Math.max(0, start.top + dy), window.innerHeight - el.offsetHeight);
                     el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.bottom = 'auto';
+                    this._positionMusic();
                 });
                 const end = () => {
                     if (start && start.moved) {
@@ -2322,6 +2325,7 @@
                         el.style.width = w + 'px'; el.style.height = hh + 'px';
                         el.style.left = left + 'px'; el.style.top = top + 'px';
                         this._fitPanel(el);
+                        this._positionMusic();
                     });
                     const end = (e) => {
                         if (!st || (e && e.pointerId !== st.id)) return;
@@ -2559,6 +2563,347 @@
                     '<div class="xxt-hlegend">少<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>多</div>';
             },
 
+            // ================= 唱片机（浮窗侧边栏） =================
+            // 音乐来自用户自己添加的本地文件，保存在本机浏览器（IndexedDB）里，不上传、不内置任何音乐
+            _musicDB() {
+                if (!this._mdb) {
+                    this._mdb = new Promise((res, rej) => {
+                        try {
+                            const r = indexedDB.open('xxt-v41-music', 1);
+                            r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains('tracks')) r.result.createObjectStore('tracks', { keyPath: 'id' }); };
+                            r.onsuccess = () => res(r.result);
+                            r.onerror = () => rej(r.error);
+                        } catch (e) { rej(e); }
+                    });
+                }
+                return this._mdb;
+            },
+            async _musicStore(mode, fn) {
+                const db = await this._musicDB();
+                return new Promise((res, rej) => {
+                    const tx = db.transaction('tracks', mode);
+                    const req = fn(tx.objectStore('tracks'));
+                    tx.oncomplete = () => res(req && req.result);
+                    tx.onerror = () => rej(tx.error);
+                });
+            },
+            async _musicLoad() {
+                try {
+                    const all = (await this._musicStore('readonly', (s) => s.getAll())) || [];
+                    all.sort((a, b) => a.added - b.added);
+                    this._tracks = all;
+                } catch (e) {
+                    this._tracks = [];
+                    log('唱片机：读取本地音乐失败 ' + (e && e.message), '#FF9800', 'warn');
+                }
+                this._renderMusic();
+            },
+            async _musicAdd(files) {
+                let n = 0;
+                for (const f of files) {
+                    if (!f || !/^audio\//.test(f.type || '') && !/\.(mp3|m4a|aac|ogg|oga|wav|flac|webm|opus)$/i.test(f.name || '')) continue;
+                    const t = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), name: (f.name || '未命名').replace(/\.[^.]+$/, ''), blob: f, added: Date.now() + n };
+                    try { await this._musicStore('readwrite', (s) => s.put(t)); n++; } catch (e) { log('唱片机：保存失败（可能是浏览器存储空间不足）', '#FF9800', 'warn'); }
+                }
+                if (n) log(`唱片机：添加了 ${n} 首音乐`, '#2196F3');
+                await this._musicLoad();
+                if (n && !this._curTrack && this._tracks.length) this._musicPlay(this._tracks[this._tracks.length - n].id);
+            },
+            async _musicRemove(id) {
+                if (this._curTrack === id) { this._musicStop(); }
+                try { await this._musicStore('readwrite', (s) => s.delete(id)); } catch (e) { /* ignore */ }
+                await this._musicLoad();
+            },
+            _musicAudio() {
+                if (this._audio) return this._audio;
+                const a = new Audio();
+                a.preload = 'auto';
+                let vol = 0.6;
+                try { const v = parseFloat(localStorage.getItem('xxt-v41-music-vol')); if (v >= 0 && v <= 1) vol = v; } catch (e) { /* ignore */ }
+                a.volume = vol;
+                a.addEventListener('timeupdate', () => this._musicTick());
+                a.addEventListener('loadedmetadata', () => this._musicTick());
+                a.addEventListener('play', () => this._renderMusic());
+                a.addEventListener('pause', () => this._renderMusic());
+                a.addEventListener('ended', () => this._musicNext(true));
+                a.addEventListener('error', () => { if (this._curTrack) { log('唱片机：这首音乐无法播放，已跳过', '#FF9800', 'warn'); this._musicNext(true); } });
+                this._audio = a;
+                return a;
+            },
+            _musicPlay(id) {
+                const t = (this._tracks || []).find((x) => x.id === id);
+                if (!t) return;
+                const a = this._musicAudio();
+                if (this._curTrack !== id) {
+                    if (this._audioUrl) URL.revokeObjectURL(this._audioUrl);
+                    this._audioUrl = URL.createObjectURL(t.blob);
+                    a.src = this._audioUrl;
+                    this._curTrack = id;
+                    try { localStorage.setItem('xxt-v41-music-last', id); } catch (e) { /* ignore */ }
+                    try {
+                        if (navigator.mediaSession && window.MediaMetadata) {
+                            navigator.mediaSession.metadata = new MediaMetadata({ title: t.name, artist: '学习通助手 · 唱片机' });
+                            navigator.mediaSession.setActionHandler('previoustrack', () => this._musicNext(false, -1));
+                            navigator.mediaSession.setActionHandler('nexttrack', () => this._musicNext(false));
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+                const p = a.play();
+                if (p && p.catch) p.catch(() => this._renderMusic());
+                this._renderMusic();
+            },
+            _musicToggle() {
+                const a = this._audio;
+                if (!this._curTrack) {
+                    const list = this._tracks || [];
+                    let last = null;
+                    try { last = localStorage.getItem('xxt-v41-music-last'); } catch (e) { /* ignore */ }
+                    const t = list.find((x) => x.id === last) || list[0];
+                    if (t) this._musicPlay(t.id);
+                    return;
+                }
+                if (a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => {}); } else a.pause();
+            },
+            _musicStop() {
+                if (this._audio) { try { this._audio.pause(); this._audio.removeAttribute('src'); this._audio.load(); } catch (e) { /* ignore */ } }
+                if (this._audioUrl) { URL.revokeObjectURL(this._audioUrl); this._audioUrl = null; }
+                this._curTrack = null;
+                this._renderMusic();
+            },
+            // auto：一首放完自动接下一首（按播放模式）；step：-1 上一首
+            _musicNext(auto, step = 1) {
+                const list = this._tracks || [];
+                if (!list.length) { this._musicStop(); return; }
+                const mode = this._musicMode();
+                const i = list.findIndex((x) => x.id === this._curTrack);
+                if (auto && mode === 'one' && i >= 0) { this._audio.currentTime = 0; this._musicPlay(list[i].id); return; }
+                let j;
+                if (mode === 'shuffle' && list.length > 1) { do { j = Math.floor(Math.random() * list.length); } while (j === i); }
+                else j = ((i < 0 ? 0 : i + step) + list.length) % list.length;
+                this._musicPlay(list[j].id);
+            },
+            _musicMode() {
+                let m = 'all';
+                try { m = localStorage.getItem('xxt-v41-music-mode') || 'all'; } catch (e) { /* ignore */ }
+                return ['all', 'one', 'shuffle'].includes(m) ? m : 'all';
+            },
+            _musicTick() {
+                const d = this._musicEl, a = this._audio;
+                if (!d || !a) return;
+                const fmt = (t) => { t = isFinite(t) ? Math.floor(t) : 0; return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+                d.querySelector('[data-m="time"]').textContent = `${fmt(a.currentTime)} / ${fmt(a.duration)}`;
+                const seek = d.querySelector('[data-m="seek"]');
+                if (!this._seeking) seek.value = a.duration ? Math.round((a.currentTime / a.duration) * 1000) : 0;
+                seek.style.setProperty('--p', (seek.value / 10) + '%');
+            },
+            _toggleMusic() {
+                this._musicOpen = !this._musicOpen;
+                if (this._musicOpen && !this._tracks) this._musicLoad();
+                this._renderMusic();
+                this._panelKey = ''; this._renderPanel();
+            },
+            _ensureMusic() {
+                if (this._musicEl && this._musicEl.isConnected) return this._musicEl;
+                const d = document.createElement('div');
+                d.id = 'xxt-v41-music';
+                d.setAttribute('role', 'dialog');
+                d.setAttribute('aria-label', '唱片机');
+                const icon = (path, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
+                d.innerHTML =
+                    '<style>' +
+                    '#xxt-v41-music{position:fixed;z-index:2147483646;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
+                      'background:radial-gradient(120% 70% at 50% 0%,#2C2422 0%,#1B1615 60%,#141110 100%);color:#EDE6E2;box-shadow:0 12px 36px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);' +
+                      'font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;' +
+                      'transition:opacity .38s cubic-bezier(.22,1,.36,1),transform .38s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-music.open{opacity:1;transform:none;pointer-events:auto}' +
+                    '#xxt-v41-music *{box-sizing:border-box}' +
+                    '#xxt-v41-music .xm-head{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-music .xm-head b{flex:1;font-size:14px;font-weight:600;letter-spacing:.5px}' +
+                    '#xxt-v41-music button{font:inherit;color:inherit;cursor:pointer;margin:0;padding:0;border:0;min-width:0;min-height:0;box-shadow:none;text-transform:none;letter-spacing:normal;line-height:inherit}' +
+                    '#xxt-v41-music svg{flex:none}' +
+                    '#xxt-v41-music .xm-x{border:0;background:none;color:#A89D98;font-size:18px;line-height:1;padding:2px 6px;border-radius:7px}' +
+                    '#xxt-v41-music .xm-x:hover,#xxt-v41-music .xm-x:focus-visible{background:rgba(255,255,255,.08);color:#fff;outline:none}' +
+                    '#xxt-v41-music .xm-deck{position:relative;width:208px;height:208px;margin:10px auto 6px}' +
+                    '#xxt-v41-music .xm-plinth{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,#2A2321 0 70%,#211B1A 71%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}' +
+                    '#xxt-v41-music .xm-disc{position:absolute;inset:12px;border-radius:50%;background:' +
+                      'radial-gradient(circle,transparent 0 31%,rgba(0,0,0,.65) 31% 32.5%,transparent 32.5%),' +
+                      'repeating-radial-gradient(circle,#161616 0 1.6px,#1f1f1f 1.6px 3.2px),#141414;' +
+                      'box-shadow:0 6px 18px rgba(0,0,0,.55),inset 0 0 0 2px #0c0c0c;animation:xm-spin 7s linear infinite;animation-play-state:paused}' +
+                    '#xxt-v41-music .xm-disc::after{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 30deg,transparent 0 8%,rgba(255,255,255,.07) 12%,transparent 18% 58%,rgba(255,255,255,.05) 62%,transparent 68%)}' +
+                    '#xxt-v41-music.playing .xm-disc{animation-play-state:running}' +
+                    '#xxt-v41-music .xm-label{position:absolute;inset:31%;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;' +
+                      'font-size:12px;font-weight:600;line-height:1.3;color:rgba(255,255,255,.92);text-shadow:0 1px 2px rgba(0,0,0,.35);overflow:hidden;word-break:break-all}' +
+                    '#xxt-v41-music .xm-label::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:#1B1615;box-shadow:0 0 0 2px rgba(0,0,0,.25)}' +
+                    '#xxt-v41-music .xm-label span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:74px;margin-top:-26px}' +
+                    '#xxt-v41-music .xm-arm{position:absolute;right:-6px;top:-10px;width:88px;height:150px;transform-origin:62px 20px;transform:rotate(-26deg);transition:transform .7s cubic-bezier(.22,1,.36,1);pointer-events:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.45))}' +
+                    '#xxt-v41-music.playing .xm-arm{transform:rotate(0deg)}' +
+                    '@keyframes xm-spin{to{transform:rotate(360deg)}}' +
+                    '#xxt-v41-music .xm-now{text-align:center;min-height:38px}' +
+                    '#xxt-v41-music .xm-now b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-music .xm-now span{font-size:11px;color:#A89D98;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-music input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;margin:6px 0;border-radius:2px;cursor:pointer;' +
+                      'background:linear-gradient(to right,var(--xm-accent,#E8A87C) var(--p,0%),rgba(255,255,255,.14) var(--p,0%))}' +
+                    '#xxt-v41-music input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}' +
+                    '#xxt-v41-music input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:#fff}' +
+                    '#xxt-v41-music input[type=range]:focus-visible{outline:2px solid rgba(255,255,255,.35);outline-offset:3px}' +
+                    '#xxt-v41-music .xm-ctrls{display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 8px}' +
+                    '#xxt-v41-music .xm-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:50%;background:none;color:#D9CFCA}' +
+                    '#xxt-v41-music .xm-btn:hover,#xxt-v41-music .xm-btn:focus-visible{background:rgba(255,255,255,.08);color:#fff;outline:none}' +
+                    '#xxt-v41-music .xm-play{width:44px;height:44px;background:#F3EDEA;color:#1B1615}' +
+                    '#xxt-v41-music .xm-play:hover,#xxt-v41-music .xm-play:focus-visible{background:#fff;color:#000}' +
+                    '#xxt-v41-music .xm-mode{font-size:11px;font-weight:600;width:auto;padding:0 8px;border-radius:12px;height:24px}' +
+                    '#xxt-v41-music .xm-vol{display:flex;align-items:center;gap:8px;color:#A89D98;margin-bottom:8px}' +
+                    '#xxt-v41-music .xm-vol input{margin:0}' +
+                    '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:200px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
+                    '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
+                    '#xxt-v41-music .xm-item:first-child{margin-top:6px}' +
+                    '#xxt-v41-music .xm-item:hover{background:rgba(255,255,255,.06)}' +
+                    '#xxt-v41-music .xm-item.cur{background:rgba(255,255,255,.1)}' +
+                    '#xxt-v41-music .xm-item.cur .xm-name{color:var(--xm-accent,#E8A87C);font-weight:600}' +
+                    '#xxt-v41-music .xm-no{flex:none;width:18px;font-size:11px;color:#7D726D;text-align:center;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-music .xm-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-music .xm-del{flex:none;border:0;background:none;color:#7D726D;font-size:15px;line-height:1;padding:2px 4px;border-radius:6px;opacity:0}' +
+                    '#xxt-v41-music .xm-item:hover .xm-del,#xxt-v41-music .xm-del:focus-visible{opacity:1}' +
+                    '#xxt-v41-music .xm-del:hover{color:#fff;background:rgba(255,255,255,.1)}' +
+                    '#xxt-v41-music .xm-eq{flex:none;display:inline-flex;align-items:flex-end;gap:2px;width:18px;height:12px;justify-content:center}' +
+                    '#xxt-v41-music .xm-eq i{width:3px;background:var(--xm-accent,#E8A87C);border-radius:1px;animation:xm-eq .9s ease-in-out infinite;animation-play-state:paused}' +
+                    '#xxt-v41-music .xm-eq i:nth-child(2){animation-delay:-.3s}#xxt-v41-music .xm-eq i:nth-child(3){animation-delay:-.6s}' +
+                    '#xxt-v41-music.playing .xm-eq i{animation-play-state:running}' +
+                    '@keyframes xm-eq{0%,100%{height:3px}50%{height:12px}}' +
+                    '#xxt-v41-music .xm-empty{padding:16px 6px 8px;text-align:center;color:#A89D98;font-size:12px;line-height:1.7}' +
+                    '#xxt-v41-music .xm-add{width:100%;margin-top:8px;padding:8px 0;border:1px dashed rgba(255,255,255,.22);border-radius:10px;background:none;color:#EDE6E2;font-size:12px;font-weight:600}' +
+                    '#xxt-v41-music .xm-add:hover,#xxt-v41-music .xm-add:focus-visible,#xxt-v41-music.drag .xm-add{border-color:var(--xm-accent,#E8A87C);color:#fff;background:rgba(255,255,255,.05);outline:none}' +
+                    '#xxt-v41-music .xm-hint{margin-top:6px;font-size:10.5px;color:#7D726D;text-align:center}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-music,#xxt-v41-music .xm-arm{transition:none}#xxt-v41-music .xm-disc,#xxt-v41-music .xm-eq i{animation:none}}' +
+                    '</style>' +
+                    '<div class="xm-head"><b>唱片机</b><button type="button" class="xm-x" data-m="close" aria-label="关闭唱片机">×</button></div>' +
+                    '<div class="xm-deck"><div class="xm-plinth"></div><div class="xm-disc"><div class="xm-label" data-m="label"><span data-m="labeltxt">♪</span></div></div>' +
+                      '<svg class="xm-arm" viewBox="0 0 88 150" aria-hidden="true"><circle cx="62" cy="20" r="15" fill="#2A2321"/><circle cx="62" cy="20" r="9" fill="#F3EDEA"/><circle cx="62" cy="20" r="3.5" fill="#BDB3AE"/>' +
+                      '<path d="M62 20 C 64 60, 66 82, 52 104 L 38 120" fill="none" stroke="#F3EDEA" stroke-width="5" stroke-linecap="round"/>' +
+                      '<rect x="22" y="114" width="20" height="13" rx="3" transform="rotate(-38 32 120)" fill="#F3EDEA"/><rect x="14" y="122" width="14" height="14" rx="3" transform="rotate(-38 21 129)" fill="#E2DAD6"/></svg>' +
+                    '</div>' +
+                    '<div class="xm-now"><b data-m="title">还没有音乐</b><span data-m="time">00:00 / 00:00</span></div>' +
+                    '<input type="range" data-m="seek" min="0" max="1000" value="0" aria-label="播放进度">' +
+                    '<div class="xm-ctrls">' +
+                      `<button type="button" class="xm-btn xm-mode" data-m="mode" title="播放模式"></button>` +
+                      `<button type="button" class="xm-btn" data-m="prev" aria-label="上一首">${icon('<path d="M4.5 4.5h3v15h-3zM20 4.5v15L8.5 12z"/>', 20)}</button>` +
+                      `<button type="button" class="xm-btn xm-play" data-m="play" aria-label="播放"></button>` +
+                      `<button type="button" class="xm-btn" data-m="next" aria-label="下一首">${icon('<path d="M16.5 4.5h3v15h-3zM4 4.5v15L15.5 12z"/>', 20)}</button>` +
+                      `<span style="width:44px"></span>` +
+                    '</div>' +
+                    `<div class="xm-vol">${icon('<path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/>', 15)}<input type="range" data-m="vol" min="0" max="100" aria-label="音量"></div>` +
+                    '<div class="xm-list" data-m="list" role="list"></div>' +
+                    '<button type="button" class="xm-add" data-m="add">＋ 添加本地音乐（可多选，也可拖进来）</button>' +
+                    '<input type="file" data-m="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus" multiple hidden>' +
+                    '<div class="xm-hint">音乐只保存在这台电脑的浏览器里，不会上传</div>';
+                const q = (k) => d.querySelector(`[data-m="${k}"]`);
+                q('close').addEventListener('click', () => this._toggleMusic());
+                q('play').addEventListener('click', () => this._musicToggle());
+                q('prev').addEventListener('click', () => this._musicNext(false, -1));
+                q('next').addEventListener('click', () => this._musicNext(false));
+                q('mode').addEventListener('click', () => {
+                    const order = ['all', 'one', 'shuffle'];
+                    const m = order[(order.indexOf(this._musicMode()) + 1) % 3];
+                    try { localStorage.setItem('xxt-v41-music-mode', m); } catch (e) { /* ignore */ }
+                    this._renderMusic();
+                });
+                const seek = q('seek');
+                seek.addEventListener('input', () => { this._seeking = true; seek.style.setProperty('--p', (seek.value / 10) + '%'); });
+                seek.addEventListener('change', () => {
+                    this._seeking = false;
+                    const a = this._audio;
+                    if (a && a.duration) a.currentTime = (seek.value / 1000) * a.duration;
+                });
+                const vol = q('vol');
+                vol.addEventListener('input', () => {
+                    const v = vol.value / 100;
+                    this._musicAudio().volume = v;
+                    vol.style.setProperty('--p', vol.value + '%');
+                    try { localStorage.setItem('xxt-v41-music-vol', String(v)); } catch (e) { /* ignore */ }
+                });
+                q('add').addEventListener('click', () => q('file').click());
+                q('file').addEventListener('change', () => { const fs = [...q('file').files]; q('file').value = ''; this._musicAdd(fs); });
+                q('list').addEventListener('click', (e) => {
+                    const del = e.target.closest('[data-del]');
+                    if (del) { e.stopPropagation(); this._musicRemove(del.getAttribute('data-del')); return; }
+                    const it = e.target.closest('[data-track]');
+                    if (!it) return;
+                    const id = it.getAttribute('data-track');
+                    if (id === this._curTrack) this._musicToggle(); else this._musicPlay(id);
+                });
+                d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('drag'); });
+                d.addEventListener('dragleave', (e) => { if (e.target === d) d.classList.remove('drag'); });
+                d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('drag'); this._musicAdd([...(e.dataTransfer && e.dataTransfer.files || [])]); });
+                for (const t of ['keydown', 'keyup', 'keypress']) d.addEventListener(t, (e) => e.stopPropagation());
+                document.body.appendChild(d);
+                this._musicEl = d;
+                return d;
+            },
+            _positionMusic() {
+                const d = this._musicEl, el = this._panel;
+                if (!d || !el || !this._musicOpen) return;
+                const r = el.getBoundingClientRect();
+                const w = d.offsetWidth || 288, h = d.offsetHeight || 560, gap = 12, W = window.innerWidth, H = window.innerHeight;
+                let left = r.right + gap;
+                if (left + w > W - 8) left = r.left - gap - w >= 8 ? r.left - gap - w : Math.max(8, W - w - 8);
+                const top = Math.min(Math.max(8, r.bottom - h), Math.max(8, H - h - 8));
+                d.style.left = Math.round(left) + 'px';
+                d.style.top = Math.round(top) + 'px';
+                d.style.maxHeight = (H - 16) + 'px';
+                try { const acc = getComputedStyle(el).getPropertyValue('--x-accent').trim(); if (acc) d.style.setProperty('--xm-accent', acc); } catch (e) { /* ignore */ }
+            },
+            _renderMusic() {
+                const open = !!this._musicOpen && !!this._panel && !this._panelCollapsed;
+                if (!open && !this._musicEl) return;
+                const d = this._ensureMusic();
+                const q = (k) => d.querySelector(`[data-m="${k}"]`);
+                const a = this._audio;
+                const playing = !!(a && this._curTrack && !a.paused);
+                d.classList.toggle('open', open);
+                d.classList.toggle('playing', playing);
+                d.setAttribute('aria-hidden', String(!open));
+                if (open) d.removeAttribute('inert'); else d.setAttribute('inert', '');
+                const list = this._tracks || [];
+                const cur = list.find((x) => x.id === this._curTrack);
+                const esc = (t) => this._esc(t);
+                q('title').textContent = cur ? cur.name : (list.length ? '点一首歌开始播放' : '还没有音乐');
+                q('labeltxt').textContent = cur ? cur.name : '♪';
+                let hue = 24;
+                if (cur) { hue = 0; for (const ch of cur.name) hue = (hue * 31 + ch.charCodeAt(0)) % 360; }
+                q('label').style.background = `radial-gradient(circle at 35% 30%,hsl(${hue} 55% 62%),hsl(${(hue + 40) % 360} 50% 38%))`;
+                q('play').innerHTML = playing
+                    ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>'
+                    : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+                q('play').setAttribute('aria-label', playing ? '暂停' : '播放');
+                const mode = this._musicMode();
+                q('mode').textContent = { all: '列表循环', one: '单曲循环', shuffle: '随机播放' }[mode];
+                const vol = q('vol');
+                const v = Math.round((a ? a.volume : (() => { try { const x = parseFloat(localStorage.getItem('xxt-v41-music-vol')); return x >= 0 && x <= 1 ? x : 0.6; } catch (e) { return 0.6; } })()) * 100);
+                if (document.activeElement !== vol) vol.value = v;
+                vol.style.setProperty('--p', vol.value + '%');
+                const listKey = list.map((x) => x.id).join(',') + '|' + this._curTrack;
+                if (this._musicListKey !== listKey) {
+                    this._musicListKey = listKey;
+                    q('list').innerHTML = list.length
+                        ? list.map((t, i) => `<div class="xm-item${t.id === this._curTrack ? ' cur' : ''}" data-track="${esc(t.id)}" role="listitem" tabindex="0" title="${esc(t.name)}">` +
+                            (t.id === this._curTrack ? '<span class="xm-eq"><i></i><i></i><i></i></span>' : `<span class="xm-no">${i + 1}</span>`) +
+                            `<span class="xm-name">${esc(t.name)}</span><button type="button" class="xm-del" data-del="${esc(t.id)}" aria-label="移除 ${esc(t.name)}">×</button></div>`).join('')
+                        : '<div class="xm-empty">点下面的按钮，从电脑里选几首喜欢的音乐<br>学习的时候放着听</div>';
+                }
+                this._musicTick();
+                if (open) this._positionMusic();
+                // 浮窗标题栏的唱片按钮：播放时显示跳动的小音符
+                if (this._panel) {
+                    const b = this._panel.querySelector('[data-k="musicbtn"]');
+                    if (b) { b.classList.toggle('on', open); b.classList.toggle('playing', playing); b.setAttribute('aria-expanded', String(open)); }
+                }
+            },
+            _removeMusic() {
+                this._musicStop();
+                if (this._musicEl) { try { this._musicEl.remove(); } catch (e) { /* ignore */ } }
+                this._musicEl = null;
+            },
+
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -2638,7 +2983,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -2748,6 +3093,7 @@
                 if (br) br.closest('label').style.display = assist ? '' : 'none';
                 for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
                 q('restore').style.display = !this._panelCollapsed && this._loadSize() ? 'inline-flex' : 'none';
+                if (this._musicEl || this._musicOpen) this._renderMusic();
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
                 for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
@@ -2852,6 +3198,10 @@
                     '#xxt-v41-panel[data-theme="dark"] .xxt-live-row{background:#3A2414}#xxt-v41-panel[data-theme="dark"] .xxt-live-text{color:#FDBA74}' +
                     '#xxt-v41-panel[data-theme="dark"] [data-k="ver"].xxt-has-upd{background:#3B2F14;color:#FCD34D}' +
                     '#xxt-v41-panel[data-theme="dark"] .xxt-power:hover{background:#3F1D1D}' +
+                    '#xxt-v41-panel .xxt-music-btn.playing{color:var(--x-accent)}' +
+                    '#xxt-v41-panel .xxt-music-btn.playing .xxt-vinyl{animation:xm-spin 2.4s linear infinite}' +
+                    '@keyframes xm-spin{to{transform:rotate(360deg)}}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-music-btn.playing .xxt-vinyl{animation:none}}' +
                     '#xxt-v41-panel .xxt-themes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-theme{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 2px;border:0;border-radius:9px;background:var(--x-bg);box-shadow:inset 0 0 0 1px var(--x-line);font:inherit;font-size:11px;color:var(--x-text2);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-theme i{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}' +
@@ -2881,10 +3231,12 @@
                     '#xxt-v41-panel.xxt-scroll .xxt-body{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin-right:-8px;padding-right:8px}' +
                     '#xxt-v41-panel.xxt-scroll .xxt-tip{bottom:auto;top:calc(100% + 10px)}' +
                     '#xxt-v41-panel.xxt-scroll .xxt-tip::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:#1F2937}' +
+                    '#xxt-v41-panel button{margin:0;min-width:0;min-height:0;text-transform:none;letter-spacing:normal}' +
+                    '#xxt-v41-panel svg{flex:none}' +
                     '#xxt-v41-panel .xxt-ver-wrap{position:relative;display:inline-flex}' +
                     '#xxt-v41-panel.xxt-collapsed{width:auto!important;min-width:230px;padding:10px 12px!important}' +
                     '#xxt-v41-panel.xxt-collapsed .xxt-logo{width:32px!important;height:32px!important;border-radius:9px!important}' +
-                    '#xxt-v41-panel .xxt-toggle{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);font:20px/1 sans-serif;cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-toggle{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);font:20px/1 sans-serif;cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-toggle:hover,#xxt-v41-panel .xxt-toggle:focus-visible{background:var(--x-soft2);color:var(--x-text2);outline:none}' +
                     '#xxt-v41-panel .xxt-assist{display:flex;align-items:center;gap:10px;width:100%;margin-top:10px;padding:8px 12px;border:0;border-radius:10px;background:var(--x-soft);font:inherit;text-align:left;cursor:pointer;transition:background .15s}' +
                     '#xxt-v41-panel .xxt-assist:hover{background:var(--x-soft2)}' +
@@ -2974,10 +3326,10 @@
                     '#xxt-v41-panel .xxt-goal-opts{display:flex;gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-notice.rest{background:#ECFDF5;color:#065F46}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-ring circle,#xxt-v41-panel .xxt-tabs button,#xxt-v41-panel .xxt-tab-ind,#xxt-v41-panel .xxt-toggle,#xxt-v41-panel .xxt-logo{transition:none}}' +
-                    '#xxt-v41-panel .xxt-head{display:flex;align-items:center;gap:12px;cursor:grab;touch-action:none}' +
+                    '#xxt-v41-panel .xxt-head{display:flex;align-items:center;gap:10px;cursor:grab;touch-action:none}' +
                     '#xxt-v41-panel .xxt-head:active{cursor:grabbing}' +
                     '#xxt-v41-panel .xxt-actions{align-self:flex-start;display:flex;align-items:center;gap:2px;margin-right:-6px}' +
-                    '#xxt-v41-panel .xxt-gear{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-gear{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-gear:hover,#xxt-v41-panel .xxt-gear:focus-visible,#xxt-v41-panel .xxt-gear.on{background:var(--x-accent-soft);color:var(--x-accent-strong);outline:none}' +
                     '#xxt-v41-panel .xxt-prog{margin-top:8px}' +
                     '#xxt-v41-panel .xxt-prog-track{display:flex;height:4px;border-radius:2px;background:var(--x-line);overflow:hidden}' +
@@ -3024,7 +3376,7 @@
                     '#xxt-v41-panel .xxt-set-btn{flex:1;font:inherit;font-size:12px;border:0;border-radius:7px;padding:6px 0;background:var(--x-bg);color:var(--x-text2);cursor:pointer;box-shadow:inset 0 0 0 1px var(--x-line)}' +
                     '#xxt-v41-panel .xxt-set-btn:hover,#xxt-v41-panel .xxt-set-btn:focus-visible{background:var(--x-accent-soft);color:var(--x-accent-strong);outline:none}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-prog-bar,#xxt-v41-panel .xxt-switch,#xxt-v41-panel .xxt-switch::after{transition:none}}' +
-                    '#xxt-v41-panel .xxt-power{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);cursor:pointer;padding:0}' +
+                    '#xxt-v41-panel .xxt-power{align-self:flex-start;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-top:-1px;border:0;border-radius:7px;background:transparent;color:var(--x-faint);cursor:pointer;padding:0}' +
                     '#xxt-v41-panel .xxt-power:hover,#xxt-v41-panel .xxt-power:focus-visible{background:#FEE2E2;color:#DC2626;outline:none}' +
                     '#xxt-v41-panel .xxt-power.paused{color:#16A34A}' +
                     '#xxt-v41-panel .xxt-power.paused:hover,#xxt-v41-panel .xxt-power.paused:focus-visible{background:#DCFCE7;color:#15803D}' +
@@ -3076,14 +3428,14 @@
                     '</style>' +
                     '<div data-k="body" class="xxt-body">' +
                     '<div data-k="head" class="xxt-head" aria-label="按住标题栏可拖动浮窗">' +
-                      '<div class="xxt-logo" style="width:44px;height:44px;border-radius:12px;background:var(--x-accent-softer);display:flex;align-items:center;justify-content:center;flex:none">' +
+                      '<div class="xxt-logo" style="width:40px;height:40px;border-radius:12px;background:var(--x-accent-softer);display:flex;align-items:center;justify-content:center;flex:none">' +
                         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color:var(--x-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
                           '<path d="M12 6.5C10.3 5.2 7.9 4.6 4 4.8v13.4c3.9-.2 6.3.4 8 1.7 1.7-1.3 4.1-1.9 8-1.7V4.8c-3.9-.2-6.3.4-8 1.7z"/>' +
                           '<path d="M12 6.5v13.4M7 9h2.5M7 12h2.5M14.5 9H17M14.5 12H17"/></svg>' +
                       '</div>' +
                       '<div style="flex:1;min-width:0">' +
                         '<div class="xxt-title-row" style="display:flex;align-items:center;flex-wrap:wrap;gap:2px 8px">' +
-                          '<span style="font-size:17px;font-weight:700;color:var(--x-strong);white-space:nowrap">学习通助手</span>' +
+                          '<span style="font-size:16px;font-weight:700;color:var(--x-strong);white-space:nowrap">学习通助手</span>' +
                           '<span class="xxt-ver-wrap">' +
                             `<a data-k="ver" href="${REPO_URL}" target="_blank" rel="noopener" aria-label="版本 v${VERSION}">v${VERSION}<i data-k="upd" class="xxt-upd"></i></a>` +
                             '<span class="xxt-tip" role="tooltip"><b data-k="tip1">开源 · 1668919739/xuexitongScript</b><span data-k="tip2">已是最新版本 · 点击查看源码、反馈问题</span></span>' +
@@ -3095,6 +3447,9 @@
                         '</div>' +
                       '</div>' +
                       '<div class="xxt-actions">' +
+                      '<button type="button" data-k="musicbtn" class="xxt-gear xxt-music-btn" title="唱片机" aria-label="唱片机" aria-expanded="false">' +
+                        '<svg class="xxt-vinyl" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5" stroke-linecap="round"/></svg>' +
+                      '</button>' +
                       '<button type="button" data-k="restore" class="xxt-gear" title="还原默认大小（Alt+Shift+R）" aria-label="还原默认大小" style="display:none">' +
                         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' +
                       '</button>' +
@@ -3291,6 +3646,7 @@
                 el.querySelector('[data-k="fbsend"]').addEventListener('click', () => this._sendFeedback(true));
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
                 el.querySelector('[data-k="restore"]').addEventListener('click', () => this._restoreSize(false));
+                el.querySelector('[data-k="musicbtn"]').addEventListener('click', () => this._toggleMusic());
                 for (const b of el.querySelectorAll('[data-theme-opt]')) b.addEventListener('click', () => this._setTheme(b.getAttribute('data-theme-opt')));
                 const cpick = el.querySelector('[data-k="cpick"]');
                 cpick.addEventListener('input', () => this._setCustom(cpick.value, null, false));     // 拖动取色时实时预览
@@ -3337,7 +3693,7 @@
                 this._sizeApplied = el;
                 this._applyPanelPos(el);
                 if (!this._onResize) {
-                    this._onResize = () => { if (this._panel) { this._applySize(this._panel); this._applyPanelPos(this._panel); this._fitPanel(this._panel); } };
+                    this._onResize = () => { if (this._panel) { this._applySize(this._panel); this._applyPanelPos(this._panel); this._fitPanel(this._panel); this._positionMusic(); } };
                     window.addEventListener('resize', this._onResize);
                 }
                 this._panel = el;
@@ -3389,7 +3745,7 @@
                     el.style.overflow = 'hidden';
                     const a = el.animate([from, to], { duration: 480, easing: sizeEase });
                     this._resizeAnim = a;
-                    const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } };
+                    const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } this._positionMusic(); };
                     a.onfinish = done; a.oncancel = done;
                 }
                 const after = new Set(visible());
