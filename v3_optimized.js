@@ -8,8 +8,9 @@
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
     const VERSION = '4.5.0';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
+    // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
-        { v: '4.5.0', items: [
+        { v: '4.5.0', date: '2026-10-27', note: '这一版塞的东西有点多：主题、唱片机、格式转换、拉大缩小……刷课之余也记得好好听课。用着哪里不顺手，点侧边栏的「反馈问题」告诉我，我都会看。', items: [
             '唱片机新增「格式转换」：把音频或视频（MP3、M4A、AAC、FLAC、WAV、OGG、OPUS、MP4 等）转成 MP3（128~320 kbps）或 WAV，可选采样率和声道，转完自动加入唱片机，也可下载到电脑；添加音乐时遇到放不了的文件会自动放进转换列表。全部在本机浏览器里完成，不上传文件；音乐软件的加密格式不提供转换',
             '唱片机内置 5 种环境音：轻钢琴（专注）、窗外雨声、海浪、壁炉篝火、粉红噪音，由浏览器实时合成，不用下载、没有版权问题，打开就能听；唱片机改为紧挨着侧边功能栏展开',
             '浮窗右侧边缘新增可拉出的功能栏（点小把手展开），放着不常用的功能：唱片机、更新记录、反馈问题；浮窗靠屏幕右边时自动改到左侧。唱片机：从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
@@ -18,22 +19,22 @@
             '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）；学习通页面自带的按钮样式不再影响浮窗里的按钮',
             '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住。调过大小后标题栏会出现「还原大小」按钮，也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小',
             '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
-            '设置里新增「更新记录」，可查看每个版本更新的内容',
+            '设置里新增「更新记录」，可查看每个版本更新的内容和发布日期；更新说明和更新记录里还有作者 RouteCC 的吐槽',
             '后台防卡顿（默认开启，可在设置里关闭）：页面真正转到后台时，视频改为极小音量（3%）播放，回到前台恢复静音。浏览器不会给“正在播放声音”的页面限速、冻结或暂停视频；若浏览器不允许取消静音，自动恢复静音播放',
             '运行时持有一个保活锁（Web Lock），减少页面被浏览器冻结 / 丢弃',
             '诊断信息增加后台状态：防卡顿是否生效、后台被暂停次数、保活锁、当前前后台',
             '设置面板内容较多时可以滚动，小屏幕上也能完整显示；浮窗只在比屏幕还高时才内部滚动，版本号气泡不再被遮住',
         ] },
-        { v: '4.4.3', items: [
+        { v: '4.4.3', date: '2026-10-26', items: [
             '提示音分两种：弹题、页面要求操作、登录过期等需要处理时，响急促的高低双音警示音（每 15 秒重复直到处理完）；课程完成、目标达成等普通提醒仍是柔和的两声',
         ] },
-        { v: '4.4.2', items: [
+        { v: '4.4.2', date: '2026-10-26', items: [
             '浮窗设置（齿轮）里新增「反馈问题 / 提建议」：写下问题或建议，可一键复制发给作者，或在 GitHub 打开填好的 Issue；问题反馈默认附带诊断信息（不含账号和网址参数），只在点击时生成，不会自动发送',
         ] },
-        { v: '4.4.1', items: [
+        { v: '4.4.1', date: '2026-10-26', items: [
             '关闭学习助手时，状态框里重新显示课程进度和预计剩余时间；打开学习助手时显示在「课程」页',
         ] },
-        { v: '4.4.0', items: [
+        { v: '4.4.0', date: '2026-10-26', note: '浮窗终于长得像个学习工具了，不再是一个冷冰冰的状态框。', items: [
             '浮窗新增「学习助手」总开关（状态框下方），打开后分「今天 / 课程 / 记录」三个标签页，关闭则只保留一行学习时长',
             '  今天：今日目标进度环（30 / 60 / 90 / 120 分钟可选）、本节笔记（自动保存在本机）',
             '  课程：课程进度环与剩余时间、待手动完成的测验 / 讨论清单、按章节整理的笔记，可一键复制全部笔记',
@@ -50,10 +51,10 @@
             '默认倍速改为 2x（已经手动选过倍速的保持原选择；课程限制倍速时自动按页面允许的速度播放）',
             '弹题、页面要求操作、登录过期等需要处理时，提示音每 15 秒重复一次，直到处理完',
         ] },
-        { v: '4.3.1', items: [
+        { v: '4.3.1', date: '2026-10-26', note: 'GitHub 在国内实在太慢，干脆全换成 jsDelivr，更新再也不卡。', items: [
             '油猴版的安装和自动更新改为走 jsDelivr（国内 CDN），不再依赖 GitHub，避免访问超时导致更新失败',
         ] },
-        { v: '4.3.0', items: [
+        { v: '4.3.0', date: '2026-10-26', items: [
             '课程总进度：浮窗显示已完成 / 总小节数和进度条，并根据看过的视频时长估算剩余时间',
             '看完视频但还剩章节测验、讨论等手动任务的小节，单独统计为“需手动完成”（进度条橙色段，鼠标悬停可看清单），不计入剩余时间；手动补完后自动移出',
             '设置面板（浮窗右上角齿轮）：自动更新、自动打开直播回放、静音播放、提示音、系统通知，设置会被记住',
@@ -66,36 +67,36 @@
             '课程列表页总览：在学习通“课程”页显示共几门课、已完成 / 进行中，列出最多 15 门进行中的课程（超出部分可滚动查看），一键“继续上次的课程”',
             '控制台版使用一段时间后，提示可改用油猴版（打开课程自动运行、自动更新），可关闭且不再出现',
         ] },
-        { v: '4.2.8', items: [
+        { v: '4.2.8', date: '2026-10-26', items: [
             '页面在后台导致脚本变慢时，回到前台后浮窗给出提示',
             '静默更新或油猴更新后，浮窗短暂显示这一版的更新说明',
             '版本号气泡增加“反馈问题”提示',
         ] },
-        { v: '4.2.7', items: [
+        { v: '4.2.7', date: '2026-10-25', items: [
             '课程页自动打开未完成的直播回放（一次一个），被浏览器拦截时显示“打开直播回放”按钮',
             '课程页浮窗显示直播回放完成情况',
             '回放页正确识别播放器的进度消息，浮窗显示观看进度',
             '回放页手动停止时显示“已停止”',
         ] },
-        { v: '4.2.6', items: [
+        { v: '4.2.6', date: '2026-10-25', items: [
             '浮窗右上角一键停止 / 继续',
             '浮窗淡入上浮出场动画',
         ] },
-        { v: '4.2.5', items: [
+        { v: '4.2.5', date: '2026-10-25', items: [
             '静默更新改为直接获取新版代码，不依赖版本标签',
         ] },
-        { v: '4.2.4', items: [
+        { v: '4.2.4', date: '2026-10-25', items: [
             '版本号显示与悬停气泡，点击打开仓库',
             '发现新版本时版本号变黄，在两个小节之间自动静默更新',
             '倍速选择（1x / 1.25x / 1.5x / 2x），点击“倍速”展开，记住选择',
             '油猴版指定从 GitHub 检查更新',
         ] },
-        { v: '4.2.0–v4.2.3', items: [
+        { v: '4.2.0–v4.2.3', date: '2026-10-24', items: [
             'PPT 课件自动翻看、点进即完成的资料页自动跳过',
             '直播回放保活，适配跨域播放器',
             '浮窗显示当前章节进度',
         ] },
-        { v: '4.1.x', items: [
+        { v: '4.1.x', date: '2026-10-24', note: '一切的起点：视频老是卡住、暂停又播放，被逼得自己动手改。', items: [
             '状态浮窗（白色卡片样式），显示播放状态、进度、倍速',
             '修复视频卡住、“暂停-播放”反复拉扯、重复跳节等问题（已提交原仓库 PR #76）',
         ] },
@@ -1612,12 +1613,18 @@
                 el.querySelector('[data-k="wnlist"]').innerHTML =
                     (shown.length ? shown.map((t) => `<li>${esc(t)}</li>`).join('') : '<li>修复了一些问题，体验更稳定</li>') +
                     (items.length > shown.length ? `<li class="xxt-wn-more">还有 ${items.length - shown.length} 项改进</li>` : '');
+                const latest = wn.entries[0];
+                const note = el.querySelector('[data-k="wnnote"]');
+                note.style.display = latest && latest.note ? 'block' : 'none';
+                if (latest && latest.note) note.innerHTML = `<b>💬 RouteCC 吐槽</b>${esc(latest.note)}`;
+                el.querySelector('[data-k="wndate"]').textContent = latest && latest.date ? latest.date.replace(/^\d{4}-0?(\d+)-0?(\d+)$/, '$1月$2日') + '更新' : '';
             },
             _renderHistory(el) {
                 const esc = (t) => this._esc(t);
                 el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
-                    `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}</div><ul>` +
-                    e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul></div>').join('');
+                    `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
+                    e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
+                    (e.note ? `<div class="xxt-hv-note"><b>💬 RouteCC 吐槽</b>${esc(e.note)}</div>` : '') + '</div>').join('');
             },
             _startUpdateCheck() {
                 this._checkUpdate();
@@ -3845,6 +3852,11 @@
                     '#xxt-v41-panel .xxt-hv-head{display:flex;align-items:center;gap:6px}' +
                     '#xxt-v41-panel .xxt-hv-head b{font-size:13px;color:var(--x-strong);font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-hv-head span{font-size:10px;font-weight:600;color:var(--x-accent-strong);background:var(--x-accent-soft);border-radius:5px;padding:0 6px}' +
+                    '#xxt-v41-panel .xxt-hv-head time{margin-left:auto;font-size:11px;color:var(--x-faint);font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-wn-date{font-size:11px;color:var(--x-muted);font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-panel .xxt-wn-note,#xxt-v41-panel .xxt-hv-note{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--x-bg);box-shadow:inset 3px 0 0 var(--x-accent);font-size:12px;line-height:1.6;color:var(--x-text2)}' +
+                    '#xxt-v41-panel .xxt-hv-note{background:var(--x-soft2)}' +
+                    '#xxt-v41-panel .xxt-wn-note b,#xxt-v41-panel .xxt-hv-note b{display:block;margin-bottom:2px;font-size:11px;font-weight:600;color:var(--x-accent-strong)}' +
                     '#xxt-v41-panel .xxt-hv li.sub{list-style:circle;margin-left:14px;color:var(--x-muted)}' +
                     '#xxt-v41-panel .xxt-fb-head{display:flex;align-items:center;margin-bottom:8px}' +
                     '#xxt-v41-panel .xxt-fb-head b{flex:1;font-size:13px;color:var(--x-strong)}' +
@@ -3996,8 +4008,9 @@
                       '<div data-k="prog" class="xxt-prog" style="display:none"><div class="xxt-prog-track"><div data-k="progbar" class="xxt-prog-bar"></div><div data-k="progman" class="xxt-prog-man"></div></div><div data-k="progtext" class="xxt-prog-text"></div></div>' +
                     '</div>' +
                     '<div data-k="whatsnew" class="xxt-wn" style="display:none">' +
-                      '<div class="xxt-wn-head"><b data-k="wntitle"></b><button type="button" data-k="wnx" class="xxt-notice-x" aria-label="关闭更新说明">×</button></div>' +
+                      '<div class="xxt-wn-head"><b data-k="wntitle"></b><small data-k="wndate" class="xxt-wn-date"></small><button type="button" data-k="wnx" class="xxt-notice-x" aria-label="关闭更新说明">×</button></div>' +
                       '<ul data-k="wnlist"></ul>' +
+                      '<div data-k="wnnote" class="xxt-wn-note" style="display:none"></div>' +
                       '<button type="button" data-k="wnall" class="xxt-wn-all">查看全部更新记录 ›</button>' +
                     '</div>' +
                     '<button type="button" data-k="assist" class="xxt-assist" role="switch" aria-checked="true">' +
