@@ -30,6 +30,7 @@
     const CHANGELOG = [
         { v: '4.5.0', items: [
             '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
+            '进度条里“需手动完成”的一段改为斜纹，并和“已完成”之间留一道缝；自定义主色接近橙色或黄色时，这一段自动换成紫色，不会混在一起',
             '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）',
             '浮窗可以拖动四边和四角自由放大缩小（最大可铺满整个页面），适合开启学习助手当作学习页面，或用来遮住页面上不想被看到的位置；大小会被记住。调过大小后标题栏会出现「还原大小」按钮，也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小',
             '更新后浮窗显示这次更新了什么（跨多个版本时一并列出），关掉之前刷新页面也会一直显示',
@@ -277,6 +278,16 @@
         ];
         const THEME_SWATCH = { auto: 'linear-gradient(135deg,#fff 0 50%,#1E232B 50%)', custom: 'conic-gradient(#EF4444,#F59E0B,#10B981,#3B82F6,#8B5CF6,#EC4899,#EF4444)' };
         // 自定义主色上用白字还是深色字：按亮度自动选择，保证看得清
+        // 自定义主色接近橙 / 黄时，“需手动完成”改用紫色，避免和主色混在一起
+        const manualFor = (hex) => {
+            const n = parseInt(String(hex).slice(1), 16);
+            const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+            if (d < 0.12) return '#F5A524';                       // 灰色系：保持橙色
+            let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+            h = (h * 60 + 360) % 360;
+            return h >= 10 && h <= 65 ? '#8B5CF6' : '#F5A524';
+        };
         const onAccent = (hex) => {
             const n = parseInt(String(hex).slice(1), 16);
             const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
@@ -2265,9 +2276,11 @@
                 if (custom) {
                     el.style.setProperty('--x-c', C.customColor);
                     el.style.setProperty('--x-on-accent', onAccent(C.customColor));
+                    el.style.setProperty('--x-manual', manualFor(C.customColor));
                 } else {
                     el.style.removeProperty('--x-c');
                     el.style.removeProperty('--x-on-accent');
+                    el.style.removeProperty('--x-manual');
                 }
             },
             _setCustom(color, base, save) {
@@ -2684,6 +2697,8 @@
                 if (prog) {
                     q('progbar').style.width = prog.pct + '%';
                     q('progman').style.width = prog.manualPct + '%';
+                    // 两段之间留一道缝，即使颜色相近也能分清“已完成”和“需手动完成”
+                    q('progman').style.marginLeft = prog.manualPct > 0 && prog.pct > 0 ? '2px' : '0';
                     q('progtext').textContent = prog.text;
                     // 打开学习助手时，进度和剩余时间显示在「课程」页里；关闭时显示在状态框里
                     q('progtext').style.display = C.assistMode ? 'none' : 'block';
@@ -2832,7 +2847,7 @@
                 ].join(';');
                 el.innerHTML =
                     '<style>' +
-                    '#xxt-v41-panel{--x-bg:#fff;--x-fg:#1F2937;--x-strong:#111827;--x-text2:#374151;--x-muted:#6B7280;--x-faint:#9CA3AF;--x-soft:#F6F8FB;--x-soft2:#F1F3F6;--x-line:#E5E9F0;--x-line-strong:#CBD2DC;--x-input:#FBFCFD;--x-switch-off:#D1D5DB;--x-accent:#3B82F6;--x-accent-strong:#2563EB;--x-accent-soft:#E3ECFD;--x-accent-softer:#EEF4FF;--x-accent-ring:#93C5FD;--x-accent-text:#1D4ED8;--x-box-line:#A7C7F2;--x-on-accent:#fff;transition:background-color .35s ease,color .35s ease}' +
+                    '#xxt-v41-panel{--x-bg:#fff;--x-fg:#1F2937;--x-strong:#111827;--x-text2:#374151;--x-muted:#6B7280;--x-faint:#9CA3AF;--x-soft:#F6F8FB;--x-soft2:#F1F3F6;--x-line:#E5E9F0;--x-line-strong:#CBD2DC;--x-input:#FBFCFD;--x-switch-off:#D1D5DB;--x-accent:#3B82F6;--x-accent-strong:#2563EB;--x-accent-soft:#E3ECFD;--x-accent-softer:#EEF4FF;--x-accent-ring:#93C5FD;--x-accent-text:#1D4ED8;--x-box-line:#A7C7F2;--x-on-accent:#fff;--x-manual:#F5A524;transition:background-color .35s ease,color .35s ease}' +
                     '#xxt-v41-panel[data-theme="mint"]{--x-soft:#F4FAF7;--x-soft2:#EDF5F1;--x-line:#DDEBE4;--x-accent:#10B981;--x-accent-strong:#059669;--x-accent-soft:#D1FAE5;--x-accent-softer:#ECFDF5;--x-accent-ring:#6EE7B7;--x-accent-text:#047857;--x-box-line:#A7E3CC}' +
                     '#xxt-v41-panel[data-theme="sakura"]{--x-soft:#FCF6F9;--x-soft2:#F7EEF3;--x-line:#F0DDE7;--x-accent:#EC4899;--x-accent-strong:#DB2777;--x-accent-soft:#FCE7F3;--x-accent-softer:#FDF2F8;--x-accent-ring:#F9A8D4;--x-accent-text:#BE185D;--x-box-line:#F5B8D5}' +
                     '#xxt-v41-panel[data-theme="violet"]{--x-soft:#F8F7FD;--x-soft2:#F1EFFA;--x-line:#E4E0F3;--x-accent:#8B5CF6;--x-accent-strong:#7C3AED;--x-accent-soft:#EDE9FE;--x-accent-softer:#F5F3FF;--x-accent-ring:#C4B5FD;--x-accent-text:#6D28D9;--x-box-line:#CDBEF8}' +
@@ -2930,7 +2945,7 @@
                     '#xxt-v41-panel .xxt-note::placeholder{color:var(--x-faint)}' +
                     '#xxt-v41-panel .xxt-todo{display:flex;flex-direction:column;gap:4px}' +
                     '#xxt-v41-panel .xxt-todo div{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--x-text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-                    '#xxt-v41-panel .xxt-todo i{flex:none;width:11px;height:11px;border-radius:3px;border:1.5px solid #F5A524}' +
+                    '#xxt-v41-panel .xxt-todo i{flex:none;width:11px;height:11px;border-radius:3px;border:1.5px solid var(--x-manual)}' +
                     '#xxt-v41-panel .xxt-todo .xxt-more{color:var(--x-faint);padding-left:19px}' +
                     '#xxt-v41-panel .xxt-nlist{display:flex;flex-direction:column;gap:6px}' +
                     '#xxt-v41-panel .xxt-nitem{padding:7px 10px;border-radius:9px;background:var(--x-soft)}' +
@@ -2985,7 +3000,7 @@
                     '#xxt-v41-panel .xxt-gear:hover,#xxt-v41-panel .xxt-gear:focus-visible,#xxt-v41-panel .xxt-gear.on{background:var(--x-accent-soft);color:var(--x-accent-strong);outline:none}' +
                     '#xxt-v41-panel .xxt-prog{margin-top:8px}' +
                     '#xxt-v41-panel .xxt-prog-track{display:flex;height:4px;border-radius:2px;background:var(--x-line);overflow:hidden}' +
-                    '#xxt-v41-panel .xxt-prog-man{height:100%;background:#F5A524;transition:width .4s ease}' +
+                    '#xxt-v41-panel .xxt-prog-man{height:100%;background:repeating-linear-gradient(-45deg,var(--x-manual) 0 3px,color-mix(in srgb,var(--x-manual) 55%,#fff) 3px 6px);transition:width .4s ease,margin .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-bar{height:100%;background:var(--x-accent);transition:width .4s ease}' +
                     '#xxt-v41-panel .xxt-prog-text{margin-top:4px;font-size:12px;color:var(--x-muted);font-variant-numeric:tabular-nums}' +
                     '#xxt-v41-panel .xxt-courses{margin-top:0}' +

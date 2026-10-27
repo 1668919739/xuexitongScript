@@ -878,6 +878,28 @@ test('自定义主题：调色盘自由选主色、可选浅色或深色底，�
     await ctx.close();
 });
 
+test('自定义主色接近橙色时，“需手动完成”进度段换成紫色并带斜纹，和已完成分得清', async (b) => {
+    const page = coursePage({ nodes: ['1.1 a', '1.2 b', '1.3 c', '1.4 d'], active: 2, marks: ['done', 1, 2, 2] });
+    const ctx = await newContext(b, { routes: { '*': page } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy?courseId=321');
+    await p.evaluate(() => {
+        localStorage.setItem('xxt-v41-manual-321', JSON.stringify(['1.2 b']));
+        localStorage.setItem('xxt-v41-settings', JSON.stringify({ theme: 'custom', customColor: '#f97316', customBase: 'light' }));
+    });
+    await addFakeVideo(p);
+    await inject(p); await sleep(6500);
+    const r = await p.evaluate(() => {
+        const m = document.querySelector('#xxt-v41-panel [data-k=progman]'), bar = document.querySelector('#xxt-v41-panel [data-k=progbar]');
+        const el = document.getElementById('xxt-v41-panel');
+        return { manual: el.style.getPropertyValue('--x-manual'), gap: m.style.marginLeft, w: m.offsetWidth, bw: bar.offsetWidth, bg: getComputedStyle(m).backgroundImage };
+    });
+    assert(r.manual === '#8B5CF6' && r.gap === '2px' && r.w > 0 && r.bw > 0 && /repeating-linear-gradient/.test(r.bg), `进度条分不清：${JSON.stringify(r)}`);
+    await p.evaluate(() => app._setCustom('#3b82f6', null, true)); await sleep(300);
+    assert(await p.evaluate(() => document.getElementById('xxt-v41-panel').style.getPropertyValue('--x-manual')) === '#F5A524', '蓝色主色时应保持橙色');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
