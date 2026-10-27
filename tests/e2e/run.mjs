@@ -221,7 +221,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     const info = await panelInfo(p);
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
-    assert(/浮窗可以拖动四边/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    assert(/浮窗主题/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -795,6 +795,49 @@ test('一键还原：调过大小后标题栏出现还原按钮；快捷键 Alt+
     await p.keyboard.press('Alt+Shift+KeyR'); await sleep(900);
     const r2 = await rect();
     assert(Math.abs(r2.w - 324) < 2 && Math.abs(r2.x - 20) < 2 && Math.abs(r2.y + r2.h - 880) < 2, `快捷键没有恢复默认：${JSON.stringify(r2)}`);
+    await ctx.close();
+});
+
+test('浮窗拉窄时标题栏按钮不和版本号重叠', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await p.evaluate(() => localStorage.setItem('xxt-v41-panel-size', JSON.stringify({ w: 300, h: 400 })));
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const r = await p.evaluate(() => {
+        const q = (k) => document.querySelector(`#xxt-v41-panel [data-k=${k}]`).getBoundingClientRect();
+        const v = q('ver'), act = document.querySelector('#xxt-v41-panel .xxt-actions').getBoundingClientRect(), rs = q('restore');
+        return { overlap: v.right > act.left + 1 && v.bottom > act.top && v.top < act.bottom, restore: rs.width > 0, v: [v.left, v.right], a: [act.left, act.right] };
+    });
+    assert(r.restore && !r.overlap, `版本号和按钮重叠：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
+test('浮窗主题：可切换多种配色并记住，跟随系统时随系统深浅色变化', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const cur = () => p.evaluate(() => { const el = document.getElementById('xxt-v41-panel'); const cs = getComputedStyle(el); return { theme: el.getAttribute('data-theme'), bg: cs.backgroundColor, accent: cs.getPropertyValue('--x-accent').trim() }; });
+    assert((await cur()).theme === 'light', '默认应是清爽蓝');
+    await p.click('[data-k=gear]'); await sleep(300);
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-panel [data-theme-opt]').length) === 7, '主题数量不对');
+    await p.click('#xxt-v41-panel [data-theme-opt=sakura]'); await sleep(300);
+    let c = await cur();
+    assert(c.theme === 'sakura' && c.accent === '#EC4899', `切换樱花粉失败：${JSON.stringify(c)}`);
+    await p.click('#xxt-v41-panel [data-theme-opt=dark]'); await sleep(600);
+    c = await cur();
+    assert(c.theme === 'dark' && c.bg === 'rgb(30, 35, 43)', `夜间主题不对：${JSON.stringify(c)}`);
+    assert(await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).theme) === 'dark', '主题没有保存');
+    await p.click('#xxt-v41-panel [data-theme-opt=auto]'); await sleep(300);
+    await p.emulateMedia({ colorScheme: 'dark' }); await sleep(300);
+    assert((await cur()).theme === 'dark', '跟随系统：系统深色时应为夜间');
+    await p.emulateMedia({ colorScheme: 'light' }); await sleep(300);
+    assert((await cur()).theme === 'light', '跟随系统：系统浅色时应为清爽蓝');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
+    assert(await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).theme) === 'auto', '刷新后主题设置丢失');
     await ctx.close();
 });
 
