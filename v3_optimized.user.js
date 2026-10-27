@@ -29,6 +29,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
+            '唱片机新增「格式转换」：把音频或视频（MP3、M4A、AAC、FLAC、WAV、OGG、OPUS、MP4 等）转成 MP3（128~320 kbps）或 WAV，可选采样率和声道，转完自动加入唱片机，也可下载到电脑；添加音乐时遇到放不了的文件会自动放进转换列表。全部在本机浏览器里完成，不上传文件；音乐软件的加密格式不提供转换',
             '唱片机内置 5 种环境音：轻钢琴（专注）、窗外雨声、海浪、壁炉篝火、粉红噪音，由浏览器实时合成，不用下载、没有版权问题，打开就能听；唱片机改为紧挨着侧边功能栏展开',
             '浮窗右侧边缘新增可拉出的功能栏（点小把手展开），放着不常用的功能：唱片机、更新记录、反馈问题；浮窗靠屏幕右边时自动改到左侧。唱片机：从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
             '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
@@ -2619,17 +2620,184 @@
                 }
                 this._renderMusic();
             },
-            async _musicAdd(files) {
+            async _musicAdd(files, fromConv) {
                 let n = 0;
+                const probe = document.createElement('audio');
+                const extType = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg; codecs=opus', wav: 'audio/wav', flac: 'audio/flac', webm: 'audio/webm' };
+                const needConv = [];
                 for (const f of files) {
-                    if (!f || !/^audio\//.test(f.type || '') && !/\.(mp3|m4a|aac|ogg|oga|wav|flac|webm|opus)$/i.test(f.name || '')) continue;
+                    if (!f) continue;
+                    const ext = ((f.name || '').match(/\.([^.]+)$/) || [])[1] || '';
+                    const type = /^audio\//.test(f.type || '') ? f.type : extType[ext.toLowerCase()] || '';
+                    // 视频文件、浏览器放不了的格式：交给格式转换
+                    if (!fromConv && (/^video\//.test(f.type || '') || !type || !probe.canPlayType(type))) { needConv.push(f); continue; }
                     const t = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), name: (f.name || '未命名').replace(/\.[^.]+$/, ''), blob: f, added: Date.now() + n };
                     try { await this._musicStore('readwrite', (s) => s.put(t)); n++; } catch (e) { log('唱片机：保存失败（可能是浏览器存储空间不足）', '#FF9800', 'warn'); }
                 }
                 if (n) log(`唱片机：添加了 ${n} 首音乐`, '#2196F3');
                 await this._musicLoad();
                 if (n && !this._curTrack && this._tracks.length) this._musicPlay(this._tracks[this._tracks.length - n].id);
+                if (needConv.length) this._convQueue(needConv, `有 ${needConv.length} 个文件不能直接播放（视频或特殊格式），已放进下面的列表，点「开始转换」转成 MP3 后会自动加入唱片机`);
             },
+            // ================= 唱片机 · 音频格式转换 =================
+            // 全部在本机浏览器里完成：用浏览器自带的解码器读出声音，再编码成 MP3（lamejs）或 WAV，不上传任何文件。
+            // 音乐软件的加密格式（如 .ncm / .qmc / .kgm）属于版权保护，不提供转换。
+            _convOpts() {
+                const d = { fmt: 'mp3', br: 192, sr: 44100, ch: 0, add: true, dl: false };
+                try { return Object.assign(d, JSON.parse(localStorage.getItem('xxt-v41-conv') || '{}')); } catch (e) { return d; }
+            },
+            _convSaveOpts(o) { try { localStorage.setItem('xxt-v41-conv', JSON.stringify(o)); } catch (e) { /* ignore */ } },
+            _convQueue(files, hint) {
+                this._convQ = this._convQ || [];
+                for (const f of files) {
+                    if (!f) continue;
+                    this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'wait', pct: 0, msg: '' });
+                }
+                this._convHint = hint || '';
+                this._convOpen = true;
+                this._renderConv();
+            },
+            async _loadLame() {
+                if (window.lamejs && window.lamejs.Mp3Encoder) return window.lamejs;
+                if (!this._lameP) {
+                    this._lameP = (async () => {
+                        for (const url of ['https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js', 'https://unpkg.com/lamejs@1.2.1/lame.min.js']) {
+                            try {
+                                await new Promise((res, rej) => {
+                                    const sc = document.createElement('script');
+                                    sc.src = url; sc.async = true;
+                                    sc.onload = res; sc.onerror = () => rej(new Error('load'));
+                                    (document.head || document.documentElement).appendChild(sc);
+                                });
+                                if (window.lamejs && window.lamejs.Mp3Encoder) return window.lamejs;
+                            } catch (e) { /* 换下一个地址 */ }
+                        }
+                        throw new Error('MP3 编码组件下载失败，请检查网络，或改用 WAV 格式');
+                    })();
+                    this._lameP.catch(() => { this._lameP = null; });
+                }
+                return this._lameP;
+            },
+            // 不受后台限速影响的让步，转换长音频时界面不卡
+            _yield() { return new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); }); },
+            async _convOne(it, o) {
+                if (/\.(ncm|qmc\d*|qmcflac|qmcogg|mflac\d*|mgg\d*|kgm|kgma|vpr|kwm|tkm|bkcmp3|bkcflac|xm|mmp4)$/i.test(it.name)) {
+                    const e = new Error('音乐软件的加密格式，受版权保护，无法转换。请在原音乐软件里导出或下载普通格式'); e.drm = true; throw e;
+                }
+                it.msg = '读取中…'; this._renderConv();
+                const data = await it.file.arrayBuffer();
+                if (this._convAbort) throw new Error('已停止');
+                it.msg = '解码中…'; this._renderConv();
+                const rate = [48000, 44100, 32000, 22050].includes(Number(o.sr)) ? Number(o.sr) : 44100;
+                const OCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+                let audio;
+                try { audio = await new OCtx(2, 1, rate).decodeAudioData(data); }
+                catch (e) { throw new Error('浏览器无法解码这个文件（WMA、APE、AMR 等格式暂不支持），可以先用其他软件转成 MP3'); }
+                const ch = Number(o.ch) === 1 ? 1 : Number(o.ch) === 2 ? 2 : Math.min(2, audio.numberOfChannels);
+                const L = audio.getChannelData(0), R = audio.numberOfChannels > 1 ? audio.getChannelData(1) : L;
+                const len = audio.length;
+                const toI16 = (x) => (x < -1 ? -32768 : x > 1 ? 32767 : (x < 0 ? x * 32768 : x * 32767) | 0);
+                const base = it.name.replace(/\.[^.]+$/, '') || '未命名';
+                if (o.fmt === 'wav') {
+                    const out = new DataView(new ArrayBuffer(44 + len * ch * 2));
+                    const w = (p, s) => { for (let i = 0; i < s.length; i++) out.setUint8(p + i, s.charCodeAt(i)); };
+                    w(0, 'RIFF'); out.setUint32(4, 36 + len * ch * 2, true); w(8, 'WAVEfmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true);
+                    out.setUint16(22, ch, true); out.setUint32(24, rate, true); out.setUint32(28, rate * ch * 2, true); out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true);
+                    w(36, 'data'); out.setUint32(40, len * ch * 2, true);
+                    let p = 44;
+                    for (let i = 0; i < len; i++) {
+                        if (ch === 1) { out.setInt16(p, toI16((L[i] + R[i]) / 2), true); p += 2; }
+                        else { out.setInt16(p, toI16(L[i]), true); out.setInt16(p + 2, toI16(R[i]), true); p += 4; }
+                        if ((i & 0x3ffff) === 0) { it.pct = Math.round((i / len) * 100); this._renderConv(); await this._yield(); if (this._convAbort) throw new Error('已停止'); }
+                    }
+                    return new File([out.buffer], base + '.wav', { type: 'audio/wav' });
+                }
+                it.msg = '准备编码…'; this._renderConv();
+                const lame = await this._loadLame();
+                const br = [128, 192, 256, 320].includes(Number(o.br)) ? Number(o.br) : 192;
+                const enc = new lame.Mp3Encoder(ch, rate, br);
+                const block = 1152 * 20, parts = [];
+                const l16 = new Int16Array(block), r16 = new Int16Array(block);
+                for (let i = 0; i < len; i += block) {
+                    const n = Math.min(block, len - i);
+                    for (let k = 0; k < n; k++) {
+                        if (ch === 1) l16[k] = toI16((L[i + k] + R[i + k]) / 2);
+                        else { l16[k] = toI16(L[i + k]); r16[k] = toI16(R[i + k]); }
+                    }
+                    const mp3 = ch === 1 ? enc.encodeBuffer(l16.subarray(0, n)) : enc.encodeBuffer(l16.subarray(0, n), r16.subarray(0, n));
+                    if (mp3.length) parts.push(new Uint8Array(mp3));
+                    it.pct = Math.round(((i + n) / len) * 100);
+                    if ((i / block) % 8 === 0) { this._renderConv(); await this._yield(); if (this._convAbort) throw new Error('已停止'); }
+                }
+                const end = enc.flush();
+                if (end.length) parts.push(new Uint8Array(end));
+                return new File(parts, base + '.mp3', { type: 'audio/mpeg' });
+            },
+            async _convRun() {
+                if (this._convRunning) return;
+                const q = (this._convQ || []).filter((x) => x.status === 'wait' || x.status === 'fail');
+                if (!q.length) return;
+                const o = this._convOpts();
+                this._convRunning = true; this._convAbort = false;
+                this._renderConv();
+                const added = [];
+                for (const it of q) {
+                    if (this._convAbort) break;
+                    it.status = 'run'; it.pct = 0; it.msg = '';
+                    this._renderConv();
+                    try {
+                        const out = await this._convOne(it, o);
+                        it.status = 'done'; it.pct = 100;
+                        it.msg = `已转成 ${out.name.split('.').pop().toUpperCase()} · ${(out.size / 1048576).toFixed(1)} MB`;
+                        if (o.add) added.push(out);
+                        if (o.dl) {
+                            const url = URL.createObjectURL(out), a = document.createElement('a');
+                            a.href = url; a.download = out.name; a.style.display = 'none';
+                            document.body.appendChild(a); a.click(); a.remove();
+                            setTimeout(() => URL.revokeObjectURL(url), 60000);
+                        }
+                        log(`格式转换：${it.name} → ${out.name}`, '#2196F3');
+                    } catch (e) {
+                        it.status = e.drm ? 'drm' : (this._convAbort ? 'wait' : 'fail');
+                        it.msg = this._convAbort ? '' : (e && e.message) || '转换失败';
+                        it.pct = 0;
+                    }
+                    this._renderConv();
+                }
+                this._convRunning = false;
+                if (added.length) await this._musicAdd(added, true);
+                this._renderConv();
+            },
+            _renderConv() {
+                const d = this._musicEl;
+                if (!d) return;
+                const q = (k) => d.querySelector(`[data-m="${k}"]`);
+                d.classList.toggle('conv', !!this._convOpen);
+                if (!this._convOpen) return;
+                const esc = (t) => this._esc(t);
+                const list = this._convQ || [];
+                const label = { wait: '等待转换', run: '转换中', done: '完成', fail: '失败', drm: '无法转换' };
+                q('convhint').textContent = this._convHint || '';
+                q('convhint').style.display = this._convHint ? 'block' : 'none';
+                q('convlist').innerHTML = list.length ? list.map((it) =>
+                    `<div class="xm-cq-item ${it.status}"><div class="xm-cq-top"><span class="xm-cq-name" title="${esc(it.name)}">${esc(it.name)}</span>` +
+                    `<span class="xm-cq-st">${it.status === 'run' ? (it.pct ? it.pct + '%' : esc(it.msg || '转换中')) : label[it.status]}</span>` +
+                    (it.status === 'run' ? '' : `<button type="button" class="xm-del" data-cdel="${it.id}" aria-label="移除">×</button>`) + '</div>' +
+                    (it.status === 'run' ? `<i class="xm-cq-bar"><b style="width:${it.pct}%"></b></i>` : '') +
+                    (it.msg && it.status !== 'run' ? `<div class="xm-cq-msg">${esc(it.msg)}</div>` : '') + '</div>').join('')
+                    : '<div class="xm-empty">还没有文件</div>';
+                const o = this._convOpts();
+                for (const [k, v] of [['cfmt', o.fmt], ['cbr', o.br], ['csr', o.sr], ['cch', o.ch]]) { const el = q(k); if (document.activeElement !== el) el.value = String(v); }
+                q('cbr').disabled = o.fmt !== 'mp3';
+                q('cadd').checked = !!o.add; q('cdl').checked = !!o.dl;
+                const running = !!this._convRunning;
+                q('cstart').disabled = running || !list.some((x) => x.status === 'wait' || x.status === 'fail');
+                q('cstart').textContent = running ? '转换中…' : '开始转换';
+                q('cstop').disabled = !running;
+                q('cclear').disabled = running || !list.length;
+            },
+
+
             async _musicRemove(id) {
                 if (String(id).startsWith('gen:')) return;
                 if (this._curTrack === id) { this._musicStop(); }
@@ -2946,6 +3114,42 @@
                     '#xxt-v41-music.playing .xm-eq i{animation-play-state:running}' +
                     '@keyframes xm-eq{0%,100%{height:3px}50%{height:12px}}' +
                     '#xxt-v41-music .xm-empty{padding:6px 8px 4px;color:#7D726D;font-size:12px;line-height:1.6}' +
+                    '#xxt-v41-music .xm-add-row{display:flex;gap:8px}' +
+                    '#xxt-v41-music .xm-add-row .xm-add{flex:1}' +
+                    '#xxt-v41-music .xm-add-row .xm-conv-btn{flex:none;width:auto;padding:8px 12px}' +
+                    '#xxt-v41-music .xm-conv{display:none;flex-direction:column;gap:8px;min-height:0}' +
+                    '#xxt-v41-music.conv .xm-conv{display:flex}' +
+                    '#xxt-v41-music.conv .xm-deck,#xxt-v41-music.conv .xm-now,#xxt-v41-music.conv [data-m=seek],#xxt-v41-music.conv .xm-ctrls,#xxt-v41-music.conv .xm-vol,#xxt-v41-music.conv .xm-list,#xxt-v41-music.conv .xm-add-row,#xxt-v41-music.conv > .xm-hint{display:none}' +
+                    '#xxt-v41-music .xm-conv-head{display:flex;align-items:center;margin-top:10px}' +
+                    '#xxt-v41-music .xm-conv-head b{flex:1;font-size:13px}' +
+                    '#xxt-v41-music .xm-back{font-size:12px}' +
+                    '#xxt-v41-music .xm-conv-hint{padding:8px 10px;border-radius:9px;background:rgba(232,168,124,.14);color:#F3D3BC;font-size:12px;line-height:1.5}' +
+                    '#xxt-v41-music .xm-drop{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;padding:16px 10px;border:1px dashed rgba(255,255,255,.25)!important;border-radius:12px;background:rgba(255,255,255,.03);color:#EDE6E2;font-size:13px;font-weight:600;text-align:center}' +
+                    '#xxt-v41-music .xm-drop small{font-size:11px;font-weight:400;color:#A89D98;line-height:1.5}' +
+                    '#xxt-v41-music .xm-drop:hover,#xxt-v41-music .xm-drop:focus-visible,#xxt-v41-music.drag .xm-drop{border-color:var(--xm-accent,#E8A87C)!important;background:rgba(255,255,255,.06);outline:none}' +
+                    '#xxt-v41-music .xm-cq{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}' +
+                    '#xxt-v41-music .xm-cq-item{padding:7px 9px;border-radius:9px;background:rgba(255,255,255,.05)}' +
+                    '#xxt-v41-music .xm-cq-top{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-music .xm-cq-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}' +
+                    '#xxt-v41-music .xm-cq-st{flex:none;font-size:11px;color:#A89D98;font-variant-numeric:tabular-nums}' +
+                    '#xxt-v41-music .xm-cq-item.done .xm-cq-st{color:#86EFAC}#xxt-v41-music .xm-cq-item.fail .xm-cq-st,#xxt-v41-music .xm-cq-item.drm .xm-cq-st{color:#FCA5A5}' +
+                    '#xxt-v41-music .xm-cq-item .xm-del{opacity:.7}' +
+                    '#xxt-v41-music .xm-cq-msg{margin-top:3px;font-size:11px;color:#A89D98;line-height:1.5}' +
+                    '#xxt-v41-music .xm-cq-bar{display:block;height:3px;margin-top:6px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}' +
+                    '#xxt-v41-music .xm-cq-bar b{display:block;height:100%;background:var(--xm-accent,#E8A87C);transition:width .2s}' +
+                    '#xxt-v41-music .xm-cset{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px}' +
+                    '#xxt-v41-music .xm-cset label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#A89D98}' +
+                    '#xxt-v41-music .xm-cset select{width:100%;height:28px;padding:0 6px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#241E1C;color:#EDE6E2;font:inherit;font-size:12px}' +
+                    '#xxt-v41-music .xm-cset select:disabled{opacity:.45}' +
+                    '#xxt-v41-music .xm-cset select:focus-visible{outline:2px solid var(--xm-accent,#E8A87C);outline-offset:1px}' +
+                    '#xxt-v41-music .xm-cset .xm-chk{flex-direction:row;align-items:center;gap:6px;color:#D9CFCA;font-size:12px;cursor:pointer}' +
+                    '#xxt-v41-music .xm-chk input{accent-color:var(--xm-accent,#E8A87C);margin:0}' +
+                    '#xxt-v41-music .xm-cbtns{display:flex;gap:6px}' +
+                    '#xxt-v41-music .xm-cbtns button{flex:1;height:32px;border-radius:9px;background:rgba(255,255,255,.08);color:#EDE6E2;font-size:12px;font-weight:600}' +
+                    '#xxt-v41-music .xm-cbtns button:hover:not(:disabled),#xxt-v41-music .xm-cbtns button:focus-visible{background:rgba(255,255,255,.14);outline:none}' +
+                    '#xxt-v41-music .xm-cbtns .xm-primary{flex:1.4;background:var(--xm-accent,#E8A87C);color:var(--xm-on,#1B1615)}' +
+                    '#xxt-v41-music .xm-cbtns .xm-primary:hover:not(:disabled){filter:brightness(1.08);background:var(--xm-accent,#E8A87C)}' +
+                    '#xxt-v41-music .xm-cbtns button:disabled{opacity:.4;cursor:default}' +
                     '#xxt-v41-music .xm-add{width:100%;margin-top:8px;padding:8px 0;border:1px dashed rgba(255,255,255,.22);border-radius:10px;background:none;color:#EDE6E2;font-size:12px;font-weight:600}' +
                     '#xxt-v41-music .xm-add:hover,#xxt-v41-music .xm-add:focus-visible,#xxt-v41-music.drag .xm-add{border-color:var(--xm-accent,#E8A87C);color:#fff;background:rgba(255,255,255,.05);outline:none}' +
                     '#xxt-v41-music .xm-hint{margin-top:6px;font-size:10.5px;color:#7D726D;text-align:center}' +
@@ -2968,9 +3172,26 @@
                     '</div>' +
                     `<div class="xm-vol">${icon('<path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/>', 15)}<input type="range" data-m="vol" min="0" max="100" aria-label="音量"></div>` +
                     '<div class="xm-list" data-m="list" role="list"></div>' +
-                    '<button type="button" class="xm-add" data-m="add">＋ 添加本地音乐（可多选，也可拖进来）</button>' +
-                    '<input type="file" data-m="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus" multiple hidden>' +
-                    '<div class="xm-hint">音乐只保存在这台电脑的浏览器里，不会上传</div>';
+                    '<div class="xm-add-row"><button type="button" class="xm-add" data-m="add">＋ 添加本地音乐</button><button type="button" class="xm-add xm-conv-btn" data-m="convopen">⇄ 格式转换</button></div>' +
+                    '<input type="file" data-m="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus,.wma,.ape,.amr" multiple hidden>' +
+                    '<div class="xm-hint">音乐只保存在这台电脑的浏览器里，不会上传</div>' +
+                    '<div class="xm-conv" data-m="conv">' +
+                      '<div class="xm-conv-head"><b>音频格式转换</b><button type="button" class="xm-x xm-back" data-m="convback">‹ 返回</button></div>' +
+                      '<div class="xm-conv-hint" data-m="convhint"></div>' +
+                      '<button type="button" class="xm-drop" data-m="convdrop">点击添加或拖入音频 / 视频文件<small>支持 MP3、M4A、AAC、FLAC、WAV、OGG、OPUS，也能提取 MP4 等视频里的声音</small></button>' +
+                      '<input type="file" data-m="convfile" accept="audio/*,video/*" multiple hidden>' +
+                      '<div class="xm-cq" data-m="convlist"></div>' +
+                      '<div class="xm-cset">' +
+                        '<label>格式<select data-m="cfmt"><option value="mp3">MP3</option><option value="wav">WAV（无损）</option></select></label>' +
+                        '<label>质量<select data-m="cbr"><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option><option value="320">320 kbps</option></select></label>' +
+                        '<label>采样率<select data-m="csr"><option value="44100">44100 Hz</option><option value="48000">48000 Hz</option><option value="32000">32000 Hz</option><option value="22050">22050 Hz</option></select></label>' +
+                        '<label>声道<select data-m="cch"><option value="0">与源音频一致</option><option value="2">立体声</option><option value="1">单声道</option></select></label>' +
+                        '<label class="xm-chk"><input type="checkbox" data-m="cadd">转换后加入唱片机</label>' +
+                        '<label class="xm-chk"><input type="checkbox" data-m="cdl">同时下载到电脑</label>' +
+                      '</div>' +
+                      '<div class="xm-cbtns"><button type="button" data-m="cclear">清空列表</button><button type="button" data-m="cstop">停止</button><button type="button" class="xm-primary" data-m="cstart">开始转换</button></div>' +
+                      '<div class="xm-hint">全部在本机浏览器里转换，不上传文件；音乐软件的加密格式无法转换</div>' +
+                    '</div>';
                 const q = (k) => d.querySelector(`[data-m="${k}"]`);
                 q('close').addEventListener('click', () => this._toggleMusic());
                 q('play').addEventListener('click', () => this._musicToggle());
@@ -2998,6 +3219,24 @@
                     try { localStorage.setItem('xxt-v41-music-vol', String(v)); } catch (e) { /* ignore */ }
                 });
                 q('add').addEventListener('click', () => q('file').click());
+                q('convopen').addEventListener('click', () => { this._convOpen = true; this._convHint = ''; this._renderConv(); });
+                q('convback').addEventListener('click', () => { this._convOpen = false; this._renderConv(); this._positionMusic(); });
+                q('convdrop').addEventListener('click', () => q('convfile').click());
+                q('convfile').addEventListener('change', () => { const fs = [...q('convfile').files]; q('convfile').value = ''; this._convQueue(fs, ''); });
+                q('convlist').addEventListener('click', (e) => {
+                    const b = e.target.closest('[data-cdel]');
+                    if (!b) return;
+                    this._convQ = (this._convQ || []).filter((x) => x.id !== b.getAttribute('data-cdel'));
+                    this._renderConv();
+                });
+                const saveOpt = () => {
+                    this._convSaveOpts({ fmt: q('cfmt').value, br: Number(q('cbr').value), sr: Number(q('csr').value), ch: Number(q('cch').value), add: q('cadd').checked, dl: q('cdl').checked });
+                    this._renderConv();
+                };
+                for (const k of ['cfmt', 'cbr', 'csr', 'cch', 'cadd', 'cdl']) q(k).addEventListener('change', saveOpt);
+                q('cstart').addEventListener('click', () => this._convRun());
+                q('cstop').addEventListener('click', () => { this._convAbort = true; });
+                q('cclear').addEventListener('click', () => { this._convQ = []; this._convHint = ''; this._renderConv(); });
                 q('file').addEventListener('change', () => { const fs = [...q('file').files]; q('file').value = ''; this._musicAdd(fs); });
                 q('list').addEventListener('click', (e) => {
                     const del = e.target.closest('[data-del]');
@@ -3009,7 +3248,11 @@
                 });
                 d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('drag'); });
                 d.addEventListener('dragleave', (e) => { if (e.target === d) d.classList.remove('drag'); });
-                d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('drag'); this._musicAdd([...(e.dataTransfer && e.dataTransfer.files || [])]); });
+                d.addEventListener('drop', (e) => {
+                    e.preventDefault(); d.classList.remove('drag');
+                    const fs = [...(e.dataTransfer && e.dataTransfer.files || [])];
+                    if (this._convOpen) this._convQueue(fs, ''); else this._musicAdd(fs);
+                });
                 for (const t of ['keydown', 'keyup', 'keypress']) d.addEventListener(t, (e) => e.stopPropagation());
                 document.body.appendChild(d);
                 this._musicEl = d;
@@ -3033,7 +3276,12 @@
                 d.style.left = Math.round(left) + 'px';
                 d.style.top = Math.round(top) + 'px';
                 d.style.maxHeight = (H - 16) + 'px';
-                try { const acc = getComputedStyle(el).getPropertyValue('--x-accent').trim(); if (acc) d.style.setProperty('--xm-accent', acc); } catch (e) { /* ignore */ }
+                try {
+                    const cs = getComputedStyle(el);
+                    const acc = cs.getPropertyValue('--x-accent').trim(), on = cs.getPropertyValue('--x-on-accent').trim();
+                    if (acc) d.style.setProperty('--xm-accent', acc);
+                    if (on) d.style.setProperty('--xm-on', on);
+                } catch (e) { /* ignore */ }
             },
             _renderMusic() {
                 const open = !!this._musicOpen && !!this._panel && !this._panelCollapsed;
@@ -3079,6 +3327,7 @@
                         (mine.length ? mine.map((t, i) => row(t, i)).join('') : '<div class="xm-empty">点下面的按钮，从电脑里添加喜欢的音乐</div>');
                 }
                 this._musicTick();
+                this._renderConv();
                 if (open) this._positionMusic();
                 this._musicPlaying = playing;
                 this._renderSide();

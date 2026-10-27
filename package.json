@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "jquery": "3.6.0",
+    "lamejs": "^1.2.1",
     "playwright": "1.63.0"
   }
 }

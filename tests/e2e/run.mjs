@@ -221,7 +221,7 @@ test('更新后浮窗显示新增内容（关掉前一直显示），可查看�
     const info = await panelInfo(p);
     assert(new RegExp(`已更新到 v${VERSION.replace(/\./g, '\\.')}`).test(info.whatsnew || ''), `没有更新说明：${info.whatsnew}`);
     // 从 4.0.0 更新来：列出期间各版本的新内容
-    assert(/环境音/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
+    assert(/格式转换/.test(info.whatsnew) && /还有 \d+ 项改进/.test(info.whatsnew), `更新内容不对：${info.whatsnew}`);
     // 没关掉之前，刷新页面仍然显示
     await p.reload(); await inject(p); await sleep(1500);
     assert((await panelInfo(p)).whatsnew, '刷新后更新说明不见了');
@@ -1019,6 +1019,67 @@ test('唱片机内置环境音：轻钢琴、雨声等实时合成，点击即�
     assert(s.playing && s.state === 'running', `继续播放不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-music [data-m=next]'); await sleep(600);
     assert((await st()).kind === 'piano', '下一首应循环回第一首');
+    await ctx.close();
+});
+
+test('唱片机格式转换：把音频/视频转成 MP3 或 WAV 加入唱片机，加密格式和坏文件给出原因', async (b) => {
+    const tone = (sec, rate = 44100) => {   // 立体声 440Hz 正弦波 WAV
+        const n = rate * sec, buf = Buffer.alloc(44 + n * 4);
+        buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 4, 4); buf.write('WAVEfmt ', 8); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(2, 22);
+        buf.writeUInt32LE(rate, 24); buf.writeUInt32LE(rate * 4, 28); buf.writeUInt16LE(4, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * 4, 40);
+        for (let i = 0; i < n; i++) { const v = Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000); buf.writeInt16LE(v, 44 + i * 4); buf.writeInt16LE(v, 46 + i * 4); }
+        return buf;
+    };
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const lame = (await import('node:fs')).readFileSync(new URL('../../node_modules/lamejs/lame.min.js', import.meta.url), 'utf8');
+    let lameHits = 0;
+    await ctx.route('**/lamejs@1.2.1/lame.min.js', (r) => { lameHits++; return r.fulfill({ contentType: 'application/javascript', headers: { 'access-control-allow-origin': '*' }, body: lame }); });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(400);
+    await p.click('#xxt-v41-side [data-s=music]'); await sleep(600);
+    await p.click('#xxt-v41-music [data-m=convopen]'); await sleep(400);
+    assert(await p.evaluate(() => document.getElementById('xxt-v41-music').classList.contains('conv')), '没有打开格式转换');
+    await p.setInputFiles('#xxt-v41-music [data-m=convfile]', [
+        { name: '讲座录音.wav', mimeType: 'audio/wav', buffer: tone(2) },
+        { name: '会员歌曲.ncm', mimeType: 'application/octet-stream', buffer: Buffer.from('CTENFDAM....') },
+        { name: '坏文件.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('not audio at all') },
+    ]);
+    await sleep(300);
+    await p.click('#xxt-v41-music [data-m=cstart]');
+    await p.waitForFunction(() => !app._convRunning, null, { timeout: 30000 }); await sleep(800);
+    const r = await p.evaluate(async () => {
+        const q = app._convQ.map((x) => ({ name: x.name, status: x.status, msg: x.msg }));
+        const t = (app._tracks || []).find((x) => x.name === '讲座录音');
+        let dur = 0, type = '';
+        if (t) { type = t.blob.type; const buf = await t.blob.arrayBuffer(); dur = (await new OfflineAudioContext(2, 1, 44100).decodeAudioData(buf)).duration; }
+        return { q, type, dur, names: [...document.querySelectorAll('#xxt-v41-music .xm-cq-st')].map((e) => e.textContent) };
+    });
+    assert(lameHits === 1, `MP3 编码组件加载次数不对：${lameHits}`);
+    assert(r.q[0].status === 'done' && /MP3/.test(r.q[0].msg) && r.type === 'audio/mpeg' && r.dur > 1.8 && r.dur < 2.3, `MP3 转换不对：${JSON.stringify(r)}`);
+    assert(r.q[1].status === 'drm' && /加密格式/.test(r.q[1].msg), `加密格式提示不对：${JSON.stringify(r.q[1])}`);
+    assert(r.q[2].status === 'fail' && /无法解码/.test(r.q[2].msg), `坏文件提示不对：${JSON.stringify(r.q[2])}`);
+    // WAV + 单声道 + 下载到电脑
+    await p.selectOption('#xxt-v41-music [data-m=cfmt]', 'wav');
+    await p.selectOption('#xxt-v41-music [data-m=cch]', '1');
+    await p.check('#xxt-v41-music [data-m=cdl]');
+    await p.click('#xxt-v41-music [data-m=cclear]');
+    await p.setInputFiles('#xxt-v41-music [data-m=convfile]', [{ name: 'clip.wav', mimeType: 'audio/wav', buffer: tone(1, 48000) }]);
+    const dl = p.waitForEvent('download');
+    await p.click('#xxt-v41-music [data-m=cstart]');
+    const file = await dl;
+    assert(file.suggestedFilename() === 'clip.wav', `下载文件名不对：${file.suggestedFilename()}`);
+    await p.waitForFunction(() => !app._convRunning, null, { timeout: 20000 }); await sleep(500);
+    const w = await p.evaluate(async () => { const t = app._tracks.find((x) => x.name === 'clip'); const a = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(await t.blob.arrayBuffer()); return { ch: a.numberOfChannels, type: t.blob.type }; });
+    assert(w.type === 'audio/wav' && w.ch === 1, `WAV 单声道不对：${JSON.stringify(w)}`);
+    // 直接“添加本地音乐”时，视频文件自动放进转换列表
+    await p.click('#xxt-v41-music [data-m=convback]'); await sleep(300);
+    await p.setInputFiles('#xxt-v41-music [data-m=file]', [{ name: '课堂视频.mp4', mimeType: 'video/mp4', buffer: Buffer.from('fake') }]);
+    await sleep(500);
+    const v = await p.evaluate(() => ({ conv: document.getElementById('xxt-v41-music').classList.contains('conv'), hint: document.querySelector('#xxt-v41-music [data-m=convhint]').textContent, q: app._convQ.map((x) => x.name) }));
+    assert(v.conv && /不能直接播放/.test(v.hint) && v.q.includes('课堂视频.mp4'), `视频文件没有转到格式转换：${JSON.stringify(v)}`);
     await ctx.close();
 });
 
