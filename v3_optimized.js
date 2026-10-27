@@ -10,7 +10,7 @@
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     const CHANGELOG = [
         { v: '4.5.0', items: [
-            '唱片机：点浮窗标题栏的唱片图标，在旁边打开唱片机侧边栏。从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
+            '浮窗右侧边缘新增可拉出的功能栏（点小把手展开），放着不常用的功能：唱片机、更新记录、反馈问题；浮窗靠屏幕右边时自动改到左侧。唱片机：从电脑里添加音乐（可多选、可拖进来），点列表即播放；黑胶唱片随播放转动、唱臂落下，支持上一首/下一首、进度、音量和列表循环/单曲循环/随机播放。音乐只保存在本机浏览器里，不上传',
             '浮窗主题：设置里可选清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，以及「自定义」——用调色盘自由选主色（也有 12 种常用色一键选），可选浅色或深色底，按钮文字颜色会自动调整保证看得清；选择会被记住',
             '进度条里“需手动完成”的一段改为斜纹，并和“已完成”之间留一道缝；自定义主色接近橙色或黄色时，这一段自动换成紫色，不会混在一起',
             '修复：浮窗拉窄时，标题栏的按钮和版本号重叠（版本号会自动换到标题下一行）；学习通页面自带的按钮样式不再影响浮窗里的按钮',
@@ -480,6 +480,7 @@
             },
             destroy() {
                 this._removeMusic();
+                this._removeSide();
                 this._state = 'stopped';
                 this._stopTimer();
                 this._saveStats(true);
@@ -2218,7 +2219,7 @@
                     const left = Math.min(Math.max(0, start.left + dx), window.innerWidth - el.offsetWidth);
                     const top = Math.min(Math.max(0, start.top + dy), window.innerHeight - el.offsetHeight);
                     el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.bottom = 'auto';
-                    this._positionMusic();
+                    this._positionFloats();
                 });
                 const end = () => {
                     if (start && start.moved) {
@@ -2325,7 +2326,7 @@
                         el.style.width = w + 'px'; el.style.height = hh + 'px';
                         el.style.left = left + 'px'; el.style.top = top + 'px';
                         this._fitPanel(el);
-                        this._positionMusic();
+                        this._positionFloats();
                     });
                     const end = (e) => {
                         if (!st || (e && e.pointerId !== st.id)) return;
@@ -2844,8 +2845,12 @@
                 if (!d || !el || !this._musicOpen) return;
                 const r = el.getBoundingClientRect();
                 const w = d.offsetWidth || 288, h = d.offsetHeight || 560, gap = 12, W = window.innerWidth, H = window.innerHeight;
-                let left = r.right + gap;
-                if (left + w > W - 8) left = r.left - gap - w >= 8 ? r.left - gap - w : Math.max(8, W - w - 8);
+                // 侧边栏展开时，唱片机让开侧边栏
+                const sb = this._sideEl && this._sideEl.classList.contains('show') ? this._sideEl.getBoundingClientRect() : null;
+                const right = sb && sb.left >= r.left ? Math.max(r.right, sb.right) : r.right;
+                const leftEdge = sb && sb.left < r.left ? Math.min(r.left, sb.left) : r.left;
+                let left = right + gap;
+                if (left + w > W - 8) left = leftEdge - gap - w >= 8 ? leftEdge - gap - w : Math.max(8, W - w - 8);
                 const top = Math.min(Math.max(8, r.bottom - h), Math.max(8, H - h - 8));
                 d.style.left = Math.round(left) + 'px';
                 d.style.top = Math.round(top) + 'px';
@@ -2892,11 +2897,8 @@
                 }
                 this._musicTick();
                 if (open) this._positionMusic();
-                // 浮窗标题栏的唱片按钮：播放时显示跳动的小音符
-                if (this._panel) {
-                    const b = this._panel.querySelector('[data-k="musicbtn"]');
-                    if (b) { b.classList.toggle('on', open); b.classList.toggle('playing', playing); b.setAttribute('aria-expanded', String(open)); }
-                }
+                this._musicPlaying = playing;
+                this._renderSide();
             },
             _removeMusic() {
                 this._musicStop();
@@ -2904,6 +2906,125 @@
                 this._musicEl = null;
             },
 
+
+            // ================= 侧边功能栏（浮窗右侧边缘，点击拉出） =================
+            // 不常用的功能放在这里：唱片机、更新记录、反馈
+            _ensureSide() {
+                if (this._sideEl && this._sideEl.isConnected) return this._sideEl;
+                const d = document.createElement('div');
+                d.id = 'xxt-v41-side';
+                const ico = (p) => `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+                const items = [
+                    ['music', '唱片机', ico('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5"/>')],
+                    ['history', '更新记录', ico('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>')],
+                    ['feedback', '反馈问题', ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>')],
+                ];
+                d.innerHTML =
+                    '<style>' +
+                    '#xxt-v41-side{position:fixed;z-index:2147483647;display:flex;align-items:center;gap:6px;pointer-events:none;font:12px/1.4 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;opacity:0;transition:opacity .3s ease}' +
+                    '#xxt-v41-side.show{opacity:1}' +
+                    '#xxt-v41-side.left{flex-direction:row-reverse}' +
+                    '#xxt-v41-side *{box-sizing:border-box}' +
+                    '#xxt-v41-side button{font:inherit;margin:0;padding:0;border:0;min-width:0;min-height:0;text-transform:none;letter-spacing:normal;cursor:pointer}' +
+                    '#xxt-v41-side .xs-handle{pointer-events:auto;position:relative;display:flex;align-items:center;justify-content:center;width:16px;height:52px;border-radius:0 10px 10px 0;' +
+                      'background:var(--x-bg,#fff);color:var(--x-faint,#9CA3AF);box-shadow:3px 2px 10px rgba(15,23,42,.12);transition:width .25s cubic-bezier(.22,1,.36,1),color .2s,background .2s}' +
+                    '#xxt-v41-side.left .xs-handle{border-radius:10px 0 0 10px;box-shadow:-3px 2px 10px rgba(15,23,42,.12)}' +
+                    '#xxt-v41-side .xs-handle:hover,#xxt-v41-side .xs-handle:focus-visible{width:20px;color:var(--x-accent,#3B82F6);outline:none}' +
+                    '#xxt-v41-side .xs-handle svg{transition:transform .35s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-side.open .xs-handle svg{transform:rotate(180deg)}' +
+                    '#xxt-v41-side.left .xs-handle svg{transform:rotate(180deg)}#xxt-v41-side.left.open .xs-handle svg{transform:none}' +
+                    '#xxt-v41-side .xs-dot{position:absolute;top:6px;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--x-accent,#3B82F6);display:none;animation:xs-pulse 1.6s ease-in-out infinite}' +
+                    '#xxt-v41-side.playing .xs-dot{display:block}' +
+                    '@keyframes xs-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.6);opacity:.55}}' +
+                    '#xxt-v41-side .xs-tray{pointer-events:none;display:flex;flex-direction:column;gap:4px;padding:6px;border-radius:14px;background:var(--x-bg,#fff);' +
+                      'box-shadow:0 8px 24px rgba(15,23,42,.14),0 1px 3px rgba(15,23,42,.08);opacity:0;transform:translateX(-10px) scale(.96);transform-origin:left center;' +
+                      'transition:opacity .32s cubic-bezier(.22,1,.36,1),transform .38s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-side.left .xs-tray{transform:translateX(10px) scale(.96);transform-origin:right center}' +
+                    '#xxt-v41-side.open .xs-tray{pointer-events:auto;opacity:1;transform:none}' +
+                    '#xxt-v41-side .xs-item{position:relative;display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;background:transparent;color:var(--x-muted,#6B7280);transition:background .15s,color .15s}' +
+                    '#xxt-v41-side .xs-item:hover,#xxt-v41-side .xs-item:focus-visible,#xxt-v41-side .xs-item.on{background:var(--x-accent-soft,#E3ECFD);color:var(--x-accent-strong,#2563EB);outline:none}' +
+                    '#xxt-v41-side .xs-item[data-s=music].spin svg{animation:xs-spin 2.4s linear infinite}' +
+                    '@keyframes xs-spin{to{transform:rotate(360deg)}}' +
+                    '#xxt-v41-side .xs-item::after{content:attr(data-label);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);white-space:nowrap;padding:4px 8px;border-radius:7px;background:#1F2937;color:#F9FAFB;font-size:12px;opacity:0;pointer-events:none;transition:opacity .15s}' +
+                    '#xxt-v41-side.left .xs-item::after{left:auto;right:calc(100% + 10px)}' +
+                    '#xxt-v41-side .xs-item:hover::after{opacity:1}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-side,#xxt-v41-side .xs-tray,#xxt-v41-side .xs-handle,#xxt-v41-side .xs-handle svg{transition:none}#xxt-v41-side .xs-dot,#xxt-v41-side .xs-item svg{animation:none!important}}' +
+                    '</style>' +
+                    '<button type="button" class="xs-handle" data-s="handle" aria-label="更多功能" aria-expanded="false" title="更多功能">' +
+                      '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 1.5 7 5 3.5 8.5"/></svg><i class="xs-dot"></i>' +
+                    '</button>' +
+                    '<div class="xs-tray" data-s="tray" role="toolbar" aria-label="更多功能">' +
+                      items.map(([k, label, svg]) => `<button type="button" class="xs-item" data-s="${k}" data-label="${label}" aria-label="${label}">${svg}</button>`).join('') +
+                    '</div>';
+                const q = (k) => d.querySelector(`[data-s="${k}"]`);
+                q('handle').addEventListener('click', () => { this._sideOpen = !this._sideOpen; this._renderSide(); this._positionFloats(); });
+                q('music').addEventListener('click', () => this._toggleMusic());
+                q('history').addEventListener('click', () => {
+                    this._animatePanel(() => { this._histOpen = !this._histOpen; this._histFromSettings = false; this._settingsOpen = false; });
+                });
+                q('feedback').addEventListener('click', () => {
+                    this._animatePanel(() => {
+                        const on = !(this._settingsOpen && this._fbOpen);
+                        this._settingsOpen = on; this._fbOpen = on; this._histOpen = false;
+                    });
+                });
+                for (const t of ['keydown', 'keyup', 'keypress']) d.addEventListener(t, (e) => e.stopPropagation());
+                document.body.appendChild(d);
+                this._sideEl = d;
+                return d;
+            },
+            _renderSide() {
+                const el = this._panel;
+                if (!el) return;
+                const d = this._ensureSide();
+                const show = !this._panelCollapsed;
+                d.classList.toggle('show', show);
+                d.classList.toggle('open', show && !!this._sideOpen);
+                d.classList.toggle('playing', !!this._musicPlaying);
+                d.setAttribute('aria-hidden', String(!show));
+                const h = d.querySelector('[data-s="handle"]');
+                h.setAttribute('aria-expanded', String(!!this._sideOpen));
+                h.tabIndex = show ? 0 : -1;
+                const tray = d.querySelector('[data-s="tray"]');
+                if (show && this._sideOpen) tray.removeAttribute('inert'); else tray.setAttribute('inert', '');
+                const set = (k, on) => { const b = d.querySelector(`[data-s="${k}"]`); b.classList.toggle('on', !!on); b.setAttribute('aria-pressed', String(!!on)); };
+                set('music', this._musicOpen);
+                set('history', this._histOpen);
+                set('feedback', this._settingsOpen && this._fbOpen);
+                d.querySelector('[data-s="music"]').classList.toggle('spin', !!this._musicPlaying);
+                // 跟随浮窗主题配色
+                try {
+                    const cs = getComputedStyle(el);
+                    for (const v of ['--x-bg', '--x-accent', '--x-accent-soft', '--x-accent-strong', '--x-muted', '--x-faint']) {
+                        const val = cs.getPropertyValue(v).trim();
+                        if (val) d.style.setProperty(v, val);
+                    }
+                } catch (e) { /* ignore */ }
+                this._positionSide();
+            },
+            _positionSide() {
+                const d = this._sideEl, el = this._panel;
+                if (!d || !el) return;
+                const r = el.getBoundingClientRect();
+                const W = window.innerWidth;
+                const trayW = this._sideOpen ? 56 : 0;
+                // 浮窗贴着屏幕右边时，侧边栏改到左侧边缘
+                const left = r.right + 22 + trayW > W && r.left - 22 - trayW >= 0;
+                d.classList.toggle('left', left);
+                const h = d.offsetHeight || 52;
+                const top = Math.min(Math.max(8, r.top + Math.min(96, r.height / 2) - h / 2), window.innerHeight - h - 8);
+                d.style.top = Math.round(top) + 'px';
+                if (left) { d.style.left = 'auto'; d.style.right = Math.round(W - r.left) + 'px'; }
+                else { d.style.right = 'auto'; d.style.left = Math.round(r.right) + 'px'; }
+            },
+            _positionFloats() {
+                this._positionSide();
+                this._positionMusic();
+            },
+            _removeSide() {
+                if (this._sideEl) { try { this._sideEl.remove(); } catch (e) { /* ignore */ } }
+                this._sideEl = null;
+            },
             // ================= 运行状态浮窗 =================
             _panelStatus() {
                 const v = this._video;
@@ -2983,7 +3104,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${C.dailyGoal}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -3094,6 +3215,7 @@
                 for (const b of el.querySelectorAll('[data-goal]')) b.classList.toggle('on', Number(b.getAttribute('data-goal')) === C.dailyGoal);
                 q('restore').style.display = !this._panelCollapsed && this._loadSize() ? 'inline-flex' : 'none';
                 if (this._musicEl || this._musicOpen) this._renderMusic();
+                else this._renderSide();
                 q('gear').classList.toggle('on', this._settingsOpen);
                 q('gear').setAttribute('aria-expanded', String(this._settingsOpen));
                 for (const inp of el.querySelectorAll('[data-set]')) inp.checked = !!C[inp.getAttribute('data-set')];
@@ -3198,10 +3320,6 @@
                     '#xxt-v41-panel[data-theme="dark"] .xxt-live-row{background:#3A2414}#xxt-v41-panel[data-theme="dark"] .xxt-live-text{color:#FDBA74}' +
                     '#xxt-v41-panel[data-theme="dark"] [data-k="ver"].xxt-has-upd{background:#3B2F14;color:#FCD34D}' +
                     '#xxt-v41-panel[data-theme="dark"] .xxt-power:hover{background:#3F1D1D}' +
-                    '#xxt-v41-panel .xxt-music-btn.playing{color:var(--x-accent)}' +
-                    '#xxt-v41-panel .xxt-music-btn.playing .xxt-vinyl{animation:xm-spin 2.4s linear infinite}' +
-                    '@keyframes xm-spin{to{transform:rotate(360deg)}}' +
-                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-music-btn.playing .xxt-vinyl{animation:none}}' +
                     '#xxt-v41-panel .xxt-themes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0 4px}' +
                     '#xxt-v41-panel .xxt-theme{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 2px;border:0;border-radius:9px;background:var(--x-bg);box-shadow:inset 0 0 0 1px var(--x-line);font:inherit;font-size:11px;color:var(--x-text2);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-theme i{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}' +
@@ -3447,9 +3565,6 @@
                         '</div>' +
                       '</div>' +
                       '<div class="xxt-actions">' +
-                      '<button type="button" data-k="musicbtn" class="xxt-gear xxt-music-btn" title="唱片机" aria-label="唱片机" aria-expanded="false">' +
-                        '<svg class="xxt-vinyl" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5" stroke-linecap="round"/></svg>' +
-                      '</button>' +
                       '<button type="button" data-k="restore" class="xxt-gear" title="还原默认大小（Alt+Shift+R）" aria-label="还原默认大小" style="display:none">' +
                         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' +
                       '</button>' +
@@ -3646,7 +3761,6 @@
                 el.querySelector('[data-k="fbsend"]').addEventListener('click', () => this._sendFeedback(true));
                 el.querySelector('[data-k="resetpos"]').addEventListener('click', () => this._resetPanelPos());
                 el.querySelector('[data-k="restore"]').addEventListener('click', () => this._restoreSize(false));
-                el.querySelector('[data-k="musicbtn"]').addEventListener('click', () => this._toggleMusic());
                 for (const b of el.querySelectorAll('[data-theme-opt]')) b.addEventListener('click', () => this._setTheme(b.getAttribute('data-theme-opt')));
                 const cpick = el.querySelector('[data-k="cpick"]');
                 cpick.addEventListener('input', () => this._setCustom(cpick.value, null, false));     // 拖动取色时实时预览
@@ -3693,7 +3807,7 @@
                 this._sizeApplied = el;
                 this._applyPanelPos(el);
                 if (!this._onResize) {
-                    this._onResize = () => { if (this._panel) { this._applySize(this._panel); this._applyPanelPos(this._panel); this._fitPanel(this._panel); this._positionMusic(); } };
+                    this._onResize = () => { if (this._panel) { this._applySize(this._panel); this._applyPanelPos(this._panel); this._fitPanel(this._panel); this._positionFloats(); } };
                     window.addEventListener('resize', this._onResize);
                 }
                 this._panel = el;
@@ -3745,7 +3859,7 @@
                     el.style.overflow = 'hidden';
                     const a = el.animate([from, to], { duration: 480, easing: sizeEase });
                     this._resizeAnim = a;
-                    const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } this._positionMusic(); };
+                    const done = () => { if (this._resizeAnim === a) { this._resizeAnim = null; el.style.overflow = ''; } this._positionFloats(); };
                     a.onfinish = done; a.oncancel = done;
                 }
                 const after = new Set(visible());
@@ -3765,6 +3879,8 @@
             },
 
             _removePanel() {
+                this._removeSide();
+                if (this._musicEl) { this._musicOpen = false; this._renderMusic(); }
                 if (this._onRestoreKey) { window.removeEventListener('keydown', this._onRestoreKey, true); this._onRestoreKey = null; }
                 if (this._panel) {
                     try { this._panel.remove(); } catch (e) { /* ignore */ }

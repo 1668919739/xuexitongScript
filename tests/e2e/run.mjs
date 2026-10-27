@@ -900,7 +900,7 @@ test('自定义主色接近橙色时，“需手动完成”进度段换成紫�
     await ctx.close();
 });
 
-test('唱片机：从浮窗打开侧边栏，添加本地音乐，点列表即播放，刷新后列表还在', async (b) => {
+test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列表即播放，刷新后列表还在', async (b) => {
     // 生成两段 3 秒的无声 WAV 当作“本地音乐”
     const wav = (sec) => {
         const rate = 8000, n = rate * sec, buf = Buffer.alloc(44 + n);
@@ -917,11 +917,13 @@ test('唱片机：从浮窗打开侧边栏，添加本地音乐，点列表即�
         const d = document.getElementById('xxt-v41-music'), panel = document.getElementById('xxt-v41-panel');
         if (!d) return null;
         const r = d.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+        const sr = document.querySelector('#xxt-v41-side .xs-tray').getBoundingClientRect();
         return { open: d.classList.contains('open'), playing: d.classList.contains('playing'), items: [...d.querySelectorAll('.xm-name')].map((e) => e.textContent),
             cur: (d.querySelector('.xm-item.cur .xm-name') || {}).textContent || '', title: d.querySelector('[data-m=title]').textContent,
-            rightOfPanel: r.left >= pr.right, paused: app._audio ? app._audio.paused : true };
+            rightOfPanel: r.left >= pr.right && r.left >= sr.right, paused: app._audio ? app._audio.paused : true };
     });
-    await p.click('#xxt-v41-panel [data-k=musicbtn]'); await sleep(600);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    await p.click('#xxt-v41-side [data-s=music]'); await sleep(600);
     let s = await st();
     assert(s && s.open && s.items.length === 0 && s.rightOfPanel, `唱片机没有在浮窗旁打开：${JSON.stringify(s)}`);
     await p.setInputFiles('#xxt-v41-music [data-m=file]', [
@@ -943,13 +945,48 @@ test('唱片机：从浮窗打开侧边栏，添加本地音乐，点列表即�
     await p.click('#xxt-v41-music [data-m=close]'); await sleep(500);
     assert(!(await st()).open, '关闭没生效');
     await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
-    await p.click('#xxt-v41-panel [data-k=musicbtn]'); await sleep(1000);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    await p.click('#xxt-v41-side [data-s=music]'); await sleep(1000);
     s = await st();
     assert(s.items.join('|') === '晨读|午后钢琴', `刷新后列表丢失：${JSON.stringify(s)}`);
     // 移除一首
     await p.hover('#xxt-v41-music .xm-item:nth-child(1)');
     await p.click('#xxt-v41-music .xm-item:nth-child(1) .xm-del'); await sleep(600);
     assert((await st()).items.join('|') === '午后钢琴', '移除没生效');
+    await ctx.close();
+});
+
+test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片机 / 更新记录 / 反馈；浮窗靠右时改到左侧', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    const st = () => p.evaluate(() => {
+        const d = document.getElementById('xxt-v41-side'), pr = document.getElementById('xxt-v41-panel').getBoundingClientRect();
+        const h = d.querySelector('.xs-handle').getBoundingClientRect(), tray = d.querySelector('.xs-tray');
+        return { show: d.classList.contains('show'), open: d.classList.contains('open'), left: d.classList.contains('left'),
+            handleAtRight: Math.abs(h.left - pr.right) < 2, handleAtLeft: Math.abs(h.right - pr.left) < 2, trayOpacity: getComputedStyle(tray).opacity,
+            items: [...d.querySelectorAll('.xs-item')].map((e) => e.getAttribute('data-label')), headerMusic: !!document.querySelector('#xxt-v41-panel [data-k=musicbtn]') };
+    });
+    let s = await st();
+    assert(s.show && !s.open && s.handleAtRight && s.trayOpacity === '0' && !s.headerMusic, `把手位置或默认状态不对：${JSON.stringify(s)}`);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    s = await st();
+    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|更新记录|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
+    await p.click('#xxt-v41-side [data-s=history]'); await sleep(700);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=history]').offsetParent !== null), '更新记录没打开');
+    await p.click('#xxt-v41-side [data-s=feedback]'); await sleep(700);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=feedback]').offsetParent !== null), '反馈没打开');
+    // 收起浮窗时把手隐藏
+    await p.click('[data-k=toggle]'); await sleep(700);
+    assert(!(await st()).show, '收起后应隐藏侧边栏');
+    await p.click('[data-k=toggle]'); await sleep(700);
+    // 浮窗拖到屏幕最右边：侧边栏改到左侧
+    const head = await (await p.$('#xxt-v41-panel [data-k=head]')).boundingBox();
+    await p.mouse.move(head.x + 60, head.y + 10); await p.mouse.down(); await p.mouse.move(1190, head.y + 10, { steps: 8 }); await p.mouse.up(); await sleep(400);
+    s = await st();
+    assert(s.left && s.handleAtLeft, `靠右时没有改到左侧：${JSON.stringify(s)}`);
     await ctx.close();
 });
 
