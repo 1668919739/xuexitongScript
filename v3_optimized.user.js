@@ -4266,7 +4266,7 @@
                 const icon = (path, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
                 d.innerHTML =
                     '<style>' +
-                    '#xxt-v41-music{position:fixed;z-index:2147483646;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
+                    '#xxt-v41-music{position:fixed;z-index:2147483647;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
                       'background:radial-gradient(120% 70% at 50% 0%,#2C2422 0%,#1B1615 60%,#141110 100%);color:#EDE6E2;box-shadow:0 12px 36px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);' +
                       'font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;' +
                       'transition:opacity .38s cubic-bezier(.22,1,.36,1),transform .38s cubic-bezier(.22,1,.36,1)}' +
@@ -4312,22 +4312,23 @@
                     '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
                     '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
                     '#xxt-v41-music .xm-sec{margin:10px 8px 2px;font-size:11px;font-weight:600;color:#7D726D;letter-spacing:.5px}' +
-                    '#xxt-v41-music .xm-drawer{position:absolute;top:58px;left:100%;display:flex;align-items:flex-start;z-index:-1}' +
-                    '#xxt-v41-music.dleft .xm-drawer{left:auto;right:100%;flex-direction:row-reverse}' +
-                    '#xxt-v41-music.conv .xm-drawer{display:none}' +
-                    '#xxt-v41-music .xm-dhandle{order:2;display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:10px;padding:12px 6px;border:0;border-radius:0 10px 10px 0;background:#241E1C;color:#D9CFCA;font-size:12px;font-weight:600;letter-spacing:2px;writing-mode:vertical-rl;box-shadow:4px 4px 14px rgba(0,0,0,.35);cursor:pointer}' +
-                    '#xxt-v41-music .xm-dhandle i{font-style:normal;writing-mode:horizontal-tb;transition:transform .3s}' +
-                    '#xxt-v41-music .xm-drawer.open .xm-dhandle i{transform:rotate(180deg)}' +
-                    '#xxt-v41-music.dleft .xm-dhandle{border-radius:10px 0 0 10px;box-shadow:-4px 4px 14px rgba(0,0,0,.35)}' +
-                    '#xxt-v41-music.dleft .xm-dhandle i{transform:rotate(180deg)}#xxt-v41-music.dleft .xm-drawer.open .xm-dhandle i{transform:none}' +
-                    '#xxt-v41-music .xm-dhandle:hover,#xxt-v41-music .xm-dhandle:focus-visible{color:#fff;background:#2C2522;outline:none}' +
-                    '#xxt-v41-music .xm-dbody{order:1;width:0;overflow:hidden;transition:width .32s cubic-bezier(.22,1,.36,1)}' +
-                    '#xxt-v41-music.dleft .xm-dbody{order:1}' +
-                    '#xxt-v41-music .xm-drawer.open .xm-dbody{width:236px}' +
-                    '#xxt-v41-music .xm-dinner{width:236px;box-sizing:border-box;padding:12px 12px 10px;border-radius:0 14px 14px 0;background:#1E1917;box-shadow:6px 8px 24px rgba(0,0,0,.4)}' +
-                    '#xxt-v41-music.dleft .xm-dinner{border-radius:14px 0 0 14px}' +
+                    // 「RouteCC 的歌单」：入口在标题栏；旁边有空位时从唱片机侧面滑出，没有空位时盖在唱片机上滑入
+                    '#xxt-v41-music .xm-dbtn{display:inline-flex;align-items:center;gap:4px;border:0;border-radius:8px;padding:4px 9px;background:rgba(255,255,255,.08);color:#EDE6E2;font-size:12px;font-weight:600;white-space:nowrap}' +
+                    '#xxt-v41-music .xm-dbtn:hover,#xxt-v41-music .xm-dbtn:focus-visible{background:rgba(255,255,255,.14);outline:none}' +
+                    '#xxt-v41-music .xm-dbtn[aria-expanded=true]{background:var(--xm-accent,#E8A87C);color:var(--xm-on,#1E1917)}' +
+                    '#xxt-v41-music.conv .xm-dbtn,#xxt-v41-music.conv .xm-drawer{display:none}' +
+                    '#xxt-v41-music .xm-drawer{position:absolute;top:52px;left:100%;margin-left:8px;z-index:2;pointer-events:none}' +
+                    '#xxt-v41-music.dleft .xm-drawer{left:auto;right:100%;margin:0 8px 0 0}' +
+                    '#xxt-v41-music.dinside .xm-drawer{left:10px;right:10px;margin:0}' +
+                    '#xxt-v41-music .xm-dbody{width:236px;overflow:hidden;opacity:0;transform:translateX(-12px);transition:opacity .28s cubic-bezier(.22,1,.36,1),transform .32s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-music.dleft .xm-dbody{transform:translateX(12px)}' +
+                    '#xxt-v41-music.dinside .xm-dbody{width:auto;transform:translateX(24px)}' +
+                    '#xxt-v41-music .xm-drawer.open{pointer-events:auto}' +
+                    '#xxt-v41-music .xm-drawer.open .xm-dbody{opacity:1;transform:none}' +
+                    '#xxt-v41-music .xm-dinner{box-sizing:border-box;padding:12px 12px 10px;border-radius:14px;background:#1E1917;border:1px solid rgba(255,255,255,.08);box-shadow:0 12px 30px rgba(0,0,0,.45)}' +
                     '#xxt-v41-music .xm-dhead b{display:block;font-size:13px}' +
                     '#xxt-v41-music .xm-dsub{display:block;margin:2px 0 8px;font-size:11px;color:#7D726D}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-music .xm-dbody{transition:none}}' +
                     '#xxt-v41-music .xm-reclist{max-height:320px;overflow-y:auto;scrollbar-width:thin;margin:0 -4px;padding:0 4px}' +
                     '#xxt-v41-music .xm-rec{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:7px 8px;border-radius:9px;cursor:pointer}' +
                     '#xxt-v41-music .xm-rec:hover{background:rgba(255,255,255,.06)}' +
@@ -4393,10 +4394,11 @@
                     '#xxt-v41-music .xm-conv-lrc{display:none;font-size:11px;color:#A89D98;line-height:1.5}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-music,#xxt-v41-music .xm-arm{transition:none}#xxt-v41-music .xm-disc,#xxt-v41-music .xm-eq i{animation:none}}' +
                     '</style>' +
-                    '<div class="xm-head"><b>唱片机</b><button type="button" class="xm-x" data-m="close" aria-label="关闭唱片机">×</button></div>' +
+                    '<div class="xm-head"><b>唱片机</b>' +
+                      (RECOMMENDED.length ? '<button type="button" class="xm-dbtn" data-m="rechandle" aria-expanded="false" aria-controls="xxt-v41-rec">♪ 歌单</button>' : '') +
+                      '<button type="button" class="xm-x" data-m="close" aria-label="关闭唱片机">×</button></div>' +
                     (RECOMMENDED.length ? '<div class="xm-drawer" data-m="drawer">' +
-                      '<button type="button" class="xm-dhandle" data-m="rechandle" aria-expanded="false" aria-controls="xxt-v41-rec">RouteCC 的歌单<i>›</i></button>' +
-                      '<div class="xm-dbody" data-m="recbody" id="xxt-v41-rec" inert><div class="xm-dinner">' +
+                      '<div class="xm-dbody" data-m="recbody" id="xxt-v41-rec" role="region" aria-label="RouteCC 的歌单" inert><div class="xm-dinner">' +
                         '<div class="xm-dhead"><b>RouteCC 的歌单</b><span class="xm-dsub">点歌名，在网易云音乐里播放</span></div>' +
                         '<div class="xm-reclist" data-m="reclist" role="list"></div>' +
                       '</div></div></div>' : '') +
@@ -4551,8 +4553,10 @@
                 d.style.left = Math.round(left) + 'px';
                 d.style.top = Math.round(top) + 'px';
                 d.style.maxHeight = (H - 16) + 'px';
-                // 右侧放不下歌单侧拉栏（约 250px）时，从左侧拉出
-                d.classList.toggle('dleft', left + w + 250 > W && left - 250 >= 0);
+                // 歌单：右侧放得下（约 250px）从右侧滑出，否则左侧，两边都放不下就盖在唱片机上
+                const roomRight = W - (left + w) >= 252, roomLeft = left >= 252;
+                d.classList.toggle('dleft', !roomRight && roomLeft);
+                d.classList.toggle('dinside', !roomRight && !roomLeft);
                 try {
                     const cs = getComputedStyle(el);
                     const acc = cs.getPropertyValue('--x-accent').trim(), on = cs.getPropertyValue('--x-on-accent').trim();

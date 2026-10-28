@@ -1296,13 +1296,14 @@ test('唱片机「RouteCC 的歌单」：侧拉栏默认收起，点歌名在网
     await inject(p); await sleep(1500);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(800);
-    const st = () => p.evaluate(() => ({ open: document.querySelector('#xxt-v41-music [data-m=drawer]').classList.contains('open'), w: document.querySelector('#xxt-v41-music [data-m=recbody]').getBoundingClientRect().width,
-        rows: [...document.querySelectorAll('#xxt-v41-music [data-rec]')].map((e) => e.textContent), inList: document.querySelectorAll('#xxt-v41-music [data-m=list] [data-rec]').length }));
+    const st = () => p.evaluate(() => { const rb = document.querySelector('#xxt-v41-music [data-m=recbody]'), r = rb.getBoundingClientRect(); return { open: document.querySelector('#xxt-v41-music [data-m=drawer]').classList.contains('open'), op: getComputedStyle(rb).opacity, inView: r.left >= 0 && r.right <= innerWidth && r.width > 200,
+        inHeader: !!document.querySelector('#xxt-v41-music .xm-head [data-m=rechandle]'),
+        rows: [...document.querySelectorAll('#xxt-v41-music [data-rec]')].map((e) => e.textContent), inList: document.querySelectorAll('#xxt-v41-music [data-m=list] [data-rec]').length }; });
     let s = await st();
-    assert(!s.open && s.w < 2 && s.inList === 0, `歌单应默认收起，且不在播放列表里：${JSON.stringify(s)}`);
+    assert(!s.open && s.op === '0' && s.inHeader && s.inList === 0, `歌单应默认收起、入口在标题栏，且不在播放列表里：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-music [data-m=rechandle]'); await sleep(600);
     s = await st();
-    assert(s.open && s.w > 200 && s.rows.length === 5 && s.rows[0].includes('River Flows In You') && s.rows[4].includes('海屿你'), `点把手后应展开歌单：${JSON.stringify(s)}`);
+    assert(s.open && s.op === '1' && s.inView && s.rows.length === 5 && s.rows[0].includes('River Flows In You') && s.rows[4].includes('海屿你'), `点把手后应展开歌单：${JSON.stringify(s)}`);
     const pop = ctx.waitForEvent('page');
     await p.click('#xxt-v41-music [data-rec="0"]');
     const url = (await pop).url();
@@ -1312,6 +1313,10 @@ test('唱片机「RouteCC 的歌单」：侧拉栏默认收起，点歌名在网
     await p.click('#xxt-v41-music [data-m=close]'); await sleep(500);
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(800);
     assert(!(await st()).open, '重新打开唱片机后歌单应收起');
+    await p.setViewportSize({ width: 520, height: 900 }); await sleep(500);
+    await p.click('#xxt-v41-music [data-m=rechandle]'); await sleep(600);
+    s = await st();
+    assert(s.open && s.inView, `窄窗口里歌单也应完整可见：${JSON.stringify(s)}`);
     await ctx.close();
 });
 
