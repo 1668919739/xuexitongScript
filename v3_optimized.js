@@ -11,7 +11,7 @@
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
         { v: '4.6.0', date: '2026-10-28', items: [
-            '新增答题辅助：齿轮设置里打开「自动答题」，选「DeepSeek」并填入自己在 DeepSeek 开放平台申请的 Key（只需填一次，长期保存在本机浏览器），章节测验会自动识别单选 / 多选 / 判断题、作答、逐题核对后提交，确认成绩再进入下一节；视频弹题自动作答，答对后继续播放。也可选「随机作答」，不联网、不需要 Key',
+            '新增答题辅助（浮窗里有上手教程）：齿轮设置里「自动答题」默认开启、作答方式默认 DeepSeek，填入自己在 DeepSeek 开放平台申请的 Key 即可使用（只需填一次，长期保存在本机浏览器；调用会消耗你自己 DeepSeek 账号的余额），章节测验会自动识别单选 / 多选 / 判断题、作答、逐题核对后提交，确认成绩再进入下一节；视频弹题自动作答，答对后继续播放。也可选「随机作答」，不联网、不需要 Key',
             '格式转换升级：新增「车载 MP3」（44.1kHz 立体声恒定码率）和「FLAC 无损」，可开启音量统一、文件名加序号，可一次添加整个文件夹；同名 .lrc 歌词会随下载一起改名保存。右侧功能栏新增「音频转换」直达入口',
             '唱片机新增「RouteCC 的歌单」侧拉栏（默认收起）：点歌名即在网易云音乐里打开这首歌，用你自己的网易云播放',
             '答题进度显示在状态框里；视频弹题答错时自动换一个没选过的答案重交（最多 3 次），章节测验不会重复提交；结果不明或题目变化时停止并按提示音设置提醒。点「停止」立即中断，答题进行中也能随时改设置（本轮结束后生效）。没有填 Key 或关闭自动答题时，测验和弹题按原来的方式处理',
@@ -324,11 +324,90 @@
             app._panelKey = '';
         };
 
+        // ---------- 上手教程（本次大更新的答题辅助） ----------
+        // 没填 Key 时在浮窗主界面显示一张小卡片：先是一行提示，点「开始」后分三步讲解；看完或关掉后不再自动出现，设置里随时能重看
+        const GUIDE_KEY = 'xxt-v41-quiz-guide';
+        let guideStep = -1;        // -1：收起的一行提示；0~2：第几步
+        let guideForced = false;   // 从设置里点了「上手教程」
+        const guideDone = () => { try { return localStorage.getItem(GUIDE_KEY) === 'done'; } catch (e) { return false; } };
+        const finishGuide = () => { try { localStorage.setItem(GUIDE_KEY, 'done'); } catch (e) { /* ignore */ } guideForced = false; guideStep = -1; app._panelKey = ''; app._renderPanel(); };
+        const GUIDE = [
+            ['打开答题辅助', '点浮窗右上角的齿轮，找到「答题辅助」。「自动答题」默认已开启，作答方式默认是 DeepSeek。', '带我去看'],
+            ['填入 DeepSeek Key', '在 DeepSeek 开放平台登录并充值，创建一个 API Key（以 sk- 开头），复制后粘贴到设置里点「保存」，只需填一次。调用会消耗你自己 DeepSeek 账号的余额。', '去申请 Key'],
+            ['开始学习', '进入章节测验或视频出现弹题时会自动作答，进度显示在状态框；结果不明时会停下来提醒。不想用时关掉「自动答题」；也可以选「随机作答」，不联网、不花钱，但答案只是随机的。', '我知道了'],
+        ];
+        function flashQuizSettings(el) {
+            const targets = ['quizlabel', 'quizon', 'quizst', 'quizapi'].map((k) => el.querySelector(`[data-k="${k}"]`)).filter(Boolean).map((n) => n.closest('.xxt-set-row') || n);
+            if (targets[0]) targets[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+            for (const n of targets) { n.classList.remove('xxt-flash'); void n.offsetWidth; n.classList.add('xxt-flash'); }
+            setTimeout(() => targets.forEach((n) => n.classList.remove('xxt-flash')), 2400);
+        }
+        function buildGuide(el) {
+            const anchor = el.querySelector('[data-k="whatsnew"]');
+            if (!anchor || el.querySelector('[data-k="quizguidecard"]')) return;
+            const card = document.createElement('div');
+            card.className = 'xxt-guide';
+            card.setAttribute('data-k', 'quizguidecard');
+            card.style.display = 'none';
+            card.innerHTML =
+                '<div class="xxt-guide-mini" data-k="gmini"><span>🎓 新功能：答题辅助 · 30 秒上手</span><button type="button" class="xxt-guide-go" data-k="gstart">开始 ›</button><button type="button" class="xxt-notice-x" data-k="gclose" aria-label="关闭教程">×</button></div>' +
+                '<div class="xxt-guide-step" data-k="gstep" role="group" aria-label="答题辅助上手教程">' +
+                  '<div class="xxt-guide-head"><b data-k="gtitle"></b><span data-k="gno"></span><button type="button" class="xxt-notice-x" data-k="gclose2" aria-label="关闭教程">×</button></div>' +
+                  '<p data-k="gtext"></p>' +
+                  '<div class="xxt-guide-btns"><button type="button" class="xxt-set-btn" data-k="gprev">上一步</button><button type="button" class="xxt-set-btn xxt-fb-send" data-k="gact"></button><button type="button" class="xxt-set-btn" data-k="gnext">下一步</button></div>' +
+                  '<div class="xxt-guide-dots" data-k="gdots" aria-hidden="true"><i></i><i></i><i></i></div>' +
+                '</div>';
+            anchor.insertAdjacentElement('afterend', card);
+            const go = (n) => { guideStep = Math.max(0, Math.min(GUIDE.length - 1, n)); app._panelKey = ''; app._renderPanel(); };
+            card.querySelector('[data-k="gstart"]').addEventListener('click', () => go(0));
+            card.querySelector('[data-k="gclose"]').addEventListener('click', finishGuide);
+            card.querySelector('[data-k="gclose2"]').addEventListener('click', finishGuide);
+            card.querySelector('[data-k="gprev"]').addEventListener('click', () => go(guideStep - 1));
+            card.querySelector('[data-k="gnext"]').addEventListener('click', () => go(guideStep + 1));
+            card.querySelector('[data-k="gact"]').addEventListener('click', () => {
+                if (guideStep === 0) {
+                    app._animatePanel(() => { app._settingsOpen = true; app._fbOpen = false; app._histOpen = false; });
+                    setTimeout(() => flashQuizSettings(el), 450);
+                    guideStep = 1;
+                } else if (guideStep === 1) {
+                    openTab(DEEPSEEK_KEY_PAGE);
+                    go(2);
+                } else finishGuide();
+            });
+        }
+        function renderGuide(el) {
+            const card = el.querySelector('[data-k="quizguidecard"]');
+            if (!card) return;
+            const wn = el.querySelector('[data-k="whatsnew"]');
+            const want = guideForced || (!guideDone() && !deepseekKey() && C.quizMode !== 'random');
+            const show = want && app._mode === 'course' && !app._panelCollapsed && !app._settingsOpen && !app._histOpen && !(wn && wn.style.display !== 'none');
+            card.style.display = show ? '' : 'none';
+            if (!show) return;
+            const q = (k) => card.querySelector(`[data-k="${k}"]`);
+            const mini = guideStep < 0;
+            q('gmini').style.display = mini ? '' : 'none';
+            q('gstep').style.display = mini ? 'none' : '';
+            if (mini) return;
+            const [title, text, act] = GUIDE[guideStep];
+            q('gtitle').textContent = title;
+            q('gno').textContent = `${guideStep + 1} / ${GUIDE.length}`;
+            q('gtext').textContent = text;
+            q('gact').textContent = act;
+            q('gprev').style.visibility = guideStep > 0 ? '' : 'hidden';
+            q('gnext').style.visibility = guideStep < GUIDE.length - 1 ? '' : 'hidden';
+            [...q('gdots').children].forEach((d, i) => d.classList.toggle('on', i === guideStep));
+        }
+
         // ---------- 齿轮设置里的「答题辅助」 ----------
         function bindPanel(el) {
             boundPanel = el;
+            buildGuide(el);
             const q = (k) => el.querySelector(`[data-k="${k}"]`);
             if (!q('quizon')) return;
+            q('quizguide').addEventListener('click', () => {
+                guideForced = true; guideStep = 0;
+                app._animatePanel(() => { app._settingsOpen = false; app._fbOpen = false; app._histOpen = false; });
+            });
             for (const t of ['keydown', 'keyup', 'keypress']) q('quizkey').addEventListener(t, (e) => e.stopPropagation());
             q('quizon').addEventListener('change', (e) => app.setQuizEnabled(e.target.checked));
             for (const b of el.querySelectorAll('[data-qmode]')) b.addEventListener('click', () => {
@@ -373,7 +452,7 @@
             q('quizst').classList.toggle('err', on && api && !key);
             q('quizkey').placeholder = key ? '填写新的 Key 可替换' : 'sk-…';
             show(q('quizkeyclear'), !!key);
-            set(q('quiznote'), configNote || (api ? '在 DeepSeek 开放平台申请 Key，调用按量计费；答案不保证正确' : '答案不保证正确'));
+            set(q('quiznote'), configNote || (api ? '答案不保证正确' : '随机作答不联网、不花钱，答案仅随机选择'));
         }
 
         // ---------- 接入播放器生命周期 ----------
@@ -399,6 +478,7 @@
             if (!el) return;
             if (el !== boundPanel) bindPanel(el);
             renderQuizSettings(el);
+            renderGuide(el);
         };
         // 答题进度和停止原因显示在浮窗原有的状态框里（红色会触发“需要处理”提示音）
         app._panelStatus = function () {
@@ -5219,6 +5299,25 @@
                     '#xxt-v41-panel .xxt-quiz-in:focus{border-color:var(--x-accent-ring)}' +
                     '#xxt-v41-panel .xxt-quiz-link{display:inline-block;margin:0 0 4px;font-size:12px;color:var(--x-accent-strong);text-decoration:none}' +
                     '#xxt-v41-panel .xxt-quiz-link:hover,#xxt-v41-panel .xxt-quiz-link:focus-visible{text-decoration:underline}' +
+                    '#xxt-v41-panel .xxt-quiz-label{display:flex;align-items:center;justify-content:space-between}' +
+                    '#xxt-v41-panel .xxt-quiz-guide-btn{margin:0;padding:0;border:0;background:none;font:inherit;font-size:12px;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-quiz-cost{display:block;margin:0 0 4px;padding:5px 8px;border-radius:7px;font-size:11.5px;line-height:1.45;color:#B45309;background:rgba(245,165,36,.12)}' +
+                    '#xxt-v41-panel .xxt-flash{animation:xxt-flash 1.2s ease-in-out 2;border-radius:8px}' +
+                    '@keyframes xxt-flash{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 3px var(--x-accent-ring);background:var(--x-accent-softer)}}' +
+                    '#xxt-v41-panel .xxt-guide{margin-top:10px;padding:9px 12px;border-radius:10px;background:linear-gradient(135deg,var(--x-accent-softer),var(--x-soft));box-shadow:inset 0 0 0 1px var(--x-accent-soft)}' +
+                    '#xxt-v41-panel .xxt-guide-mini{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--x-accent-text)}' +
+                    '#xxt-v41-panel .xxt-guide-mini span{flex:1;min-width:0;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-guide-go{flex:none;margin:0;border:0;border-radius:7px;padding:4px 10px;background:var(--x-accent);color:var(--x-on-accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-guide-head{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-panel .xxt-guide-head b{font-size:13px;color:var(--x-strong)}' +
+                    '#xxt-v41-panel .xxt-guide-head span{margin-left:auto;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-panel .xxt-guide p{margin:6px 0 8px;font-size:12px;line-height:1.6;color:var(--x-text2)}' +
+                    '#xxt-v41-panel .xxt-guide-btns{display:flex;gap:6px}' +
+                    '#xxt-v41-panel .xxt-guide-btns .xxt-set-btn{padding:5px 0}' +
+                    '#xxt-v41-panel .xxt-guide-dots{display:flex;justify-content:center;gap:5px;margin-top:8px}' +
+                    '#xxt-v41-panel .xxt-guide-dots i{width:5px;height:5px;border-radius:50%;background:var(--x-line-strong)}' +
+                    '#xxt-v41-panel .xxt-guide-dots i.on{background:var(--x-accent);width:14px;border-radius:3px}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-flash{animation:none;box-shadow:0 0 0 3px var(--x-accent-ring)}}' +
                     '#xxt-v41-panel .xxt-switch{appearance:none;-webkit-appearance:none;flex:none;width:32px;height:18px;border-radius:9px;background:var(--x-switch-off);position:relative;cursor:pointer;margin:0;transition:background .15s}' +
                     '#xxt-v41-panel .xxt-switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}' +
                     '#xxt-v41-panel .xxt-switch:checked{background:var(--x-accent)}' +
@@ -5368,13 +5467,13 @@
                           `<button type="button" data-cpreset="${c}" style="background:${c}" title="${c}" aria-label="${c}"></button>`).join('') + '</div>' +
                       '</div>' +
                       (this._mode === 'course' ?
-                        '<div class="xxt-set-label">答题辅助</div>' +
+                        '<div class="xxt-set-label xxt-quiz-label" data-k="quizlabel">答题辅助<button type="button" class="xxt-quiz-link xxt-quiz-guide-btn" data-k="quizguide">上手教程 ›</button></div>' +
                         '<label class="xxt-set-row"><span>自动答题<small>章节测验、视频弹题自动作答并提交</small></span><input type="checkbox" class="xxt-switch" data-k="quizon"></label>' +
                         '<div class="xxt-goal-opts" role="radiogroup" aria-label="作答方式"><button type="button" class="xxt-rate-opt" data-qmode="api" role="radio">DeepSeek</button><button type="button" class="xxt-rate-opt" data-qmode="random" role="radio">随机作答</button></div>' +
                         '<div data-k="quizst" class="xxt-quiz-st"></div>' +
                         '<div data-k="quizapi">' +
                           '<div class="xxt-quiz-row"><input type="password" data-k="quizkey" class="xxt-quiz-in" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key"><button type="button" data-k="quizkeysave" class="xxt-set-btn">保存</button><button type="button" data-k="quizkeyclear" class="xxt-set-btn">清除</button></div>' +
-                          `<a class="xxt-quiz-link" href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener noreferrer">去 DeepSeek 开放平台申请 Key ›</a>` +
+                          `<a class="xxt-quiz-link" href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener noreferrer">去 DeepSeek 开放平台申请 Key ›</a><span class="xxt-quiz-cost">使用 DeepSeek API Key 作答会消耗你自己 DeepSeek 账号的余额（按调用量计费）</span>` +
                         '</div>' +
                         '<div data-k="quiznote" class="xxt-fb-hint"></div>' +
                         '<div class="xxt-set-label">通用</div>' : '') +

@@ -1093,6 +1093,44 @@ const quizUi = (p) => p.evaluate(() => {
 });
 const KEY = 'sk-0123456789abcdef';
 
+test('答题辅助：默认开启且为 DeepSeek；没填 Key 时显示上手教程，三步引导，看完不再出现，设置里可重看', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1100, height: 950 } });
+    await ctx.route('https://platform.deepseek.com/**', (r) => r.fulfill({ contentType: 'text/html', body: 'ds' }));
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    const defaults = await p.evaluate(() => [app.configs.quizAssist, app.configs.quizMode]);
+    assert(JSON.stringify(defaults) === '[true,"api"]', `默认应开启且为 DeepSeek：${JSON.stringify(defaults)}`);
+    const card = () => p.evaluate(() => { const c = document.querySelector('#xxt-v41-panel [data-k=quizguidecard]'); return { shown: !!c && c.style.display !== 'none', mini: !!c && c.querySelector('[data-k=gmini]').style.display !== 'none', title: c && c.querySelector('[data-k=gtitle]').textContent, text: c && c.querySelector('[data-k=gtext]').textContent }; });
+    let c = await card();
+    assert(c.shown && c.mini, `没填 Key 时应显示教程提示：${JSON.stringify(c)}`);
+    await p.click('#xxt-v41-panel [data-k=gstart]'); await sleep(300);
+    c = await card();
+    assert(c.title === '打开答题辅助' && !c.mini, `第一步不对：${JSON.stringify(c)}`);
+    await p.click('#xxt-v41-panel [data-k=gact]'); await sleep(900);
+    const flash = await p.evaluate(() => ({ settings: document.querySelector('#xxt-v41-panel [data-k=settings]').offsetParent !== null, flashing: document.querySelectorAll('#xxt-v41-panel .xxt-flash').length }));
+    assert(flash.settings && flash.flashing >= 2, `“带我去看”应打开设置并提示答题辅助：${JSON.stringify(flash)}`);
+    assert(/消耗你自己 DeepSeek 账号的余额/.test(await p.textContent('#xxt-v41-panel [data-k=quizapi]')), '设置里应注明消耗自己 DeepSeek 账号的余额');
+    await p.click('[data-k=gear]'); await sleep(600);
+    c = await card();
+    assert(c.title === '填入 DeepSeek Key' && /余额/.test(c.text), `第二步不对：${JSON.stringify(c)}`);
+    const pop = ctx.waitForEvent('page');
+    await p.click('#xxt-v41-panel [data-k=gact]');
+    assert((await pop).url().startsWith('https://platform.deepseek.com/'), '应打开 DeepSeek 开放平台');
+    await sleep(300);
+    assert((await card()).title === '开始学习', '第三步不对');
+    await p.click('#xxt-v41-panel [data-k=gact]'); await sleep(300);
+    assert(!(await card()).shown, '看完后应收起');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
+    assert(!(await card()).shown, '看完后刷新不应再出现');
+    await p.click('[data-k=gear]'); await sleep(400);
+    await p.click('#xxt-v41-panel [data-k=quizguide]'); await sleep(700);
+    c = await card();
+    assert(c.shown && c.title === '打开答题辅助', `设置里应能重看教程：${JSON.stringify(c)}`);
+    await ctx.close();
+});
+
 test('答题辅助：默认没填 Key 时不生效，章节测验仍按原来的方式跳过', async (b) => {
     const ctx = await newContext(b, { routes: { '*': quizPage() } });
     const calls = await mockDeepseek(ctx, { answers: [] });
