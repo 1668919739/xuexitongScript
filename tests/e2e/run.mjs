@@ -955,7 +955,7 @@ test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片�
     assert(s.show && !s.open && s.handleAtRight && s.trayOpacity === '0' && !s.headerMusic, `把手位置或默认状态不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
     s = await st();
-    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|更新记录|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
+    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|音频转换|更新记录|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=history]'); await sleep(700);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=history]').offsetParent !== null), '更新记录没打开');
     await p.click('#xxt-v41-side [data-s=feedback]'); await sleep(700);
@@ -1059,6 +1059,268 @@ test('唱片机格式转换：把音频/视频转成 MP3 或 WAV 加入唱片机
     await sleep(500);
     const v = await p.evaluate(() => ({ conv: document.getElementById('xxt-v41-music').classList.contains('conv'), hint: document.querySelector('#xxt-v41-music [data-m=convhint]').textContent, q: app._convQ.map((x) => x.name) }));
     assert(v.conv && /不能直接播放/.test(v.hint) && v.q.includes('课堂视频.mp4'), `视频文件没有转到格式转换：${JSON.stringify(v)}`);
+    await ctx.close();
+});
+
+// ---------- 答题辅助（DeepSeek 接口在本地拦截，不会真的调用） ----------
+const QUIZ_BODY = '<div id="work">' +
+    '<div class="TiMu"><div>1 【单选题】 1+1 等于几？</div><ul><li><label><input type="radio" name="q1"><span>A</span> 2</label></li><li><label><input type="radio" name="q1"><span>B</span> 3</label></li></ul></div>' +
+    '<div class="TiMu"><div>2 【多选题】 下面哪些是偶数？</div><ul><li><label><input type="checkbox" name="q2"><span>A</span> 2</label></li><li><label><input type="checkbox" name="q2"><span>B</span> 4</label></li><li><label><input type="checkbox" name="q2"><span>C</span> 5</label></li></ul></div>' +
+    '<button type="button" id="sub">提交</button><div id="score"></div></div>' +
+    '<div id="prevNextFocusNext" style="display:inline-block;padding:4px">下一节</div>';
+const quizPage = () => coursePage({ body: QUIZ_BODY }).replace('<div class="prev_title" title="视频"></div>', '<div class="prev_title" title="章节测验"></div>');
+const wireQuiz = (p) => p.evaluate(() => {
+    document.getElementById('sub').addEventListener('click', () => {
+        window.__submitted = [...document.querySelectorAll('#work input')].map((i) => i.checked);
+        document.getElementById('score').innerHTML = '<div>本次成绩：100分</div><div>章节测验 已完成</div>';
+    });
+    document.getElementById('prevNextFocusNext').addEventListener('click', () => { window.__next = (window.__next || 0) + 1; });
+});
+const mockDeepseek = async (ctx, reply) => {
+    const calls = [];
+    await ctx.route('https://api.deepseek.com/**', (r) => {
+        const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type', 'access-control-allow-methods': 'POST' };
+        if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+        calls.push({ auth: r.request().headers().authorization, body: JSON.parse(r.request().postData() || '{}') });
+        if (reply.status) return r.fulfill({ status: reply.status, headers: H, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Authentication Fails' } }) });
+        return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: reply.answers }) } }] }) });
+    });
+    return calls;
+};
+const quizUi = (p) => p.evaluate(() => {
+    const q = (k) => document.querySelector(`#xxt-v41-panel [data-k="${k}"]`);
+    return { label: q('label').textContent, text: q('text').textContent, st: q('quizst') && q('quizst').textContent, note: q('quiznote') && q('quiznote').textContent };
+});
+const KEY = 'sk-0123456789abcdef';
+
+test('答题辅助：默认没填 Key 时不生效，章节测验仍按原来的方式跳过', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': quizPage() } });
+    const calls = await mockDeepseek(ctx, { answers: [] });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await wireQuiz(p);
+    await inject(p); await sleep(6500);
+    const r = await p.evaluate(() => ({ next: window.__next || 0, sub: !!window.__submitted }));
+    assert(r.next >= 1 && !r.sub && calls.length === 0, `未填 Key 时应按原逻辑跳过：${JSON.stringify(r)}`);
+    await p.click('[data-k=gear]'); await sleep(500);
+    assert(/还没有填写 DeepSeek Key/.test((await quizUi(p)).st), '设置里应提示填写 Key');
+    await ctx.close();
+});
+
+test('答题辅助：设置里保存 Key（只显示掩码、刷新后保留、可清除），可切换随机作答', async (b) => {
+    const ctx = await newContext(b);
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.click('[data-k=gear]'); await sleep(500);
+    await p.fill('#xxt-v41-panel [data-k=quizkey]', 'abc');
+    await p.click('#xxt-v41-panel [data-k=quizkeysave]'); await sleep(200);
+    assert(/sk-/.test((await quizUi(p)).note), 'Key 格式不对时应提示');
+    await p.fill('#xxt-v41-panel [data-k=quizkey]', KEY);
+    await p.press('#xxt-v41-panel [data-k=quizkey]', 'Enter'); await sleep(300);
+    assert(/sk-…cdef/.test((await quizUi(p)).st), '保存后应显示 Key 掩码');
+    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
+    await p.click('[data-k=gear]'); await sleep(500);
+    assert(/sk-…cdef/.test((await quizUi(p)).st) && (await p.inputValue('#xxt-v41-panel [data-k=quizkey]')) === '', '刷新后 Key 应保留且不回显');
+    await p.click('#xxt-v41-panel [data-qmode=random]'); await sleep(300);
+    const mode = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt-v41-settings')).quizMode);
+    assert(mode === 'random' && /随机作答/.test((await quizUi(p)).st), `切换随机作答不对：${mode}`);
+    await p.click('#xxt-v41-panel [data-qmode=api]'); await sleep(200);
+    await p.click('#xxt-v41-panel [data-k=quizkeyclear]'); await sleep(200);
+    assert((await p.evaluate(() => localStorage.getItem('xxt-v41-deepseek-key'))) === null, '清除后 Key 应删除');
+    await ctx.close();
+});
+
+test('答题辅助：DeepSeek 作答，逐题核对后提交，确认成绩再点“下一节”', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': quizPage() } });
+    const calls = await mockDeepseek(ctx, { answers: [{ id: 1, letters: ['A'] }, { id: 2, letters: ['A', 'B'] }] });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await wireQuiz(p);
+    await inject(p); await sleep(3000);
+    assert((await quizUi(p)).label === '答题中', '作答过程中状态框应显示“答题中”');
+    await p.waitForFunction(() => window.__next >= 1, null, { timeout: 25000 });
+    const sub = await p.evaluate(() => window.__submitted);
+    assert(JSON.stringify(sub) === '[true,false,true,true,false]', `提交时选中状态不对：${JSON.stringify(sub)}`);
+    const c = calls[0];
+    const qs = JSON.parse(c.body.messages[1].content);
+    assert(c.auth === `Bearer ${KEY}` && c.body.model === 'deepseek-flash' && qs.length === 2 && qs[1].type === '多选题' && qs[0].question === '1+1 等于几？', `请求不对：${JSON.stringify(c)}`);
+    await ctx.close();
+});
+
+test('答题辅助：Key 无效时停止，不提交，状态框说明原因', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': quizPage() } });
+    await mockDeepseek(ctx, { status: 401 });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await wireQuiz(p);
+    await inject(p); await sleep(9000);
+    const r = await p.evaluate(() => ({ sub: !!window.__submitted, next: window.__next || 0, state: app._state }));
+    const ui = await quizUi(p);
+    assert(!r.sub && r.next === 0 && r.state === 'stopped' && ui.label === '需要处理' && /401.*Key 无效/.test(ui.text), `Key 无效时应停止：${JSON.stringify({ r, ui })}`);
+    await ctx.close();
+});
+
+test('答题辅助：随机作答处理视频弹题，弹层关闭后继续播放，不联网', async (b) => {
+    const ctx = await newContext(b);
+    const calls = await mockDeepseek(ctx, { answers: [] });
+    const p = await ctx.newPage();
+    await p.addInitScript(() => localStorage.setItem('xxt-v41-settings', JSON.stringify({ quizMode: 'random' })));
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate(() => {
+        const d = document.getElementById('f').contentDocument;
+        d.body.insertAdjacentHTML('beforeend', '<div class="ans-videoquiz" style="width:300px;height:160px"><div class="tkTopic">【单选题】 视频里提到的是哪一个？</div>' +
+            '<ul><li><label><input type="radio" name="v"><span>A</span> 甲</label></li><li><label><input type="radio" name="v"><span>B</span> 乙</label></li></ul><button type="button">提交</button></div>');
+        d.querySelector('.ans-videoquiz button').addEventListener('click', () => { window.__picked = [...d.querySelectorAll('.ans-videoquiz input')].map((i) => i.checked); d.querySelector('.ans-videoquiz').remove(); });
+        __v.pause();
+    });
+    await p.waitForFunction(() => !!window.__picked, null, { timeout: 15000 });
+    await sleep(2500);
+    const r = await p.evaluate(() => ({ picked: window.__picked, paused: __v.paused }));
+    assert(r.picked.filter(Boolean).length === 1 && !r.paused && calls.length === 0, `视频弹题处理不对：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
+test('答题辅助：答题进行中也能切换设置，界面立即显示，本轮结束后才生效', async (b) => {
+    const ctx = await newContext(b, { routes: { '*': quizPage() } });
+    await ctx.route('https://api.deepseek.com/**', async (r) => {
+        const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type', 'access-control-allow-methods': 'POST' };
+        if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+        await sleep(4000);
+        return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: [{ id: 1, letters: ['A'] }, { id: 2, letters: ['A', 'B'] }] }) } }] }) });
+    });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await wireQuiz(p);
+    await p.evaluate(() => document.getElementById('prevNextFocusNext').addEventListener('click', () => setTimeout(() => { document.querySelector('.prev_title').title = '学习目标'; }, 800)));
+    await inject(p);
+    await p.click('[data-k=gear]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-panel [data-k=label]').textContent === '答题中', null, { timeout: 15000 });
+    await sleep(1000);
+    await p.click('#xxt-v41-panel [data-qmode=random]', { timeout: 2000 });
+    await p.click('#xxt-v41-panel [data-k=quizon]', { timeout: 2000 });
+    await sleep(200);
+    const mid = await p.evaluate(() => ({ on: document.querySelector('#xxt-v41-panel [data-k=quizon]').checked, random: document.querySelector('#xxt-v41-panel [data-qmode=random]').classList.contains('on'), real: [app.configs.quizAssist, app.configs.quizMode], note: document.querySelector('#xxt-v41-panel [data-k=quiznote]').textContent }));
+    assert(!mid.on && mid.random && mid.real[0] === true && mid.real[1] === 'api' && /本轮答题结束后生效/.test(mid.note), `答题中切换不对：${JSON.stringify(mid)}`);
+    await p.waitForFunction(() => window.__next >= 1, null, { timeout: 25000 });
+    assert(JSON.stringify(await p.evaluate(() => window.__submitted)) === '[true,false,true,true,false]', '本轮应按原设置（DeepSeek）完成');
+    await sleep(3000);
+    const after = await p.evaluate(() => [app.configs.quizAssist, app.configs.quizMode, JSON.parse(localStorage.getItem('xxt-v41-settings') || '{}').quizMode]);
+    assert(JSON.stringify(after) === '[false,"random","random"]', `本轮结束后应生效：${JSON.stringify(after)}`);
+    await ctx.close();
+});
+
+test('唱片机 / 音频转换：同一个面板按页面切换，功能栏高亮跟着走', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    const st = () => p.evaluate(() => { const m = document.getElementById('xxt-v41-music'); const on = (k) => document.querySelector(`#xxt-v41-side [data-s=${k}]`).classList.contains('on'); return [m && m.classList.contains('open'), m && m.classList.contains('conv'), on('music'), on('conv')].map(Number).join(''); });
+    const got = [];
+    for (const sel of ['#xxt-v41-side [data-s=music]', '#xxt-v41-side [data-s=conv]', '#xxt-v41-side [data-s=music]', '#xxt-v41-side [data-s=music]', '#xxt-v41-side [data-s=conv]', '#xxt-v41-music [data-m=close]', '#xxt-v41-side [data-s=music]', '#xxt-v41-music [data-m=convopen]', '#xxt-v41-music [data-m=convback]']) {
+        await p.click(sel); await sleep(400); got.push(await st());
+    }
+    assert(got.join(',') === '1010,1101,1010,0000,1101,0000,1010,1101,1010', `切换不对：${got.join(',')}`);
+    await ctx.close();
+});
+
+test('答题辅助：视频弹题答错时换没试过的答案重交，答对后继续播放', async (b) => {
+    const ctx = await newContext(b);
+    await mockDeepseek(ctx, { answers: [{ id: 1, letters: ['A'] }] });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate(() => {
+        const d = document.getElementById('f').contentDocument;
+        d.body.insertAdjacentHTML('beforeend', '<div class="ans-videoquiz" style="width:320px;height:200px"><div class="tkTopic">【单选题】 正确的是哪一个？</div><ul>' +
+            ['甲', '乙', '丙', '丁'].map((x, i) => `<li><label><input type="radio" name="v"><span>${'ABCD'[i]}</span> ${x}</label></li>`).join('') + '</ul><button type="button">提交</button><div class="fb"></div></div>');
+        window.__tries = [];
+        d.querySelector('.ans-videoquiz button').addEventListener('click', () => {
+            const i = [...d.querySelectorAll('.ans-videoquiz input')].findIndex((x) => x.checked);
+            window.__tries.push('ABCD'[i]);
+            if (i === 3) d.querySelector('.ans-videoquiz').remove(); else d.querySelector('.ans-videoquiz .fb').textContent = '回答错误';
+        });
+        __v.pause();
+    });
+    await p.waitForFunction(() => !document.getElementById('f').contentDocument.querySelector('.ans-videoquiz'), null, { timeout: 30000 });
+    await sleep(2500);
+    const r = await p.evaluate(() => ({ tries: window.__tries, paused: __v.paused }));
+    assert(r.tries[0] === 'A' && r.tries[r.tries.length - 1] === 'D' && new Set(r.tries).size === r.tries.length && !r.paused, `答错重试不对：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
+test('格式转换：功能栏直达；FLAC + 音量统一 + 序号 + 同名歌词；车载 MP3；添加整个文件夹', async (b) => {
+    const tone = (sec, rate, amp) => {
+        const n = rate * sec, buf = Buffer.alloc(44 + n * 4);
+        buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 4, 4); buf.write('WAVEfmt ', 8); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(2, 22);
+        buf.writeUInt32LE(rate, 24); buf.writeUInt32LE(rate * 4, 28); buf.writeUInt16LE(4, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * 4, 40);
+        for (let i = 0; i < n; i++) { const v = Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * amp); buf.writeInt16LE(v, 44 + i * 4); buf.writeInt16LE(v, 46 + i * 4); }
+        return buf;
+    };
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 950 } });
+    const lame = (await import('node:fs')).readFileSync(new URL('../../node_modules/lamejs/lame.min.js', import.meta.url), 'utf8');
+    await ctx.route('**/lamejs@1.2.1/lame.min.js', (r) => r.fulfill({ contentType: 'application/javascript', headers: { 'access-control-allow-origin': '*' }, body: lame }));
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    await p.click('#xxt-v41-side [data-s=conv]'); await sleep(800);
+    assert(await p.evaluate(() => document.getElementById('xxt-v41-music').classList.contains('conv')), '功能栏「音频转换」应直接打开转换页');
+    // 记录下载文件名，并在页面里解码检查结果
+    await p.evaluate(() => { window.__dl = []; const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) window.__dl.push(this.download); return c.call(this); }; });
+    await p.selectOption('#xxt-v41-music [data-m=cfmt]', 'flac');
+    for (const k of ['cnorm', 'cnum', 'cdl']) await p.check(`#xxt-v41-music [data-m=${k}]`);
+    await p.setInputFiles('#xxt-v41-music [data-m=convfile]', [
+        { name: '轻声.wav', mimeType: 'audio/wav', buffer: tone(2, 44100, 1500) },
+        { name: '轻声.lrc', mimeType: 'text/plain', buffer: Buffer.from('[00:00.00]歌词') },
+        { name: '第二首.wav', mimeType: 'audio/wav', buffer: tone(1, 48000, 9000) },
+    ]);
+    await p.click('#xxt-v41-music [data-m=cstart]');
+    await p.waitForFunction(() => !app._convRunning && app._convQ.every((x) => x.status === 'done' || x.status === 'fail'), null, { timeout: 30000 });
+    const r = await p.evaluate(async () => {
+        const t = app._tracks.find((x) => x.name === '01 轻声');
+        const a = await new OfflineAudioContext(2, 1, 44100).decodeAudioData(await t.blob.arrayBuffer());
+        const d = a.getChannelData(0); let peak = 0, sum = 0;
+        for (let i = 0; i < d.length; i++) { peak = Math.max(peak, Math.abs(d[i])); sum += d[i] * d[i]; }
+        return { dl: window.__dl, type: t.blob.type, rms: 20 * Math.log10(Math.sqrt(sum / d.length)), peak: 20 * Math.log10(peak), len: a.duration };
+    });
+    assert(['01 轻声.flac', '01 轻声.lrc', '02 第二首.flac'].every((n) => r.dl.includes(n)), `下载文件不对：${JSON.stringify(r.dl)}`);
+    assert(r.type === 'audio/flac' && Math.abs(r.len - 2) < 0.05 && r.rms > -17.5 && r.rms < -14.5 && r.peak <= -0.9, `FLAC / 音量统一不对：${JSON.stringify(r)}`);
+    // 车载 MP3：采样率、声道固定；整个文件夹（含子文件夹）入列，非音频忽略
+    await p.click('#xxt-v41-music [data-m=cclear]');
+    await p.selectOption('#xxt-v41-music [data-m=cfmt]', 'car');
+    for (const k of ['cnorm', 'cnum']) await p.uncheck(`#xxt-v41-music [data-m=${k}]`);
+    const dis = await p.evaluate(() => ['csr', 'cch', 'cbr'].map((k) => document.querySelector(`#xxt-v41-music [data-m=${k}]`).disabled));
+    assert(JSON.stringify(dis) === '[true,true,false]', `车载 MP3 选项状态不对：${JSON.stringify(dis)}`);
+    await p.evaluate((wav) => {
+        const inp = document.querySelector('#xxt-v41-music [data-m=convdir]');
+        const bin = Uint8Array.from(atob(wav), (c) => c.charCodeAt(0));
+        const files = [['专辑/单声道.wav', 'audio/wav'], ['专辑/子目录/另一首.wav', 'audio/wav'], ['专辑/说明.txt', 'text/plain']].map(([rel, type]) => {
+            const f = new File([bin], rel.split('/').pop(), { type }); Object.defineProperty(f, 'webkitRelativePath', { value: rel }); return f;
+        });
+        Object.defineProperty(inp, 'files', { configurable: true, get: () => files });
+        inp.dispatchEvent(new Event('change'));
+    }, tone(1, 22050, 8000).toString('base64'));
+    assert(JSON.stringify(await p.evaluate(() => app._convQ.map((x) => x.name))) === '["单声道.wav","另一首.wav"]', '文件夹导入不对');
+    await p.click('#xxt-v41-music [data-m=cstart]');
+    await p.waitForFunction(() => !app._convRunning && app._convQ.every((x) => x.status === 'done' || x.status === 'fail'), null, { timeout: 30000 });
+    const car = await p.evaluate(async () => {
+        const t = app._tracks.find((x) => x.name === '另一首');
+        const a = await new OfflineAudioContext(2, 1, 44100).decodeAudioData(await t.blob.arrayBuffer());
+        return { type: t.blob.type, ch: a.numberOfChannels };
+    });
+    assert(car.type === 'audio/mpeg' && car.ch === 2, `车载 MP3 不对：${JSON.stringify(car)}`);
     await ctx.close();
 });
 
