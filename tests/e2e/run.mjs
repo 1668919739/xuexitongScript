@@ -1287,30 +1287,29 @@ test('格式转换：网易云 .ncm 等加密格式可以选中，加入列表�
     await ctx.close();
 });
 
-test('唱片机作者推荐：点歌名在所选音乐平台打开这首歌，平台选择会被记住', async (b) => {
+test('唱片机「RouteCC 的歌单」：侧拉栏默认收起，点歌名在网易云音乐打开，重新打开唱片机后又收起', async (b) => {
     const ctx = await newContext(b, { viewport: { width: 1200, height: 950 } });
-    for (const host of ['https://music.163.com/**', 'https://y.qq.com/**', 'https://www.kugou.com/**']) await ctx.route(host, (r) => r.fulfill({ contentType: 'text/html', body: 'music' }));
+    await ctx.route('https://music.163.com/**', (r) => r.fulfill({ contentType: 'text/html', body: 'music' }));
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
     await addFakeVideo(p);
     await inject(p); await sleep(1500);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(800);
-    const rows = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-music [data-rec]')].map((e) => e.textContent));
-    assert(rows.length >= 1 && rows.length === 5 && rows[0].includes('River Flows In You') && rows[0].includes('Martin Ermen'), `推荐列表不对：${JSON.stringify(rows)}`);
-    let pop = ctx.waitForEvent('page');
+    const st = () => p.evaluate(() => ({ open: document.querySelector('#xxt-v41-music [data-m=drawer]').classList.contains('open'), w: document.querySelector('#xxt-v41-music [data-m=recbody]').getBoundingClientRect().width,
+        rows: [...document.querySelectorAll('#xxt-v41-music [data-rec]')].map((e) => e.textContent), inList: document.querySelectorAll('#xxt-v41-music [data-m=list] [data-rec]').length }));
+    let s = await st();
+    assert(!s.open && s.w < 2 && s.inList === 0, `歌单应默认收起，且不在播放列表里：${JSON.stringify(s)}`);
+    await p.click('#xxt-v41-music [data-m=rechandle]'); await sleep(600);
+    s = await st();
+    assert(s.open && s.w > 200 && s.rows.length === 5 && s.rows[0].includes('River Flows In You') && s.rows[4].includes('海屿你'), `点把手后应展开歌单：${JSON.stringify(s)}`);
+    const pop = ctx.waitForEvent('page');
     await p.click('#xxt-v41-music [data-rec="0"]');
-    let url = (await pop).url();
-    assert(url.startsWith('https://music.163.com/') && decodeURIComponent(url).includes('River Flows In You Martin Ermen'), `默认应在网易云打开：${url}`);
-    await p.click('#xxt-v41-music [data-recapp=qq]'); await sleep(300);
-    pop = ctx.waitForEvent('page');
-    await p.click('#xxt-v41-music [data-rec="4"]');
-    url = (await pop).url();
-    assert(url.startsWith('https://y.qq.com/') && decodeURIComponent(url).includes('海屿你'), `切到 QQ 音乐后不对：${url}`);
-    await p.reload(); await addFakeVideo(p); await inject(p); await sleep(1500);
-    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    const url = (await pop).url();
+    assert(url.startsWith('https://music.163.com/') && decodeURIComponent(url).includes('River Flows In You Martin Ermen'), `应在网易云音乐打开：${url}`);
+    await p.click('#xxt-v41-music [data-m=close]'); await sleep(500);
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(800);
-    assert(await p.evaluate(() => document.querySelector('#xxt-v41-music [data-recapp=qq]').classList.contains('on')), '刷新后应记住 QQ 音乐');
+    assert(!(await st()).open, '重新打开唱片机后歌单应收起');
     await ctx.close();
 });
 
