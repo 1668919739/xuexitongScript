@@ -1117,6 +1117,8 @@
 
     // ================= FLAC 编码（16 位无损，固定预测 + Rice 编码，纯浏览器实现） =================
     // 用法：const enc = flacEncoder(rate, ch, total)；逐块 enc.frame([L, R], n) 得到帧数据，最后把 enc.header() 放在最前面。
+    const ENCRYPTED_MSG = '音乐软件的加密格式，受版权保护，不提供解密转换';
+
     function flacEncoder(rate, ch, total) {
         const BLOCK = 4096;
         const rateCode = { 22050: 6, 32000: 8, 44100: 9, 48000: 10 }[rate];
@@ -3682,16 +3684,24 @@
                 try { return Object.assign(d, JSON.parse(localStorage.getItem('xxt-v41-conv') || '{}')); } catch (e) { return d; }
             },
             _convSaveOpts(o) { try { localStorage.setItem('xxt-v41-conv', JSON.stringify(o)); } catch (e) { /* ignore */ } },
+            _convEncrypted(name) { return /\.(ncm|qmc\d*|qmcflac|qmcogg|mflac\d*|mgg\d*|kgm|kgma|vpr|kwm|tkm|bkcmp3|bkcflac|xm|mmp4)$/i.test(name || ''); },
             _convQueue(files, hint) {
                 this._convQ = this._convQ || [];
                 this._convLrc = this._convLrc || new Map();
+                let enc = 0;
                 for (const f of files) {
                     if (!f) continue;
+                    // 音乐软件的加密下载格式（网易云 .ncm、QQ 音乐 .qmc、酷狗 .kgm 等）受版权保护，不提供解密：列出来并说明原因
+                    if (this._convEncrypted(f.name)) {
+                        enc++;
+                        this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'drm', pct: 0, msg: ENCRYPTED_MSG });
+                        continue;
+                    }
                     // 歌词不转换：按同名（同一文件夹）对上音频，下载时一起改名保存
                     if (/\.lrc$/i.test(f.name || '')) { this._convLrc.set(this._convKey(f), f); this._convLrc.set(this._convKey({ name: f.name }), f); continue; }
                     this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'wait', pct: 0, msg: '' });
                 }
-                this._convHint = hint || '';
+                this._convHint = enc ? `有 ${enc} 个是音乐软件的加密下载格式（如网易云 .ncm），受版权保护，无法转换。请在原音乐软件里播放，或从提供普通格式下载的正规渠道获取 MP3 / FLAC 后再转换` : (hint || '');
                 this._convOpen = true;
                 this._renderConv();
                 if (this._sideEl) this._renderSide();
@@ -3720,8 +3730,8 @@
             // 不受后台限速影响的让步，转换长音频时界面不卡
             _yield() { return new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); }); },
             async _convOne(it, o, seq) {
-                if (/\.(ncm|qmc\d*|qmcflac|qmcogg|mflac\d*|mgg\d*|kgm|kgma|vpr|kwm|tkm|bkcmp3|bkcflac|xm|mmp4)$/i.test(it.name)) {
-                    const e = new Error('音乐软件的加密格式，受版权保护，无法转换。请在原音乐软件里导出或下载普通格式'); e.drm = true; throw e;
+                if (this._convEncrypted(it.name)) {
+                    const e = new Error(ENCRYPTED_MSG); e.drm = true; throw e;
                 }
                 it.msg = '读取中…'; this._renderConv();
                 const data = await it.file.arrayBuffer();
@@ -4260,13 +4270,13 @@
                     `<div class="xm-vol">${icon('<path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/>', 15)}<input type="range" data-m="vol" min="0" max="100" aria-label="音量"></div>` +
                     '<div class="xm-list" data-m="list" role="list"></div>' +
                     '<div class="xm-add-row"><button type="button" class="xm-add" data-m="add">＋ 添加本地音乐</button><button type="button" class="xm-add xm-conv-btn" data-m="convopen">⇄ 格式转换</button></div>' +
-                    '<input type="file" data-m="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus,.wma,.ape,.amr" multiple hidden>' +
+                    '<input type="file" data-m="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus,.wma,.ape,.amr,.ncm,.qmc0,.qmc3,.qmcflac,.qmcogg,.mflac,.mgg,.kgm,.kgma,.kwm" multiple hidden>' +
                     '<div class="xm-hint">音乐只保存在这台电脑的浏览器里，不会上传</div>' +
                     '<div class="xm-conv" data-m="conv">' +
                       '<div class="xm-conv-head"><b>音频格式转换</b><button type="button" class="xm-x xm-back" data-m="convback">‹ 返回</button></div>' +
                       '<div class="xm-conv-hint" data-m="convhint"></div>' +
                       '<button type="button" class="xm-drop" data-m="convdrop">点击添加或拖入音频 / 视频文件<small>支持 MP3、M4A、AAC、FLAC、WAV、OGG、OPUS，也能提取 MP4 等视频里的声音；同名 .lrc 歌词可以一起拖进来</small></button>' +
-                      '<input type="file" data-m="convfile" accept="audio/*,video/*,.lrc" multiple hidden>' +
+                      '<input type="file" data-m="convfile" accept="audio/*,video/*,.lrc,.ncm,.qmc0,.qmc3,.qmcflac,.qmcogg,.mflac,.mgg,.kgm,.kgma,.kwm" multiple hidden>' +
                       '<button type="button" class="xm-dir" data-m="convdirbtn">＋ 添加整个文件夹（含子文件夹）</button>' +
                       '<input type="file" data-m="convdir" webkitdirectory multiple hidden>' +
                       '<div class="xm-cq" data-m="convlist"></div>' +

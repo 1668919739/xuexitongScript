@@ -1259,6 +1259,34 @@ test('答题辅助：视频弹题答错时换没试过的答案重交，答对�
     await ctx.close();
 });
 
+test('格式转换：网易云 .ncm 等加密格式可以选中，加入列表时就说明不能转换，不影响其他文件', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    await p.click('#xxt-v41-side [data-s=conv]'); await sleep(600);
+    const accept = await p.evaluate(() => [document.querySelector('#xxt-v41-music [data-m=convfile]').accept, document.querySelector('#xxt-v41-music [data-m=file]').accept]);
+    assert(accept.every((a) => /\.ncm/.test(a) && /\.kgm/.test(a) && /\.qmc0/.test(a)), `选择框应允许选中加密格式：${JSON.stringify(accept)}`);
+    const n = 44100, wav = Buffer.alloc(44 + n * 2);
+    wav.write('RIFF', 0); wav.writeUInt32LE(36 + n * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(44100, 24); wav.writeUInt32LE(88200, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(n * 2, 40);
+    for (let i = 0; i < n; i++) wav.writeInt16LE(Math.round(Math.sin(i / 10) * 5000), 44 + i * 2);
+    await p.selectOption('#xxt-v41-music [data-m=cfmt]', 'wav');
+    await p.setInputFiles('#xxt-v41-music [data-m=convfile]', [
+        { name: '马也_Crabbit - 海屿你.ncm', mimeType: 'application/octet-stream', buffer: Buffer.from('CTENFDAM fake') },
+        { name: '正常.wav', mimeType: 'audio/wav', buffer: wav },
+    ]);
+    await sleep(300);
+    const before = await p.evaluate(() => ({ q: app._convQ.map((x) => [x.name, x.status, x.msg]), hint: document.querySelector('#xxt-v41-music [data-m=convhint]').textContent }));
+    assert(before.q[0][1] === 'drm' && /加密格式/.test(before.q[0][2]) && before.q[1][1] === 'wait' && /\.ncm/.test(before.hint) && /正规渠道/.test(before.hint), `加入列表时应说明原因：${JSON.stringify(before)}`);
+    await p.click('#xxt-v41-music [data-m=cstart]');
+    await p.waitForFunction(() => !app._convRunning && app._convQ[1].status === 'done', null, { timeout: 20000 });
+    assert((await p.evaluate(() => app._convQ[0].status)) === 'drm', '加密文件不应被处理');
+    await ctx.close();
+});
+
 test('格式转换：功能栏直达；FLAC + 音量统一 + 序号 + 同名歌词；车载 MP3；添加整个文件夹', async (b) => {
     const tone = (sec, rate, amp) => {
         const n = rate * sec, buf = Buffer.alloc(44 + n * 4);
