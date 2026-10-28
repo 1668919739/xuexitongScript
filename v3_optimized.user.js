@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.0
+// @version      4.6.1
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.0';
+    const VERSION = '4.6.1';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.1', date: '2026-10-28', items: [
+            '修复：新版章节详情页（没有“视频 / 章节测验”页签）里视频弹题不会自动作答；弹题识别更全（单独的“单选题”标题、题量提示、画出来的选项），诊断信息附带弹题识别情况',
+        ] },
         { v: '4.6.0', date: '2026-10-28', note: '加入了你们一直想要的功能。', items: [
             '新增答题辅助（浮窗里有上手教程）：齿轮设置里「自动答题」默认开启、作答方式默认 DeepSeek，填入自己在 DeepSeek 开放平台申请的 Key 即可使用（只需填一次，长期保存在本机浏览器；调用会消耗你自己 DeepSeek 账号的余额），章节测验会自动识别单选 / 多选 / 判断题、作答、逐题核对后提交，确认成绩再进入下一节；视频弹题自动作答，答对后继续播放。也可选「随机作答」，不联网、不需要 Key',
             '格式转换升级：新增「车载 MP3」（44.1kHz 立体声恒定码率）和「FLAC 无损」，可开启音量统一、文件名加序号，可一次添加整个文件夹；同名 .lrc 歌词会随下载一起改名保存。右侧功能栏新增「音频转换」直达入口',
@@ -552,7 +555,8 @@
             if (quizErrorPopup && !visiblePopupRoot()) { quizError = ''; quizErrorPopup = false; }
             if (active() && !stopped && !['stopped', 'advancing', 'idle', 'reading'].includes(this._state)) {
                 const step = this._stepTitle();
-                if (step === '视频' && this._isValid(this._video) && startVideoPopupQuiz()) return;
+                // 新版章节页没有“视频 / 章节测验”页签，取不到步骤名；只要有在播的视频且不是测验页，就处理弹题
+                if (step !== '章节测验' && this._isValid(this._video) && startVideoPopupQuiz()) return;
                 if (step === '章节测验') { advanceChapterTest(); return; }
             }
             orig.tickInner();
@@ -649,6 +653,7 @@
                 if (!entry) { entry = { card: group, name, type, controls: [] }; groups.set(control, entry); }
                 entry.controls.push(control);
             }
+            if (!groups.size) return letterPopupQuestions(root);
             // 多组题目没有各自容器时，不能把总题干套给每一组
             if (groups.size > 1 && Array.from(groups.values()).some((group) => group.card === root)) return [];
             for (const group of groups.values()) {
@@ -665,17 +670,47 @@
                 });
                 if (options.some((option) => !option) || new Set(options.map((option) => option.letter)).size !== options.length) return [];
                 const titleEl = group.card.querySelector('[data-question-title],.videoquiz-title,.question-title,.title,h1,h2,h3,h4,legend');
-                let title = clean(titleEl && (titleEl.innerText || titleEl.textContent));
+                let title = stripPopupTitle(titleEl && (titleEl.innerText || titleEl.textContent));
                 if (!title) {
                     const copy = group.card.cloneNode(true);
                     copy.querySelectorAll('label,li,[data-option],.option,.videoquiz-option,input,button,[role="button"],.feedback').forEach((el) => el.remove());
-                    title = clean(copy.textContent).replace(/共\s*\d+\s*题[，,]?\s*已答对\s*\d+\s*题/g, '').trim();
+                    title = stripPopupTitle(copy.textContent);
                 }
-                title = title.replace(kindPattern, '').trim();
                 if (!title || title.length > 500 || options.some((option) => title.includes(option.text))) return [];
                 questions.push({ kind: group.type === 'checkbox' ? '多选题' : '单选题', title, options, card: group.card, doc: root.ownerDocument });
             }
             return questions;
+        }
+
+        // 弹题标题里常见的杂项：单独一行的“单选题”、题量“共 3 题，已答对 0 题”、题号
+        function stripPopupTitle(t) {
+            return clean(t).replace(kindPattern, ' ').replace(/共\s*\d+\s*题[，,]?\s*已答对\s*\d+\s*题/g, ' ')
+                .replace(/^\s*(?:单选题|多选题|判断题)\s*/, '').replace(/\s+(?:单选题|多选题|判断题)\s*$/, '').replace(/^\d+[.、．]\s*/, '').replace(/\s+/g, ' ').trim();
+        }
+
+        // 没有原生单选 / 复选框的弹题（选项是画出来的圆圈）：按“A、…”“B、…”这样的选项文字识别
+        function letterPopupQuestions(root) {
+            const isOpt = (el) => /^[A-H]\s*[、.．:：]\s*\S/.test(clean(el.innerText || el.textContent));
+            const rows = Array.from(root.querySelectorAll('li,label,div,p,span,a,dd')).filter((el) => visible(el) && isOpt(el) && clean(el.innerText).length <= 500 &&
+                !Array.from(el.querySelectorAll('li,label,div,p,span,a,dd')).some((c) => c !== el && isOpt(c)));
+            if (rows.length < 2 || rows.length > 8) return [];
+            const parent = rows[0].parentElement;
+            if (!rows.every((r) => r.parentElement === parent)) return [];
+            const options = rows.map((row) => {
+                const raw = clean(row.innerText || row.textContent);
+                const m = raw.match(/^([A-H])\s*[、.．:：]\s*/);
+                return { letter: m[1], text: raw.slice(m[0].length).trim(), element: row, labelElement: row.querySelector('i,em,span,[class*="radio"],[class*="check"]') || row };
+            });
+            if (options.some((o, i) => o.letter !== String.fromCharCode(65 + i) || !o.text)) return [];
+            const copy = root.cloneNode(true);
+            const all = Array.from(root.querySelectorAll('*')), copies = Array.from(copy.querySelectorAll('*'));
+            rows.map((r) => copies[all.indexOf(r)]).forEach((el) => el && el.remove());
+            copy.querySelectorAll('button,[role="button"],input,.feedback').forEach((el) => el.remove());
+            const title = stripPopupTitle(copy.innerText || copy.textContent).replace(/(?:提交|确定|继续|下一题)\s*$/g, '').trim();
+            if (!title || title.length > 500 || options.some((o) => title.includes(o.text))) return [];
+            const text = clean(root.innerText);
+            const kind = /多选题/.test(text) ? '多选题' : /判断题/.test(text) ? '判断题' : '单选题';
+            return [{ kind, title, options, card: root, doc: root.ownerDocument }];
         }
 
         function popupSignature(questions) {
@@ -1221,6 +1256,15 @@
                     状态: optionState(option), 点击目标数: clickTargets(option).length,
                 })),
             }));
+        };
+        // 复制诊断信息时附带：当前弹题的结构和识别结果（只含题目文字和类名，不含账号信息）
+        app.popupDiag = () => {
+            const root = visiblePopupRoot();
+            if (!root) return '无弹题';
+            const qs = videoPopupQuestions(root);
+            const inputs = root.querySelectorAll('input[type=radio],input[type=checkbox],[role=radio],[role=checkbox]').length;
+            return `弹层 <${root.tagName.toLowerCase()} class="${String(root.className).slice(0, 80)}"> · 原生选项控件 ${inputs} 个 · 识别 ${qs.length} 题` +
+                (qs.length ? `：${qs.map((q) => `${q.kind}「${q.title.slice(0, 40)}」${q.options.map((o) => o.letter).join('')}`).join('；')}` : `；弹层文字：${clean(root.innerText).slice(0, 160)}`);
         };
         app.quizStatus = () => ({ 待生效: pending ? JSON.stringify(pending) : '', 开启: !!C.quizAssist, 方式: C.quizMode === 'random' ? '随机作答' : 'DeepSeek', 已填Key: !!deepseekKey(), 生效: active(), 状态: status.message });
         return app;
@@ -3405,6 +3449,7 @@
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `后台：防卡顿${C.bgAudio ? (this._bgAudioBlocked ? '（浏览器不允许）' : this._bgAudio ? '（生效中）' : '开') : '关'} · 后台被暂停 ${this._bgPauseCount || 0} 次 · 保活锁${this._lockRelease ? '有' : '无'} · 当前${reallyHidden() ? '在后台' : '在前台'}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
+                    `视频弹题：${this.popupDiag ? (() => { try { return this.popupDiag(); } catch (e) { return '读取失败'; } })() : '-'}`,
                     `答题辅助：${this.quizStatus ? (() => { const q = this.quizStatus(); return `自动答题${q.开启 ? '开' : '关'} · ${q.方式}${q.方式 === 'DeepSeek' ? (q.已填Key ? '（已填 Key）' : '（未填 Key）') : ''} · ${q.生效 ? '生效中' : '未生效'}`; })() : '-'}`,
                     `浏览器：${navigator.userAgent}`,
                     '',
