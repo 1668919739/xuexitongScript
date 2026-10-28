@@ -955,7 +955,7 @@ test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片�
     assert(s.show && !s.open && s.handleAtRight && s.trayOpacity === '0' && !s.headerMusic, `把手位置或默认状态不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
     s = await st();
-    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|音频转换|更新记录|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
+    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|音频转换|更新记录|留言板|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=history]'); await sleep(700);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=history]').offsetParent !== null), '更新记录没打开');
     await p.click('#xxt-v41-side [data-s=feedback]'); await sleep(700);
@@ -1307,9 +1307,66 @@ test('唱片机「RouteCC 的歌单」：侧拉栏默认收起，点歌名在网
     await p.click('#xxt-v41-music [data-rec="0"]');
     const url = (await pop).url();
     assert(url.startsWith('https://music.163.com/') && decodeURIComponent(url).includes('River Flows In You Martin Ermen'), `应在网易云音乐打开：${url}`);
+    await sleep(300);
+    assert(!(await panelInfo(p)).notice, '正常打开时不应提示“拦截了新窗口”');
     await p.click('#xxt-v41-music [data-m=close]'); await sleep(500);
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(800);
     assert(!(await st()).open, '重新打开唱片机后歌单应收起');
+    await ctx.close();
+});
+
+test('留言板：从功能栏和设置打开，读取所有人的留言（纯文字显示），一键复制并打开 GitHub 发表', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 950 } });
+    let reads = 0, limited = false;
+    const H = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'X-RateLimit-Remaining' };
+    await ctx.route('https://api.github.com/repos/1668919739/xuexitongScript/issues/2**', (r) => {
+        reads++;
+        if (limited) return r.fulfill({ status: 403, headers: { ...H, 'x-ratelimit-remaining': '0' }, contentType: 'application/json', body: '{"message":"API rate limit exceeded"}' });
+        const u = r.request().url();
+        if (u.includes('/comments')) return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify([
+            { user: { login: 'student1' }, created_at: '2026-10-28T08:00:00Z', body: '很好用！<b>谢谢</b> ![图](https://x/y.png) [链接](https://x)' },
+            { user: { login: '1668919739' }, created_at: '2026-10-28T09:00:00Z', body: '欢迎留言～' },
+        ]) });
+        return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify({ comments: 2 }) });
+    });
+    await ctx.route('https://github.com/**', (r) => r.fulfill({ contentType: 'text/html', body: 'github' }));
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'https://mooc1.chaoxing.com' });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
+    await p.click('#xxt-v41-side [data-s=board]'); await sleep(1500);
+    const info = await p.evaluate(() => ({
+        title: document.querySelector('#xxt-v41-panel [data-k=histtitle]').textContent,
+        on: document.querySelector('#xxt-v41-side [data-s=board]').classList.contains('on'),
+        st: document.querySelector('#xxt-v41-panel [data-k=boardstate]').textContent,
+        msgs: [...document.querySelectorAll('#xxt-v41-panel .xxt-bm')].map((e) => ({ user: e.querySelector('b').textContent, owner: !!e.querySelector('.xxt-bm-head span'), text: e.querySelector('.xxt-bm-text').textContent, html: e.querySelector('.xxt-bm-text').innerHTML })),
+        log: document.querySelector('#xxt-v41-panel [data-k=histlist]').offsetParent !== null,
+    }));
+    assert(info.title === '留言板' && info.on && !info.log && /共 2 条留言/.test(info.st), `留言板没有打开：${JSON.stringify(info)}`);
+    assert(info.msgs[0].user === '1668919739' && info.msgs[0].owner && info.msgs[1].user === 'student1' && !info.msgs[1].owner, `留言顺序或作者标记不对：${JSON.stringify(info.msgs)}`);
+    assert(info.msgs[1].text === '很好用！谢谢 [图片] 链接' && !/<b>|<img/.test(info.msgs[1].html), `留言应以纯文字显示：${JSON.stringify(info.msgs[1])}`);
+    // 发表：内容复制到剪贴板，并打开留言 Issue
+    await p.fill('#xxt-v41-panel [data-k=boardtext]', '来自测试的留言');
+    const pop = ctx.waitForEvent('page');
+    await p.click('#xxt-v41-panel [data-k=boardsend]');
+    const url = (await pop).url();
+    assert(url === 'https://github.com/1668919739/xuexitongScript/issues/2#new_comment_field', `打开的页面不对：${url}`);
+    assert((await p.evaluate(() => navigator.clipboard.readText())) === '来自测试的留言', '留言没有复制到剪贴板');
+    assert(/已复制/.test(await p.textContent('#xxt-v41-panel [data-k=boardnote]')), '应提示已复制');
+    // 2 分钟内重新打开不重复读取；点刷新才读；被限流时说明原因
+    const before = reads;
+    await p.click('#xxt-v41-side [data-s=board]'); await sleep(500);
+    await p.click('[data-k=gear]'); await sleep(400);
+    await p.click('[data-k=boardopen]'); await sleep(800);
+    assert(reads === before, `不应重复读取：${reads - before} 次`);
+    limited = true;
+    await p.click('#xxt-v41-panel [data-k=boardrefresh]'); await sleep(1200);
+    assert(/太频繁/.test(await p.textContent('#xxt-v41-panel [data-k=boardstate]')), '限流时应说明原因');
+    assert((await p.evaluate(() => document.querySelectorAll('#xxt-v41-panel .xxt-bm').length)) === 2, '限流时应保留已读到的留言');
+    await p.click('#xxt-v41-panel [data-k=histback]'); await sleep(600);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=settings]').offsetParent !== null), '从设置打开的留言板，返回后应回到设置');
     await ctx.close();
 });
 

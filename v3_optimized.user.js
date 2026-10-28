@@ -34,6 +34,7 @@
             '格式转换升级：新增「车载 MP3」（44.1kHz 立体声恒定码率）和「FLAC 无损」，可开启音量统一、文件名加序号，可一次添加整个文件夹；同名 .lrc 歌词会随下载一起改名保存。右侧功能栏新增「音频转换」直达入口',
             '唱片机新增「RouteCC 的歌单」侧拉栏（默认收起）：点歌名即在网易云音乐里打开这首歌，用你自己的网易云播放',
             '答题进度显示在状态框里；视频弹题答错时自动换一个没选过的答案重交（最多 3 次），章节测验不会重复提交；结果不明或题目变化时停止并按提示音设置提醒。点「停止」立即中断，答题进行中也能随时改设置（本轮结束后生效）。没有填 Key 或关闭自动答题时，测验和弹题按原来的方式处理',
+            '新增留言板：右侧功能栏或齿轮设置里打开，所有人的留言都能看到；写好后一键复制并打开 GitHub 发表（需登录 GitHub）',
             '运行信息只显示在浮窗里，不再输出到浏览器控制台；齿轮里的「复制诊断信息」仍带有最近的运行日志',
         ] },
         { v: '4.5.1', date: '2026-10-27', note: '删掉一些没用的功能', items: [
@@ -134,6 +135,16 @@
     const changelogTop = (label) => String(label).split('–').pop().replace(/x/gi, '99');
     const changelogSince = (from) => CHANGELOG.filter((e) => newerThan(changelogTop(e.v), from) && !newerThan(changelogTop(e.v), VERSION));
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
+    // 留言板：仓库里的一个 Issue，评论即留言。所有人都能在浮窗里看到；发表需登录 GitHub；作者可在 GitHub 上删除留言
+    const BOARD_ISSUE = 2;
+    const BOARD_URL = `${REPO_URL}/issues/${BOARD_ISSUE}`;
+    const BOARD_API = `https://api.github.com/repos/1668919739/xuexitongScript/issues/${BOARD_ISSUE}`;
+    const BOARD_OWNER = '1668919739';
+    const openTab = (url) => {
+        const w = window.open(url, '_blank');
+        if (w) { try { w.opener = null; } catch (e) { /* ignore */ } }
+        return !!w;
+    };
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
         'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/version.json',
@@ -2709,10 +2720,86 @@
             _noteHtml(t) { return String(t).split('\n').map((x) => `<p>${this._esc(x)}</p>`).join(''); },
             _renderHistory(el) {
                 const esc = (t) => this._esc(t);
+                const board = this._histView === 'board';
+                el.querySelector('[data-k="histtitle"]').textContent = board ? '留言板' : '更新记录';
+                el.querySelector('[data-k="histlist"]').style.display = board ? 'none' : '';
+                el.querySelector('[data-k="board"]').style.display = board ? '' : 'none';
+                if (board) { this._renderBoard(el); return; }
                 el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
                     `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
                     e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
                     (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${this._noteHtml(e.note)}</div>` : '') + '</div>').join('');
+            },
+            // ================= 留言板 =================
+            // 读取：GitHub 公开接口，不用登录（每个 IP 每小时 60 次，所以 2 分钟内不重复读取）；发表：复制内容并打开留言 Issue，登录 GitHub 后粘贴发表
+            async _boardLoad(force) {
+                const b = this._board || (this._board = { items: null, ts: 0, err: '', loading: false });
+                if (b.loading || (!force && b.items && Date.now() - b.ts < 120000)) return;
+                b.loading = true; b.err = '';
+                // 可能是在浮窗刷新过程中被调用的：下一拍再刷新，避免嵌套刷新
+                this._boardVer = (this._boardVer || 0) + 1;
+                Promise.resolve().then(() => { this._panelKey = ''; this._renderPanel(); });
+                const get = async (url) => {
+                    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                    const t = ctrl && setTimeout(() => ctrl.abort(), 10000);
+                    try {
+                        const res = await fetch(url, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+                        if (res.status === 403 || res.status === 429) {
+                            const e = new Error(res.headers.get('x-ratelimit-remaining') === '0' ? '查看得太频繁了（GitHub 每小时限 60 次），请过一会儿再刷新' : '暂时无法读取留言，请稍后再试');
+                            throw e;
+                        }
+                        if (!res.ok) throw new Error(`读取留言失败（HTTP ${res.status}）`);
+                        return await res.json();
+                    } catch (e) {
+                        throw e && e.name === 'AbortError' ? new Error('连不上 GitHub，请检查网络后刷新') : (e instanceof TypeError ? new Error('连不上 GitHub，请检查网络后刷新') : e);
+                    } finally { if (t) clearTimeout(t); }
+                };
+                try {
+                    const issue = await get(BOARD_API);
+                    const n = Number(issue.comments) || 0, per = 30, last = Math.max(1, Math.ceil(n / per));
+                    let list = n ? await get(`${BOARD_API}/comments?per_page=${per}&page=${last}`) : [];
+                    if (n && list.length < 15 && last > 1) list = (await get(`${BOARD_API}/comments?per_page=${per}&page=${last - 1}`)).concat(list);
+                    const clean = (t) => String(t || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
+                    b.items = list.map((c) => ({ user: (c.user && c.user.login) || '匿名', owner: !!(c.user && c.user.login === BOARD_OWNER), time: c.created_at, text: clean(c.body).slice(0, 500) }))
+                        .filter((x) => x.text).sort((x, y) => String(y.time).localeCompare(String(x.time))).slice(0, 30);
+                    b.total = n;
+                    b.ts = Date.now();
+                } catch (e) { b.err = e.message; }
+                b.loading = false;
+                this._boardVer++; this._panelKey = ''; this._renderPanel();
+            },
+            _renderBoard(el) {
+                const b = this._board;
+                if (!b || (!b.items && !b.loading && !b.err)) { this._boardLoad(false); return; }
+                if (!b.loading && b.items && Date.now() - b.ts >= 120000) this._boardLoad(false);
+                const esc = (t) => this._esc(t);
+                const st = el.querySelector('[data-k="boardstate"]');
+                st.textContent = b.loading ? '正在读取留言…' : b.err ? b.err : !b.items.length ? '还没有留言，来做第一个留言的人吧' : `共 ${b.total} 条留言${b.total > b.items.length ? `，显示最新 ${b.items.length} 条` : ''}`;
+                st.classList.toggle('err', !!b.err);
+                if (!b.items) return;
+                const fmt = (t) => { const d = new Date(t); return isNaN(d) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+                el.querySelector('[data-k="boardlist"]').innerHTML = b.items.map((m) =>
+                    `<div class="xxt-bm" role="listitem"><div class="xxt-bm-head"><b>${esc(m.user)}</b>${m.owner ? '<span>作者</span>' : ''}<time>${esc(fmt(m.time))}</time></div><div class="xxt-bm-text">${esc(m.text)}</div></div>`).join('');
+            },
+            _boardSend(ta) {
+                const text = (ta.value || '').trim();
+                const note = this._panel && this._panel.querySelector('[data-k="boardnote"]');
+                const say = (t) => { if (note) note.textContent = t; };
+                const go = () => {
+                    if (!openTab(`${BOARD_URL}#new_comment_field`)) say('浏览器拦截了新窗口，请允许本站打开弹出窗口；也可以直接访问 ' + BOARD_URL);
+                };
+                if (!text) { say('先在上面写下留言内容，再点发表'); ta.focus(); return; }
+                const done = (ok) => {
+                    say(ok ? '留言已复制。请在打开的页面登录 GitHub，把内容粘贴到底部评论框并发表；发表后回来点「刷新」' : '没能自动复制，请手动复制上面的留言内容，再到打开的页面粘贴发表');
+                    go();
+                };
+                const legacy = () => {
+                    try { ta.focus(); ta.select(); const ok = document.execCommand('copy'); done(ok); } catch (e) { done(false); }
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), legacy);
+                    else legacy();
+                } catch (e) { legacy(); }
             },
             _startUpdateCheck() {
                 this._checkUpdate();
@@ -4411,8 +4498,7 @@
                 const openRec = (el) => {
                     const r = RECOMMENDED[Number(el.getAttribute('data-rec'))];
                     if (!r) return;
-                    const w = window.open(recUrl(r[0], r[1]), '_blank', 'noopener');
-                    if (!w) this._notice = { kind: 'bg', until: Date.now() + 8000, text: `浏览器拦截了新窗口，请允许本站打开弹出窗口后再点「${r[0]}」` };
+                    if (!openTab(recUrl(r[0], r[1]))) this._notice = { kind: 'bg', until: Date.now() + 8000, text: `浏览器拦截了新窗口，请允许本站打开弹出窗口后再点「${r[0]}」` };
                     log(`唱片机：在网易云音乐中打开「${r[0]} - ${r[1]}」`, '#2196F3');
                     this._panelKey = ''; this._renderPanel();
                 };
@@ -4553,6 +4639,7 @@
                     ['music', '唱片机', ico('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5"/>')],
                     ['conv', '音频转换', ico('<path d="M4 9v6M8 6v12M12 10v4M16 7v10M20 11v2"/>')],
                     ['history', '更新记录', ico('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>')],
+                    ['board', '留言板', ico('<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>')],
                     ['feedback', '反馈问题', ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>')],
                 ];
                 d.innerHTML =
@@ -4597,7 +4684,10 @@
                 q('music').addEventListener('click', () => this._showMusic('player'));
                 q('conv').addEventListener('click', () => this._showMusic('conv'));
                 q('history').addEventListener('click', () => {
-                    this._animatePanel(() => { this._histOpen = !this._histOpen; this._histFromSettings = false; this._settingsOpen = false; });
+                    this._animatePanel(() => { this._histOpen = !(this._histOpen && this._histView !== 'board'); this._histView = 'log'; this._histFromSettings = false; this._settingsOpen = false; });
+                });
+                q('board').addEventListener('click', () => {
+                    this._animatePanel(() => { this._histOpen = !(this._histOpen && this._histView === 'board'); this._histView = 'board'; this._histFromSettings = false; this._settingsOpen = false; });
                 });
                 q('feedback').addEventListener('click', () => {
                     this._animatePanel(() => {
@@ -4627,7 +4717,8 @@
                 const set = (k, on) => { const b = d.querySelector(`[data-s="${k}"]`); b.classList.toggle('on', !!on); b.setAttribute('aria-pressed', String(!!on)); };
                 set('music', this._musicOpen && !this._convOpen);
                 set('conv', this._musicOpen && this._convOpen);
-                set('history', this._histOpen);
+                set('history', this._histOpen && this._histView !== 'board');
+                set('board', this._histOpen && this._histView === 'board');
                 set('feedback', this._settingsOpen && this._fbOpen);
                 d.querySelector('[data-s="music"]').classList.toggle('spin', !!this._musicPlaying);
                 // 跟随浮窗主题配色
@@ -4742,7 +4833,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}|${this._histView}|${this._boardVer || 0}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -5062,6 +5153,15 @@
                     '#xxt-v41-panel .xxt-wn-all{margin-top:6px;padding:0;border:0;background:none;font:inherit;font-size:12px;font-weight:600;color:var(--x-accent-strong);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-wn-all:hover,#xxt-v41-panel .xxt-wn-all:focus-visible{text-decoration:underline;outline:none}' +
                     '#xxt-v41-panel .xxt-hv{padding:8px 0;border-top:1px solid var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-board .xxt-note{min-height:58px}' +
+                    '#xxt-v41-panel .xxt-board-st{margin:10px 0 2px;font-size:12px;color:var(--x-muted)}' +
+                    '#xxt-v41-panel .xxt-board-st.err{color:#B45309}' +
+                    '#xxt-v41-panel .xxt-bm{padding:8px 0;border-top:1px solid var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-bm-head{display:flex;align-items:center;gap:6px;font-size:12px}' +
+                    '#xxt-v41-panel .xxt-bm-head b{color:var(--x-strong);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+                    '#xxt-v41-panel .xxt-bm-head span{flex:none;font-size:10px;padding:1px 5px;border-radius:4px;background:var(--x-accent-soft);color:var(--x-accent-strong)}' +
+                    '#xxt-v41-panel .xxt-bm-head time{margin-left:auto;flex:none;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-panel .xxt-bm-text{margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--x-text2);white-space:pre-wrap;overflow-wrap:anywhere}' +
                     '#xxt-v41-panel .xxt-hv:first-child{border-top:0;padding-top:0}' +
                     '#xxt-v41-panel .xxt-hv-head{display:flex;align-items:center;gap:6px}' +
                     '#xxt-v41-panel .xxt-hv-head b{font-size:13px;color:var(--x-strong);font-variant-numeric:tabular-nums}' +
@@ -5297,6 +5397,7 @@
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
                         '<button type="button" data-k="histopen" class="xxt-set-btn">更新记录</button>' +
+                        '<button type="button" data-k="boardopen" class="xxt-set-btn">留言板</button>' +
                       '</div>' +
                       '<div class="xxt-set-actions" style="border-top:0;padding-top:0">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
@@ -5304,8 +5405,18 @@
                       '</div>' +
                     '</div>' +
                     '<div data-k="history" class="xxt-settings xxt-hist" style="display:none">' +
-                      '<div class="xxt-fb-head"><b>更新记录</b><button type="button" data-k="histback" class="xxt-fb-back">‹ 返回</button></div>' +
+                      '<div class="xxt-fb-head"><b data-k="histtitle">更新记录</b><button type="button" data-k="histback" class="xxt-fb-back">‹ 返回</button></div>' +
                       '<div data-k="histlist"></div>' +
+                      '<div data-k="board" class="xxt-board" style="display:none">' +
+                        '<textarea data-k="boardtext" class="xxt-note" rows="3" maxlength="1000" placeholder="写点什么吧：使用体验、学习心得、想对作者说的话…" aria-label="留言内容"></textarea>' +
+                        '<div class="xxt-set-actions" style="border-top:0;padding-top:6px">' +
+                          '<button type="button" data-k="boardsend" class="xxt-set-btn xxt-fb-send">复制并去 GitHub 发表</button>' +
+                          '<button type="button" data-k="boardrefresh" class="xxt-set-btn">刷新</button>' +
+                        '</div>' +
+                        '<div data-k="boardnote" class="xxt-fb-hint">留言所有人可见，发表需要登录 GitHub。请勿留下手机号、学号等个人信息。</div>' +
+                        '<div data-k="boardstate" class="xxt-board-st"></div>' +
+                        '<div data-k="boardlist" role="list"></div>' +
+                      '</div>' +
                     '</div>' +
                     '<div data-k="feedback" class="xxt-settings xxt-fb" style="display:none">' +
                       '<div class="xxt-fb-head"><b>反馈问题 / 提建议</b><button type="button" data-k="fbback" class="xxt-fb-back">‹ 返回</button></div>' +
@@ -5402,9 +5513,14 @@
                     inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
                 }
                 el.querySelector('[data-k="diag"]').addEventListener('click', () => this._copyDiagnostics());
-                const openHist = () => this._animatePanel(() => { this._histOpen = true; this._histFromSettings = this._settingsOpen; this._settingsOpen = false; });
-                el.querySelector('[data-k="histopen"]').addEventListener('click', openHist);
-                el.querySelector('[data-k="wnall"]').addEventListener('click', () => { this._dismissWhatsNew(); openHist(); });
+                const openHist = (view = 'log') => this._animatePanel(() => { this._histOpen = true; this._histView = view; this._histFromSettings = this._settingsOpen; this._settingsOpen = false; });
+                el.querySelector('[data-k="histopen"]').addEventListener('click', () => openHist('log'));
+                el.querySelector('[data-k="boardopen"]').addEventListener('click', () => openHist('board'));
+                const btext = el.querySelector('[data-k="boardtext"]');
+                for (const t of ['keydown', 'keyup', 'keypress']) btext.addEventListener(t, (e) => e.stopPropagation());
+                el.querySelector('[data-k="boardsend"]').addEventListener('click', () => this._boardSend(btext));
+                el.querySelector('[data-k="boardrefresh"]').addEventListener('click', () => this._boardLoad(true));
+                el.querySelector('[data-k="wnall"]').addEventListener('click', () => { this._dismissWhatsNew(); openHist('log'); });
                 el.querySelector('[data-k="histback"]').addEventListener('click', () => this._animatePanel(() => { this._histOpen = false; this._settingsOpen = !!this._histFromSettings; }));
                 el.querySelector('[data-k="wnx"]').addEventListener('click', () => this._animatePanel(() => this._dismissWhatsNew()));
                 el.querySelector('[data-k="fbopen"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = true; }));
