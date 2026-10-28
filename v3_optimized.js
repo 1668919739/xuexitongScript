@@ -13,6 +13,7 @@
         { v: '4.6.0', date: '2026-10-28', items: [
             '新增答题辅助：齿轮设置里打开「自动答题」，选「DeepSeek」并填入自己在 DeepSeek 开放平台申请的 Key（只需填一次，长期保存在本机浏览器），章节测验会自动识别单选 / 多选 / 判断题、作答、逐题核对后提交，确认成绩再进入下一节；视频弹题自动作答，答对后继续播放。也可选「随机作答」，不联网、不需要 Key',
             '格式转换升级：新增「车载 MP3」（44.1kHz 立体声恒定码率）和「FLAC 无损」，可开启音量统一、文件名加序号，可一次添加整个文件夹；同名 .lrc 歌词会随下载一起改名保存。右侧功能栏新增「音频转换」直达入口',
+            '唱片机新增「作者推荐」：点歌名即在网易云 / QQ 音乐 / 酷狗（可选）里打开这首歌，用你自己的音乐软件播放',
             '答题进度显示在状态框里；视频弹题答错时自动换一个没选过的答案重交（最多 3 次），章节测验不会重复提交；结果不明或题目变化时停止并按提示音设置提醒。点「停止」立即中断，答题进行中也能随时改设置（本轮结束后生效）。没有填 Key 或关闭自动答题时，测验和弹题按原来的方式处理',
             '运行信息只显示在浮窗里，不再输出到浏览器控制台；齿轮里的「复制诊断信息」仍带有最近的运行日志',
         ] },
@@ -1118,6 +1119,23 @@
     // ================= FLAC 编码（16 位无损，固定预测 + Rice 编码，纯浏览器实现） =================
     // 用法：const enc = flacEncoder(rate, ch, total)；逐块 enc.frame([L, R], n) 得到帧数据，最后把 enc.header() 放在最前面。
     const ENCRYPTED_MSG = '音乐软件的加密格式，受版权保护，不提供解密转换';
+
+    // ================= 唱片机 · 作者推荐 =================
+    // 只放歌名和歌手，不附带任何音频：点击后打开用户选择的音乐平台搜索这首歌，在用户自己的音乐软件里播放。
+    // 增删推荐：改下面这份清单即可，每行 [歌名, 歌手]。
+    const RECOMMENDED = [
+        ['River Flows In You', 'Martin Ermen'],
+        ['恋人', '李荣浩'],
+        ['爱错', '王力宏'],
+        ['他不懂', '张杰'],
+        ['海屿你', '马也_Crabbit'],
+    ];
+    const MUSIC_APPS = [
+        ['netease', '网易云', (q) => `https://music.163.com/#/search/m/?s=${encodeURIComponent(q)}&type=1`],
+        ['qq', 'QQ 音乐', (q) => `https://y.qq.com/n/ryqq/search?w=${encodeURIComponent(q)}&t=song`],
+        ['kugou', '酷狗', (q) => `https://www.kugou.com/yy/html/search.html#searchType=song&searchKeyWord=${encodeURIComponent(q)}`],
+    ];
+    const REC_APP_KEY = 'xxt-v41-rec-app';
 
     function flacEncoder(rate, ch, total) {
         const BLOCK = 4096;
@@ -4193,6 +4211,16 @@
                     '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
                     '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
                     '#xxt-v41-music .xm-sec{margin:10px 8px 2px;font-size:11px;font-weight:600;color:#7D726D;letter-spacing:.5px}' +
+                    '#xxt-v41-music .xm-rec-sec{display:flex;align-items:center;justify-content:space-between;gap:6px}' +
+                    '#xxt-v41-music .xm-recapps{display:flex;gap:3px}' +
+                    '#xxt-v41-music .xm-recapp{border:0;border-radius:6px;padding:2px 6px;background:rgba(255,255,255,.06);color:#A89D98;font-size:10.5px;font-weight:600;letter-spacing:0}' +
+                    '#xxt-v41-music .xm-recapp:hover,#xxt-v41-music .xm-recapp:focus-visible{background:rgba(255,255,255,.12);color:#EDE6E2;outline:none}' +
+                    '#xxt-v41-music .xm-recapp.on{background:var(--xm-accent,#E8A87C);color:#1E1917}' +
+                    '#xxt-v41-music .xm-rec{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border-radius:9px;cursor:pointer}' +
+                    '#xxt-v41-music .xm-rec:hover{background:rgba(255,255,255,.06)}' +
+                    '#xxt-v41-music .xm-rec small{color:#7D726D;font-size:11px}' +
+                    '#xxt-v41-music .xm-rec .xm-no{color:var(--xm-accent,#E8A87C)}' +
+                    '#xxt-v41-music .xm-rec:focus-visible{outline:2px solid var(--xm-accent,#E8A87C);outline-offset:-2px}' +
                     '#xxt-v41-music input[type=range]:disabled{cursor:default;opacity:.45}' +
                     '#xxt-v41-music .xm-item:hover{background:rgba(255,255,255,.06)}' +
                     '#xxt-v41-music .xm-item.cur{background:rgba(255,255,255,.1)}' +
@@ -4348,7 +4376,24 @@
                     this._convQueue(fs, fs.length ? '' : '这个文件夹里没有找到音频、视频或歌词文件');
                 });
                 q('file').addEventListener('change', () => { const fs = [...q('file').files]; q('file').value = ''; this._musicAdd(fs); });
+                const openRec = (el) => {
+                    const r = RECOMMENDED[Number(el.getAttribute('data-rec'))];
+                    if (!r) return;
+                    const app = this._recApp();
+                    const w = window.open(app[2](`${r[0]} ${r[1]}`), '_blank', 'noopener');
+                    if (!w) this._notice = { kind: 'bg', until: Date.now() + 8000, text: `浏览器拦截了新窗口，请允许本站打开弹出窗口后再点「${r[0]}」` };
+                    log(`唱片机：在${app[1]}中打开推荐「${r[0]} - ${r[1]}」`, '#2196F3');
+                    this._panelKey = ''; this._renderPanel();
+                };
+                q('list').addEventListener('keydown', (e) => {
+                    const rec = e.target.closest && e.target.closest('[data-rec]');
+                    if (rec && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRec(rec); }
+                });
                 q('list').addEventListener('click', (e) => {
+                    const appBtn = e.target.closest('[data-recapp]');
+                    if (appBtn) { try { localStorage.setItem(REC_APP_KEY, appBtn.getAttribute('data-recapp')); } catch (er) { /* ignore */ } this._musicListKey = ''; this._renderMusic(); return; }
+                    const rec = e.target.closest('[data-rec]');
+                    if (rec) { openRec(rec); return; }
                     const del = e.target.closest('[data-del]');
                     if (del) { e.stopPropagation(); this._musicRemove(del.getAttribute('data-del')); return; }
                     const it = e.target.closest('[data-track]');
@@ -4424,7 +4469,8 @@
                 const v = Math.round(this._musicVolume() * 100);
                 if (document.activeElement !== vol) vol.value = v;
                 vol.style.setProperty('--p', vol.value + '%');
-                const listKey = list.map((x) => x.id).join(',') + '|' + this._curTrack;
+                const recApp = this._recApp();
+                const listKey = list.map((x) => x.id).join(',') + '|' + this._curTrack + '|' + recApp[0];
                 if (this._musicListKey !== listKey) {
                     this._musicListKey = listKey;
                     const row = (t, i) => `<div class="xm-item${t.id === this._curTrack ? ' cur' : ''}${t.builtin ? ' builtin' : ''}" data-track="${esc(t.id)}" role="listitem" tabindex="0" title="${esc(t.name)}">` +
@@ -4434,13 +4480,22 @@
                     const builtins = list.filter((t) => t.builtin);
                     q('list').innerHTML = '<div class="xm-sec">内置环境音</div>' + builtins.map(row).join('') +
                         '<div class="xm-sec">我的音乐</div>' +
-                        (mine.length ? mine.map((t, i) => row(t, i)).join('') : '<div class="xm-empty">点下面的按钮，从电脑里添加喜欢的音乐</div>');
+                        (mine.length ? mine.map((t, i) => row(t, i)).join('') : '<div class="xm-empty">点下面的按钮，从电脑里添加喜欢的音乐</div>') +
+                        (RECOMMENDED.length ? '<div class="xm-sec xm-rec-sec"><span>作者推荐</span><span class="xm-recapps" role="radiogroup" aria-label="用哪个音乐软件打开">' +
+                            MUSIC_APPS.map(([k, label]) => `<button type="button" class="xm-recapp${k === recApp[0] ? ' on' : ''}" data-recapp="${k}" role="radio" aria-checked="${k === recApp[0]}">${label}</button>`).join('') + '</span></div>' +
+                            RECOMMENDED.map(([title, artist], i) => `<div class="xm-rec" data-rec="${i}" role="listitem" tabindex="0" title="在${recApp[1]}中打开：${esc(title)} - ${esc(artist)}">` +
+                                `<span class="xm-no">↗</span><span class="xm-name">${esc(title)}<small> · ${esc(artist)}</small></span></div>`).join('') : '');
                 }
                 this._musicTick();
                 this._renderConv();
                 if (open) this._positionMusic();
                 this._musicPlaying = playing;
                 this._renderSide();
+            },
+            _recApp() {
+                let k = '';
+                try { k = localStorage.getItem(REC_APP_KEY) || ''; } catch (e) { /* ignore */ }
+                return MUSIC_APPS.find((a) => a[0] === k) || MUSIC_APPS[0];
             },
             _removeMusic() {
                 this._musicStop();
