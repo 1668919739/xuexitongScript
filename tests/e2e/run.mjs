@@ -1413,6 +1413,41 @@ test('留言板：从功能栏和设置打开，读取所有人的留言（纯�
     await ctx.close();
 });
 
+for (const style of ['native', 'drawn']) test(`答题辅助：新版章节页（没有视频 / 测验页签）的视频弹题也会自动作答（${style === 'native' ? '原生单选框' : '画出来的选项'}）`, async (b) => {
+    const ctx = await newContext(b, { routes: { '*': coursePage().replace('<div class="prev_title" title="视频"></div>', '') } });
+    const calls = await mockDeepseek(ctx, { answers: [{ id: 1, letters: ['C'] }] });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2500);
+    await p.evaluate((style) => {
+        const d = document.getElementById('f').contentDocument;
+        const opts = ['2013年', '2014年', '2015年', '2016年'].map((x, i) => style === 'native'
+            ? `<li class="ans-videoquiz-opt"><label><input type="radio" name="vq"> ${'ABCD'[i]}、${x}</label></li>`
+            : `<li class="ans-videoquiz-opt" data-i="${i}"><i class="radio-icon"></i>${'ABCD'[i]}、${x}</li>`).join('');
+        d.body.insertAdjacentHTML('beforeend', '<div class="ans-videoquiz" style="width:600px;height:380px">' +
+            '<div class="ans-videoquiz-title"><span>单选题</span><span class="count">共 3 题，已答对 0 题</span></div>' +
+            '<div class="ans-videoquiz-stem">“大众创业，万众创新”是哪一年提出的？</div>' +
+            `<ul class="ans-videoquiz-opts">${opts}</ul><button type="button" class="ans-videoquiz-submit">提交</button></div>`);
+        if (style === 'drawn') d.querySelectorAll('.ans-videoquiz-opt').forEach((li) => li.addEventListener('click', () => {
+            d.querySelectorAll('.ans-videoquiz-opt').forEach((x) => x.classList.remove('checked')); li.classList.add('checked');
+        }));
+        d.querySelector('.ans-videoquiz-submit').addEventListener('click', () => {
+            window.__picked = style === 'native' ? [...d.querySelectorAll('.ans-videoquiz input')].findIndex((x) => x.checked) : [...d.querySelectorAll('.ans-videoquiz-opt')].findIndex((x) => x.classList.contains('checked'));
+            d.querySelector('.ans-videoquiz').remove();
+        });
+        __v.pause();
+    }, style);
+    await p.waitForFunction(() => window.__picked !== undefined, null, { timeout: 20000 });
+    await sleep(2500);
+    const r = await p.evaluate(() => ({ picked: window.__picked, paused: __v.paused }));
+    const q = JSON.parse(calls[0].body.messages[1].content)[0];
+    assert(r.picked === 2 && !r.paused, `应选 C 并继续播放：${JSON.stringify(r)}`);
+    assert(q.question === '“大众创业，万众创新”是哪一年提出的？' && q.type === '单选题' && q.options.map((o) => o.letter + o.text).join('|') === 'A2013年|B2014年|C2015年|D2016年', `识别的题目不对：${JSON.stringify(q)}`);
+    await ctx.close();
+});
+
 test('格式转换：功能栏直达；FLAC + 音量统一 + 序号 + 同名歌词；车载 MP3；添加整个文件夹', async (b) => {
     const tone = (sec, rate, amp) => {
         const n = rate * sec, buf = Buffer.alloc(44 + n * 4);
