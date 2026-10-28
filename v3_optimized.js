@@ -1137,7 +1137,7 @@
     const RECOMMENDED = [
         ['River Flows In You', 'Martin Ermen'],
         ['恋人', '李荣浩'],
-        ['爱错', '王力宏'],
+        ['雨后的风景', 'Dizzy dizzo'],
         ['他不懂', '张杰'],
         ['海屿你', '马也_Crabbit'],
     ];
