@@ -1448,6 +1448,60 @@ for (const style of ['native', 'drawn']) test(`答题辅助：新版章节页（
     await ctx.close();
 });
 
+test('答题辅助：DeepSeek 思考用光输出长度时自动改为直接作答；参数不被接受时换参数；超过 10 题分批请求', async (b) => {
+    // 12 道单选题
+    const qs = Array.from({ length: 12 }, (_, i) => `<div class="TiMu"><div>${i + 1} 【单选题】 第 ${i + 1} 题？</div><ul><li><label><input type="radio" name="q${i}"><span>A</span> 对</label></li><li><label><input type="radio" name="q${i}"><span>B</span> 错</label></li></ul></div>`).join('');
+    const body = `<div id="work">${qs}<button type="button" id="sub">提交</button><div id="score"></div></div><div id="prevNextFocusNext" style="display:inline-block;padding:4px">下一节</div>`;
+    const ctx = await newContext(b, { routes: { '*': coursePage({ body }).replace('<div class="prev_title" title="视频"></div>', '<div class="prev_title" title="章节测验"></div>') } });
+    const calls = [];
+    await ctx.route('https://api.deepseek.com/**', (r) => {
+        const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type', 'access-control-allow-methods': 'POST' };
+        if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+        const req = JSON.parse(r.request().postData());
+        calls.push(req);
+        const n = JSON.parse(req.messages[1].content).length;
+        // 第一批：先 400（参数不认），再“长度用光”，然后直答成功；第二批：直接成功
+        if (calls.length === 1) return r.fulfill({ status: 400, headers: H, contentType: 'application/json', body: '{"error":{"message":"max_tokens invalid"}}' });
+        if (calls.length === 2) return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: '' } }] }) });
+        return r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: Array.from({ length: n }, (_, i) => ({ id: i + 1, letters: ['A'] })) }) } }] }) });
+    });
+    const p = await ctx.newPage();
+    await p.addInitScript((k) => localStorage.setItem('xxt-v41-deepseek-key', k), KEY);
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await wireQuiz(p);
+    await inject(p);
+    await p.waitForFunction(() => window.__next >= 1, null, { timeout: 40000 });
+    const sub = await p.evaluate(() => window.__submitted);
+    const sizes = calls.map((c) => JSON.parse(c.messages[1].content).length);
+    assert(sub.filter((x, i) => i % 2 === 0).every(Boolean) && sub.filter((x, i) => i % 2 === 1).every((x) => !x), `12 题都应选 A 并提交：${JSON.stringify(sub)}`);
+    assert(JSON.stringify(sizes) === '[10,10,10,2]', `应分成 10 + 2 两批：${JSON.stringify(sizes)}`);
+    assert(calls[0].max_tokens === 16000 && calls[1].max_tokens === 8000 && calls[2].thinking && calls[2].thinking.type === 'disabled', `重试参数不对：${JSON.stringify(calls.map((c) => [c.thinking, c.max_tokens]))}`);
+    assert(calls[3].thinking && calls[3].thinking.type === 'enabled', '下一批应重新先用思考模式');
+    await ctx.close();
+});
+
+test('唱片机：加宽且列表不会出现左右滚动条；拖入文件时高亮不会来回闪', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1200, height: 950 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(1500);
+    await p.evaluate(() => app._showMusic('player')); await sleep(600);
+    const r = await p.evaluate(() => {
+        const d = document.getElementById('xxt-v41-music'), l = d.querySelector('[data-m=list]');
+        const cs = getComputedStyle(l);
+        d.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true }));
+        const child = d.querySelector('[data-m=add]');
+        d.dispatchEvent(new DragEvent('dragleave', { bubbles: true, relatedTarget: child }));
+        const stays = d.classList.contains('drag');
+        d.dispatchEvent(new DragEvent('dragleave', { bubbles: true, relatedTarget: document.body }));
+        return { w: d.offsetWidth, ox: cs.overflowX, gutter: cs.scrollbarGutter, stays, cleared: !d.classList.contains('drag') };
+    });
+    assert(r.w === 320 && r.ox === 'hidden' && r.gutter === 'stable', `唱片机宽度或滚动设置不对：${JSON.stringify(r)}`);
+    assert(r.stays && r.cleared, `拖入高亮不应在内部移动时取消，离开时才取消：${JSON.stringify(r)}`);
+    await ctx.close();
+});
+
 test('格式转换：功能栏直达；FLAC + 音量统一 + 序号 + 同名歌词；车载 MP3；添加整个文件夹', async (b) => {
     const tone = (sec, rate, amp) => {
         const n = rate * sec, buf = Buffer.alloc(44 + n * 4);

@@ -6,10 +6,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.1';
+    const VERSION = '4.6.2';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.2', date: '2026-10-28', items: [
+            '修复：DeepSeek 偶尔提示“输出达到长度上限”而停止答题——现在每次最多 10 题，思考用光长度时自动改为直接作答；唱片机加宽，列表不再出现左右滚动条，拖入文件时按钮不再闪动',
+        ] },
         { v: '4.6.1', date: '2026-10-28', items: [
             '修复：新版章节详情页（没有“视频 / 章节测验”页签）里视频弹题不会自动作答；弹题识别更全（单独的“单选题”标题、题量提示、画出来的选项），诊断信息附带弹题识别情况',
         ] },
@@ -228,9 +231,17 @@
     const setDeepseekKey = (v) => { try { if (v) localStorage.setItem(DEEPSEEK_KEY, v); else localStorage.removeItem(DEEPSEEK_KEY); return true; } catch (e) { return false; } };
     const maskKey = (k) => (k.length > 10 ? `${k.slice(0, 3)}…${k.slice(-4)}` : '已保存');
 
-    // 一套题一次请求；返回 [{ id, letters }]，格式不对时抛错，绝不拿残缺答案去提交
-    async function deepseekAnswers(questions, key, ctrl) {
-        ctrl = ctrl || (typeof AbortController !== 'undefined' ? new AbortController() : null);
+    // 返回 [{ id, letters }]，格式不对时抛错，绝不拿残缺答案去提交。
+    // 开着“思考”时，思考过程也算在输出长度里，题多或想得久会把长度用光、写不出答案。所以：
+    // 1. 每次最多 10 道题；2. 先用低强度思考（输出上限 16000）；3. 长度用光或答案不完整时，关掉思考直接作答再试一次；
+    // 4. 服务端不认某个参数（HTTP 400）时，换更保守的请求参数。
+    const DS_ATTEMPTS = [
+        { label: '思考', body: { thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 16000 } },
+        { label: '思考', body: { thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 8000 } },
+        { label: '直答', body: { thinking: { type: 'disabled' }, max_tokens: 4000 } },
+        { label: '直答', body: { max_tokens: 4000 } },
+    ];
+    async function deepseekOnce(questions, key, ctrl, extra) {
         let timedOut = false;
         const timer = ctrl && setTimeout(() => { timedOut = true; ctrl.abort(); }, 120000);
         let res;
@@ -238,30 +249,58 @@
             res = await fetch(DEEPSEEK_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-                body: JSON.stringify({
+                body: JSON.stringify(Object.assign({
                     model: DEEPSEEK_MODEL, stream: false, response_format: { type: 'json_object' },
-                    thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 8000,
                     messages: [{ role: 'system', content: QUIZ_PROMPT }, { role: 'user', content: JSON.stringify(questions) }],
-                }),
+                }, extra)),
                 signal: ctrl ? ctrl.signal : undefined,
             });
         } catch (e) {
-            throw new Error(e && e.name === 'AbortError' ? (timedOut ? 'DeepSeek 120 秒内没有返回，已停止' : '脚本已停止') : '连不上 DeepSeek，请检查网络');
+            const err = new Error(e && e.name === 'AbortError' ? (timedOut ? 'DeepSeek 120 秒内没有返回，已停止' : '脚本已停止') : '连不上 DeepSeek，请检查网络');
+            err.fatal = true;
+            throw err;
         } finally { if (timer) clearTimeout(timer); }
         const data = await res.json().catch(() => null);
         if (!res.ok) {
             const detail = (data && data.error && (data.error.message || data.error)) || '';
             const hint = res.status === 401 ? '（Key 无效，请在设置里重新填写）' : res.status === 402 ? '（账户余额不足）' : res.status === 429 ? '（请求太频繁，稍后再试）' : '';
-            throw new Error(`DeepSeek 返回 HTTP ${res.status}${hint}${detail ? '：' + detail : ''}`);
+            const err = new Error(`DeepSeek 返回 HTTP ${res.status}${hint}${detail ? '：' + detail : ''}`);
+            err.retryParams = res.status === 400;   // 参数不被接受：换参数重试；其余（Key、余额、限流、服务故障）直接停止
+            err.fatal = !err.retryParams;
+            throw err;
         }
         const choice = data && data.choices && data.choices[0];
         const reason = choice && choice.finish_reason;
-        if (reason === 'length') throw new Error('DeepSeek 输出达到长度上限，没有选择或提交题目');
-        if (reason !== 'stop') throw new Error(`DeepSeek 未正常结束（finish_reason=${reason || '缺失'}）`);
+        if (reason === 'length') { const e = new Error('DeepSeek 输出达到长度上限'); e.retryDirect = true; throw e; }
+        if (reason !== 'stop') { const e = new Error(`DeepSeek 未正常结束（finish_reason=${reason || '缺失'}）`); e.retryDirect = true; throw e; }
         let answer;
-        try { answer = JSON.parse((choice.message && choice.message.content) || ''); } catch (e) { throw new Error('DeepSeek 返回空内容或无法解析，没有选择或提交题目'); }
-        if (!answer || !Array.isArray(answer.answers) || answer.answers.length !== questions.length) throw new Error('DeepSeek 返回格式不完整，没有选择或提交题目');
+        try { answer = JSON.parse((choice.message && choice.message.content) || ''); } catch (e) { const er = new Error('DeepSeek 返回空内容或无法解析'); er.retryDirect = true; throw er; }
+        if (!answer || !Array.isArray(answer.answers) || answer.answers.length !== questions.length) { const e = new Error('DeepSeek 返回格式不完整'); e.retryDirect = true; throw e; }
         return answer.answers;
+    }
+    async function deepseekBatch(questions, key, ctrl) {
+        let last = null;
+        for (let i = 0; i < DS_ATTEMPTS.length; i++) {
+            try { return await deepseekOnce(questions, key, ctrl, DS_ATTEMPTS[i].body); }
+            catch (e) {
+                if (e.fatal) throw e;
+                last = e;
+                // 长度用光 / 答案不完整：跳到“直答”；参数不被接受：试下一组参数
+                if (e.retryDirect && DS_ATTEMPTS[i].label === '思考') i = DS_ATTEMPTS.findIndex((a) => a.label === '直答') - 1;
+            }
+        }
+        throw new Error(`${last ? last.message : 'DeepSeek 没有返回答案'}，换用其他请求方式重试后仍不行，没有选择或提交题目`);
+    }
+    async function deepseekAnswers(questions, key, ctrl) {
+        ctrl = ctrl || (typeof AbortController !== 'undefined' ? new AbortController() : null);
+        const out = [];
+        for (let start = 0; start < questions.length; start += 10) {
+            // 每批重新从 1 编号，拿回答案后再换回原题号
+            const part = questions.slice(start, start + 10).map((q, i) => Object.assign({}, q, { id: i + 1 }));
+            const answers = await deepseekBatch(part, key, ctrl);
+            for (const a of answers) out.push(Object.assign({}, a, { id: Number.isInteger(a && a.id) ? a.id + start : a && a.id }));
+        }
+        return out;
     }
 
     // 随机作答：不联网，答案仅随机选择
@@ -2808,7 +2847,9 @@
                 const esc = (t) => this._esc(t);
                 const items = [];
                 for (const e of wn.entries) for (const it of e.items) if (!it.startsWith('  ')) items.push(it);
-                const shown = items.slice(0, 3);
+                // 一次跨多个版本时，先列新功能、再列修复，避免几条修复把新功能挤出前三条
+                const ordered = wn.entries.length > 1 ? items.filter((t) => !/^修复/.test(t)).concat(items.filter((t) => /^修复/.test(t))) : items;
+                const shown = ordered.slice(0, 3);
                 el.querySelector('[data-k="wntitle"]').textContent = `🎉 已更新到 v${VERSION}`;
                 el.querySelector('[data-k="wnlist"]').innerHTML =
                     (shown.length ? shown.map((t) => `<li>${esc(t)}</li>`).join('') : '<li>修复了一些问题，体验更稳定</li>') +
@@ -4372,7 +4413,7 @@
                 const icon = (path, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
                 d.innerHTML =
                     '<style>' +
-                    '#xxt-v41-music{position:fixed;z-index:2147483647;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
+                    '#xxt-v41-music{position:fixed;z-index:2147483647;box-sizing:border-box;width:320px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
                       'background:radial-gradient(120% 70% at 50% 0%,#2C2422 0%,#1B1615 60%,#141110 100%);color:#EDE6E2;box-shadow:0 12px 36px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);' +
                       'font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;' +
                       'transition:opacity .38s cubic-bezier(.22,1,.36,1),transform .38s cubic-bezier(.22,1,.36,1)}' +
@@ -4415,6 +4456,12 @@
                     '#xxt-v41-music .xm-mode{font-size:11px;font-weight:600;width:auto;padding:0 8px;border-radius:12px;height:24px}' +
                     '#xxt-v41-music .xm-vol{display:flex;align-items:center;gap:8px;color:#A89D98;margin-bottom:8px}' +
                     '#xxt-v41-music .xm-vol input{margin:0}' +
+                    '#xxt-v41-music .xm-list,#xxt-v41-music .xm-reclist,#xxt-v41-music .xm-cq{overflow-x:hidden!important;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}' +
+                    '#xxt-v41-music ::-webkit-scrollbar{width:6px;height:0}' +
+                    '#xxt-v41-music ::-webkit-scrollbar-track{background:transparent}' +
+                    '#xxt-v41-music ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:3px}' +
+                    '#xxt-v41-music ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.32)}' +
+                    '#xxt-v41-music ::-webkit-scrollbar-corner{background:transparent}' +
                     '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
                     '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
                     '#xxt-v41-music .xm-sec{margin:10px 8px 2px;font-size:11px;font-weight:600;color:#7D726D;letter-spacing:.5px}' +
@@ -4630,7 +4677,8 @@
                     if (id === this._curTrack) this._musicToggle(); else this._musicPlay(id);
                 });
                 d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('drag'); });
-                d.addEventListener('dragleave', (e) => { if (e.target === d) d.classList.remove('drag'); });
+                // 只有真正离开唱片机时才取消高亮；在里面的元素之间移动时不来回切换（否则按钮会闪动）
+                d.addEventListener('dragleave', (e) => { if (!e.relatedTarget || !d.contains(e.relatedTarget)) d.classList.remove('drag'); });
                 d.addEventListener('drop', (e) => {
                     e.preventDefault(); d.classList.remove('drag');
                     const fs = [...(e.dataTransfer && e.dataTransfer.files || [])];
@@ -4645,7 +4693,7 @@
                 const d = this._musicEl, el = this._panel;
                 if (!d || !el || !this._musicOpen) return;
                 const r = el.getBoundingClientRect();
-                const w = d.offsetWidth || 288, h = d.offsetHeight || 560, gap = 12, W = window.innerWidth, H = window.innerHeight;
+                const w = d.offsetWidth || 320, h = d.offsetHeight || 560, gap = 12, W = window.innerWidth, H = window.innerHeight;
                 // 侧边栏展开时，唱片机让开侧边栏
                 const sb = this._sideEl && this._sideEl.classList.contains('show') ? this._sideEl.getBoundingClientRect() : null;
                 const right = sb && sb.left >= r.left ? Math.max(r.right, sb.right) : r.right;
