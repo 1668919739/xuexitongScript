@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.5.1
-// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节，并在页面结构异常时安全停止
+// @version      4.6.0
+// @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,18 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.5.1';
+    const VERSION = '4.6.0';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.0', date: '2026-10-28', note: '加入了你们一直想要的功能。', items: [
+            '新增答题辅助（浮窗里有上手教程）：齿轮设置里「自动答题」默认开启、作答方式默认 DeepSeek，填入自己在 DeepSeek 开放平台申请的 Key 即可使用（只需填一次，长期保存在本机浏览器；调用会消耗你自己 DeepSeek 账号的余额），章节测验会自动识别单选 / 多选 / 判断题、作答、逐题核对后提交，确认成绩再进入下一节；视频弹题自动作答，答对后继续播放。也可选「随机作答」，不联网、不需要 Key',
+            '格式转换升级：新增「车载 MP3」（44.1kHz 立体声恒定码率）和「FLAC 无损」，可开启音量统一、文件名加序号，可一次添加整个文件夹；同名 .lrc 歌词会随下载一起改名保存。右侧功能栏新增「音频转换」直达入口',
+            '唱片机新增「RouteCC 的歌单」侧拉栏（默认收起）：点歌名即在网易云音乐里打开这首歌，用你自己的网易云播放',
+            '答题进度显示在状态框里；视频弹题答错时自动换一个没选过的答案重交（最多 3 次），章节测验不会重复提交；结果不明或题目变化时停止并按提示音设置提醒。点「停止」立即中断，答题进行中也能随时改设置（本轮结束后生效）。没有填 Key 或关闭自动答题时，测验和弹题按原来的方式处理',
+            '新增留言板：右侧功能栏或齿轮设置里打开，所有人的留言都能看到；写好后一键复制并打开 GitHub 发表（需登录 GitHub）',
+            '运行信息只显示在浮窗里，不再输出到浏览器控制台；齿轮里的「复制诊断信息」仍带有最近的运行日志',
+        ] },
         { v: '4.5.1', date: '2026-10-27', note: '删掉一些没用的功能', items: [
             '精简：去掉每日学习目标和休息提醒，「今天」页改为显示今日已学时长和完成节数',
         ] },
@@ -127,6 +135,16 @@
     const changelogTop = (label) => String(label).split('–').pop().replace(/x/gi, '99');
     const changelogSince = (from) => CHANGELOG.filter((e) => newerThan(changelogTop(e.v), from) && !newerThan(changelogTop(e.v), VERSION));
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
+    // 留言板：仓库里的一个 Issue，评论即留言。所有人都能在浮窗里看到；发表需登录 GitHub；作者可在 GitHub 上删除留言
+    const BOARD_ISSUE = 2;
+    const BOARD_URL = `${REPO_URL}/issues/${BOARD_ISSUE}`;
+    const BOARD_API = `https://api.github.com/repos/1668919739/xuexitongScript/issues/${BOARD_ISSUE}`;
+    const BOARD_OWNER = '1668919739';
+    const openTab = (url) => {
+        const w = window.open(url, '_blank');
+        if (w) { try { w.opener = null; } catch (e) { /* ignore */ } }
+        return !!w;
+    };
     // 检查新版本：GitHub 最及时，jsDelivr 作为国内备用
     const VERSION_URLS = [
         'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/version.json',
@@ -166,7 +184,7 @@
         const s = document.createElement('script');
         s.src = 'https://code.jquery.com/jquery-3.6.0.min.js';
         s.onload = waitForCoursePage;
-        s.onerror = () => console.error('jQuery 加载失败，请检查网络');
+        s.onerror = () => {};   // jQuery 加载失败：静默放弃，刷新页面会重试
         document.head.appendChild(s);
     } else {
         waitForCoursePage();
@@ -200,7 +218,7 @@
             if ($('#coursetree').length > 0) {
                 clearInterval(window[BOOT_TIMER_KEY]);
                 window[BOOT_TIMER_KEY] = null;
-                const app = createApp($);
+                const app = attachStudyAssist(createApp($), $);
                 window.app = app;
                 window[APP_KEY] = app;
                 app.start();
@@ -209,9 +227,1144 @@
             if (++attempts >= 20) {
                 clearInterval(window[BOOT_TIMER_KEY]);
                 window[BOOT_TIMER_KEY] = null;
-                console.error('%c脚本启动超时：未检测到课程目录（#coursetree）。请确认当前处于课程播放页、课程列表页或直播回放页。', 'color:#F44336;font-weight:bold');
             }
         }, 1000);
+    }
+
+    // ================= 答题辅助（章节测验 / 视频弹题） =================
+    // 全部在浏览器里完成，跟随脚本自动更新：DeepSeek 方式由浏览器直接调用 DeepSeek 开放平台接口，
+    // Key 由用户自己在开放平台申请后填进齿轮设置，长期保存在本机浏览器；随机作答不联网。
+    // 关闭「自动答题」或没有填 Key 时，测验和弹题按原来的方式处理。
+    const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
+    const DEEPSEEK_MODEL = 'deepseek-flash';
+    const DEEPSEEK_KEY_PAGE = 'https://platform.deepseek.com/api_keys';
+    const DEEPSEEK_KEY = 'xxt-v41-deepseek-key';
+    const QUIZ_PROMPT = '按题意回答全部题目。注意：题干或选项可能经过网页防复制处理，出现个别汉字被替换、插入无关字，或词语看起来不通顺。先结合上下文和选项在内部还原最可能的原句，再按还原后的题意作答；不要把明显异常的替换字当作专业术语，也不要因无法逐字还原而放弃。每题都必须给非空答案，只用该题提供的选项字母且不可重复；单选和判断选一个，多选列出所有正确项。不确定时选最可能的答案。id须对应题号。只输出JSON：{"answers":[{"id":1,"letters":["A"]}]}。';
+    const deepseekKey = () => { try { return (localStorage.getItem(DEEPSEEK_KEY) || '').trim(); } catch (e) { return ''; } };
+    const setDeepseekKey = (v) => { try { if (v) localStorage.setItem(DEEPSEEK_KEY, v); else localStorage.removeItem(DEEPSEEK_KEY); return true; } catch (e) { return false; } };
+    const maskKey = (k) => (k.length > 10 ? `${k.slice(0, 3)}…${k.slice(-4)}` : '已保存');
+
+    // 一套题一次请求；返回 [{ id, letters }]，格式不对时抛错，绝不拿残缺答案去提交
+    async function deepseekAnswers(questions, key, ctrl) {
+        ctrl = ctrl || (typeof AbortController !== 'undefined' ? new AbortController() : null);
+        let timedOut = false;
+        const timer = ctrl && setTimeout(() => { timedOut = true; ctrl.abort(); }, 120000);
+        let res;
+        try {
+            res = await fetch(DEEPSEEK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+                body: JSON.stringify({
+                    model: DEEPSEEK_MODEL, stream: false, response_format: { type: 'json_object' },
+                    thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 8000,
+                    messages: [{ role: 'system', content: QUIZ_PROMPT }, { role: 'user', content: JSON.stringify(questions) }],
+                }),
+                signal: ctrl ? ctrl.signal : undefined,
+            });
+        } catch (e) {
+            throw new Error(e && e.name === 'AbortError' ? (timedOut ? 'DeepSeek 120 秒内没有返回，已停止' : '脚本已停止') : '连不上 DeepSeek，请检查网络');
+        } finally { if (timer) clearTimeout(timer); }
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+            const detail = (data && data.error && (data.error.message || data.error)) || '';
+            const hint = res.status === 401 ? '（Key 无效，请在设置里重新填写）' : res.status === 402 ? '（账户余额不足）' : res.status === 429 ? '（请求太频繁，稍后再试）' : '';
+            throw new Error(`DeepSeek 返回 HTTP ${res.status}${hint}${detail ? '：' + detail : ''}`);
+        }
+        const choice = data && data.choices && data.choices[0];
+        const reason = choice && choice.finish_reason;
+        if (reason === 'length') throw new Error('DeepSeek 输出达到长度上限，没有选择或提交题目');
+        if (reason !== 'stop') throw new Error(`DeepSeek 未正常结束（finish_reason=${reason || '缺失'}）`);
+        let answer;
+        try { answer = JSON.parse((choice.message && choice.message.content) || ''); } catch (e) { throw new Error('DeepSeek 返回空内容或无法解析，没有选择或提交题目'); }
+        if (!answer || !Array.isArray(answer.answers) || answer.answers.length !== questions.length) throw new Error('DeepSeek 返回格式不完整，没有选择或提交题目');
+        return answer.answers;
+    }
+
+    // 随机作答：不联网，答案仅随机选择
+    function randomAnswers(questions) {
+        const pick = (n) => Math.floor(Math.random() * n);
+        return questions.map((q) => {
+            const letters = q.options.map((o) => o.letter);
+            if (q.type !== '多选题') return { id: q.id, letters: [letters[pick(letters.length)]] };
+            const chosen = letters.filter(() => Math.random() < 0.5);
+            if (!chosen.length) chosen.push(letters[pick(letters.length)]);
+            return { id: q.id, letters: chosen };
+        });
+    }
+
+    function attachStudyAssist(app, $) {
+        const C = app.configs;
+        const log = (msg, color, level) => app._log(msg, color, level);
+        let status = { message: '', error: false };
+        let quizError = '';          // 显示在状态框里的停止原因，进入新的小节或点继续后清除
+        let quizErrorPopup = false;  // 停止原因来自视频弹题：弹层消失后自动清除
+        let configNote = '';
+        // 答题流程进行中改的设置先记下来，界面立即显示新选择，等这一轮结束、下一次触发前再生效
+        let pending = null;
+        const want = (k) => (pending && k in pending ? pending[k] : C[k]);
+        const changeSetting = (k, v, label) => {
+            if (want(k) === v) return;
+            if (busy()) {
+                pending = Object.assign(pending || {}, { [k]: v });
+                if (pending[k] === C[k]) delete pending[k];
+                if (!Object.keys(pending).length) pending = null;
+                configNote = pending ? '已记下，本轮答题结束后生效' : '';
+                log(`设置：${label}（本轮答题结束后生效）`, '#2196F3');
+            } else {
+                C[k] = v;
+                app._saveSettings();
+                quizError = '';
+                configNote = k === 'quizMode' && v === 'random' ? '随机作答不联网、不需要 Key，答案可能出错' : '';
+                log(`设置：${label}`, '#2196F3');
+            }
+            app._panelKey = ''; app._renderPanel();
+        };
+        // 在每次判断要不要答题之前调用：没有答题流程在进行时，把记下的设置真正生效
+        const applyPending = () => {
+            if (!pending || busy()) return;
+            Object.assign(C, pending);
+            pending = null;
+            app._saveSettings();
+            quizError = '';
+            configNote = '';
+            log(`设置已生效：自动答题${C.quizAssist ? '开' : '关'} · ${C.quizMode === 'random' ? '随机作答' : 'DeepSeek'}`, '#2196F3');
+            app._panelKey = '';
+        };
+        let boundPanel = null;
+
+        const ready = () => C.quizMode === 'random' || !!deepseekKey();
+        const active = () => !!C.quizAssist && ready();
+        const busy = () => quizBusy || popupBusy || stepPending;
+        const progress = (message, isError = false) => {
+            status = { message: String(message), error: !!isError };
+            quizError = isError ? String(message) : '';
+            if (!isError) quizErrorPopup = false;
+            log('[答题辅助] ' + message, isError ? '#F44336' : '#607D8B', isError ? 'warn' : 'log');
+            app._panelKey = '';
+        };
+
+        // ---------- 上手教程（本次大更新的答题辅助） ----------
+        // 没填 Key 时在浮窗主界面显示一张小卡片：先是一行提示，点「开始」后分三步讲解；看完或关掉后不再自动出现，设置里随时能重看
+        const GUIDE_KEY = 'xxt-v41-quiz-guide';
+        let guideStep = -1;        // -1：收起的一行提示；0~2：第几步
+        let guideForced = false;   // 从设置里点了「上手教程」
+        const guideDone = () => { try { return localStorage.getItem(GUIDE_KEY) === 'done'; } catch (e) { return false; } };
+        const finishGuide = () => { try { localStorage.setItem(GUIDE_KEY, 'done'); } catch (e) { /* ignore */ } guideForced = false; guideStep = -1; app._panelKey = ''; app._renderPanel(); };
+        const GUIDE = [
+            ['打开答题辅助', '点浮窗右上角的齿轮，找到「答题辅助」。「自动答题」默认已开启，作答方式默认是 DeepSeek。', '带我去看'],
+            ['填入 DeepSeek Key', '在 DeepSeek 开放平台登录并充值，创建一个 API Key（以 sk- 开头），复制后粘贴到设置里点「保存」，只需填一次。调用会消耗你自己 DeepSeek 账号的余额。', '去申请 Key'],
+            ['开始学习', '进入章节测验或视频出现弹题时会自动作答，进度显示在状态框；结果不明时会停下来提醒。不想用时关掉「自动答题」；也可以选「随机作答」，不联网、不花钱，但答案只是随机的。', '我知道了'],
+        ];
+        function flashQuizSettings(el) {
+            const targets = ['quizlabel', 'quizon', 'quizst', 'quizapi'].map((k) => el.querySelector(`[data-k="${k}"]`)).filter(Boolean).map((n) => n.closest('.xxt-set-row') || n);
+            if (targets[0]) targets[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+            for (const n of targets) { n.classList.remove('xxt-flash'); void n.offsetWidth; n.classList.add('xxt-flash'); }
+            setTimeout(() => targets.forEach((n) => n.classList.remove('xxt-flash')), 2400);
+        }
+        function buildGuide(el) {
+            const anchor = el.querySelector('[data-k="whatsnew"]');
+            if (!anchor || el.querySelector('[data-k="quizguidecard"]')) return;
+            const card = document.createElement('div');
+            card.className = 'xxt-guide';
+            card.setAttribute('data-k', 'quizguidecard');
+            card.style.display = 'none';
+            card.innerHTML =
+                '<div class="xxt-guide-mini" data-k="gmini"><span>🎓 新功能：答题辅助 · 30 秒上手</span><button type="button" class="xxt-guide-go" data-k="gstart">开始 ›</button><button type="button" class="xxt-notice-x" data-k="gclose" aria-label="关闭教程">×</button></div>' +
+                '<div class="xxt-guide-step" data-k="gstep" role="group" aria-label="答题辅助上手教程">' +
+                  '<div class="xxt-guide-head"><b data-k="gtitle"></b><span data-k="gno"></span><button type="button" class="xxt-notice-x" data-k="gclose2" aria-label="关闭教程">×</button></div>' +
+                  '<p data-k="gtext"></p>' +
+                  '<div class="xxt-guide-btns"><button type="button" class="xxt-set-btn" data-k="gprev">上一步</button><button type="button" class="xxt-set-btn xxt-fb-send" data-k="gact"></button><button type="button" class="xxt-set-btn" data-k="gnext">下一步</button></div>' +
+                  '<div class="xxt-guide-dots" data-k="gdots" aria-hidden="true"><i></i><i></i><i></i></div>' +
+                '</div>';
+            anchor.insertAdjacentElement('afterend', card);
+            const go = (n) => { guideStep = Math.max(0, Math.min(GUIDE.length - 1, n)); app._panelKey = ''; app._renderPanel(); };
+            card.querySelector('[data-k="gstart"]').addEventListener('click', () => go(0));
+            card.querySelector('[data-k="gclose"]').addEventListener('click', finishGuide);
+            card.querySelector('[data-k="gclose2"]').addEventListener('click', finishGuide);
+            card.querySelector('[data-k="gprev"]').addEventListener('click', () => go(guideStep - 1));
+            card.querySelector('[data-k="gnext"]').addEventListener('click', () => go(guideStep + 1));
+            card.querySelector('[data-k="gact"]').addEventListener('click', () => {
+                if (guideStep === 0) {
+                    app._animatePanel(() => { app._settingsOpen = true; app._fbOpen = false; app._histOpen = false; });
+                    setTimeout(() => flashQuizSettings(el), 450);
+                    guideStep = 1;
+                } else if (guideStep === 1) {
+                    openTab(DEEPSEEK_KEY_PAGE);
+                    go(2);
+                } else finishGuide();
+            });
+        }
+        function renderGuide(el) {
+            const card = el.querySelector('[data-k="quizguidecard"]');
+            if (!card) return;
+            const wn = el.querySelector('[data-k="whatsnew"]');
+            const want = guideForced || (!guideDone() && !deepseekKey() && C.quizMode !== 'random');
+            const show = want && app._mode === 'course' && !app._panelCollapsed && !app._settingsOpen && !app._histOpen && !(wn && wn.style.display !== 'none');
+            card.style.display = show ? '' : 'none';
+            if (!show) return;
+            const q = (k) => card.querySelector(`[data-k="${k}"]`);
+            const mini = guideStep < 0;
+            q('gmini').style.display = mini ? '' : 'none';
+            q('gstep').style.display = mini ? 'none' : '';
+            if (mini) return;
+            const [title, text, act] = GUIDE[guideStep];
+            q('gtitle').textContent = title;
+            q('gno').textContent = `${guideStep + 1} / ${GUIDE.length}`;
+            q('gtext').textContent = text;
+            q('gact').textContent = act;
+            q('gprev').style.visibility = guideStep > 0 ? '' : 'hidden';
+            q('gnext').style.visibility = guideStep < GUIDE.length - 1 ? '' : 'hidden';
+            [...q('gdots').children].forEach((d, i) => d.classList.toggle('on', i === guideStep));
+        }
+
+        // ---------- 齿轮设置里的「答题辅助」 ----------
+        function bindPanel(el) {
+            boundPanel = el;
+            buildGuide(el);
+            const q = (k) => el.querySelector(`[data-k="${k}"]`);
+            if (!q('quizon')) return;
+            q('quizguide').addEventListener('click', () => {
+                guideForced = true; guideStep = 0;
+                app._animatePanel(() => { app._settingsOpen = false; app._fbOpen = false; app._histOpen = false; });
+            });
+            for (const t of ['keydown', 'keyup', 'keypress']) q('quizkey').addEventListener(t, (e) => e.stopPropagation());
+            q('quizon').addEventListener('change', (e) => app.setQuizEnabled(e.target.checked));
+            for (const b of el.querySelectorAll('[data-qmode]')) b.addEventListener('click', () => {
+                const mode = b.getAttribute('data-qmode') === 'random' ? 'random' : 'api';
+                changeSetting('quizMode', mode, `作答方式 ${mode === 'random' ? '随机作答' : 'DeepSeek'}`);
+            });
+            const saveKey = () => {
+                const v = q('quizkey').value.trim();
+                if (!v) return;
+                if (!/^sk-[\w-]{8,}$/.test(v)) { configNote = 'Key 应以 sk- 开头，请从 DeepSeek 开放平台完整复制'; app._renderPanel(); return; }
+                configNote = setDeepseekKey(v) ? 'Key 已保存在本机浏览器，以后自动使用' : '浏览器不允许保存，请检查是否开启了无痕模式';
+                q('quizkey').value = '';
+                app._panelKey = ''; app._renderPanel();
+            };
+            q('quizkeysave').addEventListener('click', saveKey);
+            q('quizkey').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); });
+            q('quizkeyclear').addEventListener('click', () => {
+                setDeepseekKey('');
+                configNote = '已清除 Key';
+                app._panelKey = ''; app._renderPanel();
+            });
+        }
+
+        function renderQuizSettings(el) {
+            const q = (k) => el.querySelector(`[data-k="${k}"]`);
+            if (!q('quizon')) return;
+            const set = (node, t) => { if (node.textContent !== t) node.textContent = t; };
+            const show = (node, on) => { const d = on ? '' : 'none'; if (node.style.display !== d) node.style.display = d; };
+            const key = deepseekKey();
+            const on = !!want('quizAssist');
+            const api = want('quizMode') !== 'random';
+            q('quizon').checked = on;
+            for (const b of el.querySelectorAll('[data-qmode]')) {
+                const on = (b.getAttribute('data-qmode') === 'random') === !api;
+                b.classList.toggle('on', on);
+                b.setAttribute('aria-checked', String(on));
+            }
+            show(q('quizapi'), api);
+            set(q('quizst'), !on ? '自动答题已关闭：测验和弹题按原来的方式处理'
+                : !api ? '随机作答：不联网，答案仅随机选择'
+                : key ? `DeepSeek · Key ${maskKey(key)}` : '还没有填写 DeepSeek Key，填好后自动答题才会生效');
+            q('quizst').classList.toggle('err', on && api && !key);
+            q('quizkey').placeholder = key ? '填写新的 Key 可替换' : 'sk-…';
+            show(q('quizkeyclear'), !!key);
+            set(q('quiznote'), configNote || (api ? '答案不保证正确' : '随机作答不联网、不花钱，答案仅随机选择'));
+        }
+
+        // ---------- 接入播放器生命周期 ----------
+        const attemptedQuizzes = new Set();
+        let quizBusy = false;
+        let popupBusy = false;
+        let stepPending = false;
+        let stopped = false;
+        let popupAttempts = new WeakMap();
+        let popupBlockedRoot = null;
+        let inflight = null;      // 正在进行的 DeepSeek 请求，点“停止”时中断
+        let runQueued = false;    // 答题流程收尾时点了“继续”：收尾完成后自动继续
+        const orig = {
+            run: app.run.bind(app), stop: app.stop.bind(app), destroy: app.destroy.bind(app), nextUnit: app.nextUnit.bind(app),
+            tickInner: app._tickInner.bind(app), stepTitle: app._stepTitle.bind(app), quizVisible: app._quizVisible.bind(app),
+            advanceChapterTest: app._advanceChapterTest.bind(app), renderPanel: app._renderPanel.bind(app),
+            panelStatus: app._panelStatus.bind(app), enterLoading: app._enterLoading.bind(app),
+        };
+
+        app._renderPanel = function () {
+            orig.renderPanel();
+            const el = this._panel && this._panel.isConnected ? this._panel : null;
+            if (!el) return;
+            if (el !== boundPanel) bindPanel(el);
+            renderQuizSettings(el);
+            renderGuide(el);
+        };
+        // 答题进度和停止原因显示在浮窗原有的状态框里（红色会触发“需要处理”提示音）
+        app._panelStatus = function () {
+            if (this._mode === 'course' && !this._loginExpired) {
+                if (busy()) return { color: '#3B82F6', label: '答题中', text: status.message || '正在处理题目…' };
+                if (quizError && (this._state === 'stopped' || this._state === 'waiting' || quizErrorPopup)) return { color: '#E5484D', label: '需要处理', text: quizError };
+            }
+            return orig.panelStatus();
+        };
+        app._enterLoading = function (reason) { if (!busy()) { quizError = ''; quizErrorPopup = false; } return orig.enterLoading(reason); };
+        app.stop = function () {
+            stopped = true;
+            runQueued = false;
+            if (inflight) { try { inflight.abort(); } catch (e) { /* ignore */ } }
+            orig.stop();
+        };
+        app.run = function () {
+            if (busy()) {
+                // 上一轮正在收尾（通常不到 1 秒）：记下来，收尾完成后自动继续，不会点了没反应
+                runQueued = true;
+                this._userStopped = false;
+                log('上一轮答题流程正在收尾，完成后自动继续', '#607D8B');
+                this._panelKey = ''; this._renderPanel();
+                return;
+            }
+            runQueued = false;
+            stopped = false;
+            quizError = '';
+            quizErrorPopup = false;
+            popupAttempts = new WeakMap();
+            popupBlockedRoot = null;
+            orig.run();
+        };
+        app.destroy = function () { stopped = true; orig.destroy(); };
+        // 随时可以切换；答题流程进行中时，本轮结束后生效
+        app.setQuizEnabled = function (enabled) {
+            changeSetting('quizAssist', !!enabled, `自动答题 ${enabled ? '开启' : '关闭'}`);
+            return true;
+        };
+        // 自动答题生效时，也识别 videoquiz 结构之外、由同源弹层呈现的视频弹题
+        app._quizVisible = function (v) { return orig.quizVisible(v) || (active() && !!visiblePopupRoot()); };
+        app._stepTitle = function () { return active() ? stepTitle() : orig.stepTitle(); };
+        app._advanceChapterTest = function () { applyPending(); if (active()) advanceChapterTest(); else orig.advanceChapterTest(); };
+        // 自动答题生效时用页面下方的“下一节”逐个步骤前进（视频 → 章节测验 → 下一小节），否则沿用原来的跳节方式
+        app.nextUnit = function () { applyPending(); if (active()) nextStep(); else orig.nextUnit(); };
+        app._tickInner = function () {
+            if (this._mode !== 'course') { orig.tickInner(); return; }
+            // 答题流程进行中：不做播放检查，也不在这时静默更新（外层的统计和浮窗刷新照常进行）
+            if (busy()) return;
+            if (runQueued) { runQueued = false; app.run(); return; }
+            applyPending();
+            if (quizErrorPopup && !visiblePopupRoot()) { quizError = ''; quizErrorPopup = false; }
+            if (active() && !stopped && !['stopped', 'advancing', 'idle', 'reading'].includes(this._state)) {
+                const step = this._stepTitle();
+                if (step === '视频' && this._isValid(this._video) && startVideoPopupQuiz()) return;
+                if (step === '章节测验') { advanceChapterTest(); return; }
+            }
+            orig.tickInner();
+        };
+
+        // ---------- 题目识别 ----------
+        const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const visible = (el) => Boolean(el && el.isConnected && el.getClientRects().length &&
+            el.ownerDocument.defaultView.getComputedStyle(el).visibility !== 'hidden');
+        const kindPattern = /[\[【](单选题|多选题|判断题)[\]】]/;
+
+        function stepTitle() {
+            const normalize = (text) => String(text || '').replace(/\s+/g, '').replace(/^\d+[.、]?/, '');
+            const tabs = Array.from(document.querySelectorAll('.prev_white')).filter((item) => item.getClientRects().length > 0);
+            const frame = Array.from(document.querySelectorAll('iframe[src*="/knowledge/cards"]')).find((item) => item.getClientRects().length > 0);
+            const frameNum = () => { try { return new URL(frame.getAttribute('src'), location.href).searchParams.get('num'); } catch (e) { return null; } };
+            if (frame) {
+                const num = frameNum();
+                // num 是步骤索引：有学习目标时，0/1/2 分别对应目标、视频和测验
+                if (num !== null && /^\d+$/.test(num)) {
+                    const numbered = tabs.some((item) => /^\s*\d+/.test(item.textContent || ''));
+                    const tab = numbered ? tabs.find((item) => Number(((item.textContent || '').match(/^\s*(\d+)/) || [])[1]) === Number(num) + 1) : tabs[Number(num)];
+                    const title = normalize(tab && tab.textContent);
+                    if (['学习目标', '视频', '章节测验'].includes(title)) return title;
+                }
+            }
+            const title = normalize(orig.stepTitle());
+            if (['学习目标', '视频', '章节测验'].includes(title)) return title;
+            if (frame && tabs.length === 0) {
+                const num = frameNum();
+                if (num === '0') return '视频';
+                if (num === '1') return '章节测验';
+            }
+            return orig.stepTitle();
+        }
+
+        function courseDocuments() {
+            const result = [];
+            const visit = (doc, depth) => {
+                if (!doc || depth > 3 || result.includes(doc)) return;
+                result.push(doc);
+                for (const frame of doc.querySelectorAll('iframe')) {
+                    try { visit(frame.contentDocument, depth + 1); } catch (_) { /* 跨域框架 */ }
+                }
+            };
+            visit(document, 0);
+            return result;
+        }
+
+        function quizCompleted() {
+            const scoreShown = courseDocuments().some((doc) => {
+                const text = clean(doc.body && doc.body.innerText);
+                const hasGrade = /本次成绩\s*[:：]?\s*\d+(?:\.\d+)?\s*分/.test(text);
+                return hasGrade && (/章节测验\s*已完成/.test(text) || /我的答案\s*[:：]/.test(text));
+            });
+            if (scoreShown) return true;
+            return Boolean(stepTitle() === '章节测验' && document.querySelector('.posCatalog_active .icon_Completed'));
+        }
+
+        function popupRoot(card) {
+            let node = card;
+            for (let i = 0; node && i < 12; i++, node = node.parentElement) {
+                if (/videoquiz/i.test(`${node.className || ''} ${node.id || ''}`)) return node;
+            }
+            return null;
+        }
+
+        function visiblePopupRoot() {
+            for (const doc of courseDocuments()) {
+                for (const el of doc.querySelectorAll('[class*="videoquiz"], [id*="videoquiz"], .ans-videoquiz')) {
+                    if (visible(el)) return el;
+                }
+            }
+            return null;
+        }
+
+        function videoPopupQuestions(root) {
+            if (!root) return [];
+            const questions = extractQuestions().filter((q) => {
+                const owner = popupRoot(q.card);
+                return owner === root || (owner && root.contains(owner));
+            });
+            if (questions.length) return questions;
+            // 视频弹题未必写有“【单选题】”；仅在原生或 ARIA 控件明确给出题型时推断
+            const controls = Array.from(root.querySelectorAll('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]'))
+                .filter((el) => visible(el) && !el.disabled);
+            const groups = new Map();
+            for (const control of controls) {
+                const type = control.getAttribute('type') || control.getAttribute('role');
+                const group = control.closest('fieldset,[role="radiogroup"],[data-question-id],.videoquiz-question,.question') || root;
+                const name = control.getAttribute('name') || '';
+                let entry = Array.from(groups.values()).find((item) => item.card === group && item.name === name && item.type === type);
+                if (!entry) { entry = { card: group, name, type, controls: [] }; groups.set(control, entry); }
+                entry.controls.push(control);
+            }
+            // 多组题目没有各自容器时，不能把总题干套给每一组
+            if (groups.size > 1 && Array.from(groups.values()).some((group) => group.card === root)) return [];
+            for (const group of groups.values()) {
+                if (group.controls.length < 2 || group.controls.length > 8) return [];
+                const options = group.controls.map((control, index) => {
+                    const linkedLabel = control.id ? Array.from(root.querySelectorAll('label')).find((label) => label.htmlFor === control.id || label.getAttribute('for') === control.id) : null;
+                    const row = control.closest('label,li,[data-option],.option,.videoquiz-option') || linkedLabel || control.parentElement;
+                    if (!row || row === group.card) return null;
+                    const raw = clean(row.innerText || row.textContent);
+                    const prefix = raw.match(/^([A-H])[.、．:：\s]+/);
+                    const letter = prefix ? prefix[1] : String.fromCharCode(65 + index);
+                    const text = prefix ? raw.slice(prefix[0].length).trim() : raw;
+                    return text && text.length <= 500 ? { letter, text, element: row, labelElement: control } : null;
+                });
+                if (options.some((option) => !option) || new Set(options.map((option) => option.letter)).size !== options.length) return [];
+                const titleEl = group.card.querySelector('[data-question-title],.videoquiz-title,.question-title,.title,h1,h2,h3,h4,legend');
+                let title = clean(titleEl && (titleEl.innerText || titleEl.textContent));
+                if (!title) {
+                    const copy = group.card.cloneNode(true);
+                    copy.querySelectorAll('label,li,[data-option],.option,.videoquiz-option,input,button,[role="button"],.feedback').forEach((el) => el.remove());
+                    title = clean(copy.textContent).replace(/共\s*\d+\s*题[，,]?\s*已答对\s*\d+\s*题/g, '').trim();
+                }
+                title = title.replace(kindPattern, '').trim();
+                if (!title || title.length > 500 || options.some((option) => title.includes(option.text))) return [];
+                questions.push({ kind: group.type === 'checkbox' ? '多选题' : '单选题', title, options, card: group.card, doc: root.ownerDocument });
+            }
+            return questions;
+        }
+
+        function popupSignature(questions) {
+            return JSON.stringify(questions.map((q) => [q.kind, q.title, q.options.map((option) => [option.letter, option.text])]));
+        }
+
+        function optionElements(card) {
+            const labels = Array.from(card.querySelectorAll('span,div,label,li,p,b,i,strong,a'))
+                .filter((el) => /^[A-H]$/.test(clean(el.textContent)) &&
+                    !Array.from(el.children).some((child) => /^[A-H]$/.test(clean(child.textContent))));
+            const found = new Map();
+            for (const label of labels) {
+                const letter = clean(label.textContent);
+                if (found.has(letter)) continue;
+                let target = label;
+                for (let n = 0; n < 5; n++) {
+                    const parent = target.parentElement;
+                    if (!parent || parent === card) break;
+                    const otherLetters = Array.from(parent.querySelectorAll('span,div,label,li,p,b,i,strong,a'))
+                        .filter((el) => /^[A-H]$/.test(clean(el.textContent)) && el !== label);
+                    if (otherLetters.some((el) => !el.contains(label) && !label.contains(el))) break;
+                    target = parent;
+                    if (clean(target.innerText).length > 1) break;
+                }
+                const text = clean(target.innerText).replace(new RegExp(`^${letter}[.、．]?\\s*`), '');
+                if (text) found.set(letter, { letter, text, element: target, labelElement: label });
+            }
+            return Array.from(found.values()).sort((a, b) => a.letter.localeCompare(b.letter));
+        }
+
+        function extractQuestions() {
+            const questions = [];
+            for (const doc of courseDocuments()) {
+                if (!doc.body) continue;
+                const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+                const seenCards = new Set();
+                let node;
+                while ((node = walker.nextNode())) {
+                    const kind = (clean(node.textContent).match(kindPattern) || [])[1];
+                    if (!kind || !visible(node.parentElement)) continue;
+                    let card = node.parentElement;
+                    let options = [];
+                    for (let depth = 0; card && depth < 9; depth++, card = card.parentElement) {
+                        const kinds = clean(card.innerText).match(new RegExp(kindPattern.source, 'g')) || [];
+                        if (kinds.length > 1) break;
+                        options = optionElements(card);
+                        if (options.length >= 2 && options.length <= 8) break;
+                    }
+                    if (!card || options.length < 2 || options.length > 8 || seenCards.has(card)) continue;
+                    seenCards.add(card);
+                    const full = card.innerText || '';
+                    const firstOption = full.search(/(?:^|\n)\s*A\s*(?:[.、．]|\S)/);
+                    const title = clean(firstOption >= 0 ? full.slice(0, firstOption) : (node.parentElement.innerText || full))
+                        .replace(/^\d+\s*/, '').replace(kindPattern, '').trim();
+                    if (!title || title.length > 500 || options.some((option) => !option.text || option.text.length > 500)) continue;
+                    questions.push({ kind, title, options, card, doc });
+                }
+            }
+            return questions;
+        }
+
+        function findButton(doc, label) {
+            const candidates = Array.from(doc.querySelectorAll('button,a,input[type="button"],input[type="submit"],[role="button"],div,span'))
+                .filter((el) => visible(el) && clean(el.value || el.innerText) === label);
+            return candidates.find((el) => /^(BUTTON|A|INPUT)$/.test(el.tagName)) ||
+                candidates.find((el) => !Array.from(el.children).some((child) => clean(child.innerText) === label)) || null;
+        }
+
+        function findNextButton() {
+            for (const doc of courseDocuments()) {
+                const known = doc.querySelector('#prevNextFocusNext, #right1, .nextChapter');
+                if (visible(known) && clean(known.innerText || known.title).includes('下一节')) return known;
+                const generic = findButton(doc, '下一节');
+                if (generic) return generic;
+            }
+            return null;
+        }
+
+        // ---------- 作答与核对 ----------
+        async function askAnswers(questions) {
+            const payload = questions.map((q, i) => ({
+                id: i + 1, type: q.kind, question: q.title,
+                options: q.options.map((o) => ({ letter: o.letter, text: o.text })),
+            }));
+            if (payload.some((q) => q.question.length > 500 || q.options.some((o) => !o.text || o.text.length > 500))) throw new Error('题干或选项过长，已停止自动作答');
+            if (C.quizMode === 'random') return randomAnswers(payload);
+            const key = deepseekKey();
+            if (!key) throw new Error('还没有填写 DeepSeek Key');
+            log(`[答题辅助] 发送 ${payload.length} 道题给 DeepSeek`);
+            inflight = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            try { return await deepseekAnswers(payload, key, inflight); } finally { inflight = null; }
+        }
+
+        function validateAnswers(questions, answers) {
+            if (!Array.isArray(answers) || answers.length !== questions.length) throw new Error('返回的题目数量不匹配');
+            const result = new Map();
+            for (const item of answers) {
+                if (!item || !Number.isInteger(item.id) || result.has(item.id) || !Array.isArray(item.letters)) throw new Error('答案格式错误');
+                const q = questions[item.id - 1];
+                if (!q) throw new Error('返回了未知题号');
+                const letters = item.letters.map((letter) => clean(letter).toUpperCase());
+                if (!letters.length) throw new Error(`第 ${item.id} 题没有给出选项，已停止提交`);
+                if (new Set(letters).size !== letters.length) throw new Error(`第 ${item.id} 题答案包含重复选项，已停止提交`);
+                if (q.kind !== '多选题' && letters.length !== 1) throw new Error(`第 ${item.id} 题是${q.kind}，但返回了 ${letters.length} 个选项，已停止提交`);
+                const invalid = letters.filter((letter) => !q.options.some((option) => option.letter === letter));
+                if (invalid.length) throw new Error(`第 ${item.id} 题返回了页面中不存在的选项：${invalid.join('、')}，已停止提交`);
+                result.set(item.id, letters);
+            }
+            return result;
+        }
+
+        function optionState(option) {
+            const row = option.element;
+            const nodes = [row, ...row.querySelectorAll('*')];
+            const inputs = nodes.filter((el) => el.matches('input[type="radio"],input[type="checkbox"]'));
+            if (inputs.length) return inputs.some((input) => input.checked);
+            const aria = nodes.filter((el) => el.hasAttribute('aria-checked'));
+            if (aria.length) return aria.some((el) => el.getAttribute('aria-checked') === 'true');
+            // 只认明确的选中标记；不能把任意样式或整题 HTML 变化当成选中
+            if (nodes.some((el) => Array.from(el.classList).some((name) => /^(checked|selected|active|on|is-checked|is-selected)$/i.test(name)))) return true;
+            return null;
+        }
+
+        function selectedLetters(q) {
+            const fields = Array.from(q.card.querySelectorAll('input[type="hidden"]')).filter((el) =>
+                /^answer(?:\d|$|[_-])/i.test(el.id || '') || /^answer(?:\d|$|[_-])/i.test(el.name || ''));
+            // 学习通部分页面只把答案写到隐藏域，不修改 HTML 属性
+            if (fields.length === 1) {
+                const value = clean(fields[0].value).toUpperCase();
+                if (/^[A-H](?:[\s,;|]*[A-H])*$/.test(value)) {
+                    const letters = Array.from(new Set(value.match(/[A-H]/g)));
+                    if (letters.every((letter) => q.options.some((option) => option.letter === letter))) return letters;
+                }
+            }
+            return q.options.filter((option) => optionState(option) === true).map((option) => option.letter);
+        }
+
+        function clickTargets(option) {
+            const row = option.element;
+            const controls = Array.from(row.querySelectorAll('input[type="radio"],input[type="checkbox"],label,[role="radio"],[role="checkbox"],[onclick]'));
+            // 字母节点的 click 可冒泡到它自己的控件；点击整行不会向下传给子控件
+            return Array.from(new Set([option.labelElement, ...controls, row])).filter((el) => el && el.isConnected && typeof el.click === 'function' && !el.disabled);
+        }
+
+        async function setOption(q, option, wanted, no) {
+            if (stopped) throw new Error('脚本已停止');
+            if (!q.card.isConnected || !option.element.isConnected) throw new Error(`第 ${no} 题选项已变化`);
+            const isSelected = () => selectedLetters(q).includes(option.letter);
+            if (isSelected() === wanted) return;
+            for (const target of clickTargets(option)) {
+                if (stopped) throw new Error('脚本已停止');
+                if (!q.card.isConnected || !option.element.isConnected) throw new Error(`第 ${no} 题选项已变化`);
+                option.element.scrollIntoView({ block: 'center' });
+                const before = option.element.outerHTML;
+                target.click();
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    await sleep(150);
+                    if (stopped) throw new Error('脚本已停止');
+                    if (!q.card.isConnected || !option.element.isConnected) throw new Error(`第 ${no} 题选项已变化`);
+                    if (isSelected() === wanted) return;
+                }
+                // 状态不可识别且发生了变化时停止，避免再次点击把已选答案取消
+                if (optionState(option) === null && before !== option.element.outerHTML) break;
+            }
+            throw new Error(`第 ${no} 题 ${option.letter} 选项未确认${wanted ? '选中' : '取消'}，已停止提交；可在控制台运行 app.inspectQuizOptions() 查看控件状态`);
+        }
+
+        function verifySelectedAnswers(questions, answers) {
+            for (let i = 0; i < questions.length; i++) {
+                const q = questions[i];
+                if (!q.card.isConnected || q.options.some((option) => !option.element.isConnected)) throw new Error(`第 ${i + 1} 题选项已变化，已停止提交`);
+                const expected = [...answers.get(i + 1)].sort().join('');
+                const actual = selectedLetters(q).sort().join('');
+                if (actual !== expected) throw new Error(`第 ${i + 1} 题选中结果与答案不一致，已停止提交`);
+            }
+        }
+
+        async function selectAnswers(questions, answers) {
+            for (let i = 0; i < questions.length; i++) {
+                const q = questions[i];
+                const desired = answers.get(i + 1);
+                // 多选题先取消旧的多余选项；已选中的目标答案不重复点击
+                if (q.kind === '多选题') {
+                    for (const option of q.options) {
+                        if (!desired.includes(option.letter) && selectedLetters(q).includes(option.letter)) await setOption(q, option, false, i + 1);
+                    }
+                }
+                for (const letter of desired) {
+                    const option = q.options.find((item) => item.letter === letter);
+                    if (!option) throw new Error(`第 ${i + 1} 题选项不存在`);
+                    await setOption(q, option, true, i + 1);
+                }
+            }
+            verifySelectedAnswers(questions, answers);
+        }
+
+        // ---------- 视频弹题 ----------
+        async function submitVideoPopup(root, signature) {
+            if (stopped) throw new Error('脚本已停止');
+            const submit = findButton(root, '提交') || findButton(root, '确定');
+            if (!submit || submit.disabled) throw new Error('视频弹题未找到可用提交按钮');
+            submit.scrollIntoView({ block: 'center' });
+            submit.click();
+            let nextClicked = false;
+            for (let i = 0; i < 40; i++) {
+                await sleep(250);
+                if (stopped) throw new Error('脚本已停止');
+                if (!root.isConnected || !visible(root)) {
+                    if (!courseDocuments().includes(root.ownerDocument)) throw new Error('弹题所在页面已切换，未确认旧题提交结果');
+                    return 'closed';
+                }
+                const nextQuestions = videoPopupQuestions(root);
+                if (nextQuestions.length && popupSignature(nextQuestions) !== signature) return 'next';
+                const feedback = clean(root.innerText);
+                if (/请选择|请先作答/.test(feedback)) throw new Error('平台提示还没有作答，已停止自动处理，请手动作答');
+                if (/真遗憾|回答错误|答错|再接再厉/.test(feedback)) return 'wrong';
+                const next = findButton(root, '下一题') || findButton(root, '继续');
+                if (!nextClicked && next && !next.disabled && /回答正确|答对了|恭喜|回答成功/.test(feedback)) { next.click(); nextClicked = true; }
+            }
+            throw new Error('视频弹题提交后 10 秒仍未关闭或切换下一题，已停止自动处理');
+        }
+
+        // 换一个没试过的答案：单选 / 判断换一个选项，多选随机换一种组合
+        function otherAnswer(q, triedSet) {
+            const letters = q.options.map((o) => o.letter);
+            if (q.kind !== '多选题') {
+                const rest = letters.filter((l) => !triedSet.has(l));
+                return rest.length ? [rest[Math.floor(Math.random() * rest.length)]] : null;
+            }
+            for (let i = 0; i < 40; i++) {
+                const pick = letters.filter(() => Math.random() < 0.5);
+                if (pick.length && !triedSet.has(pick.slice().sort().join(''))) return pick;
+            }
+            return null;
+        }
+
+        // 返回 true 表示由答题辅助接管了这一轮；false 时交回原来的“弹题提醒手动处理”逻辑
+        function startVideoPopupQuiz() {
+            if (popupBusy) return true;
+            if (stopped || !app._video) return false;
+            const root = visiblePopupRoot();
+            if (!root) return false;
+            let questions = videoPopupQuestions(root);
+            if (!questions.length) {
+                if (popupBlockedRoot !== root) {
+                    popupBlockedRoot = root;
+                    progress('检测到视频弹题，但没有识别出完整题目，请手动作答，答完自动继续', true);
+                    quizErrorPopup = true;
+                }
+                return false;
+            }
+            const attempts = popupAttempts.get(root) || new Set();
+            popupAttempts.set(root, attempts);
+            if (attempts.has(popupSignature(questions))) return false;
+            popupBusy = true;
+            popupBlockedRoot = null;
+            (async () => {
+                for (let page = 0; page < 10; page++) {
+                    const signature = popupSignature(questions);
+                    if (attempts.has(signature)) throw new Error('该弹题已尝试过，已停止重复提交');
+                    attempts.add(signature);
+                    progress(`正在处理视频弹题第 ${page + 1} 组（${questions.length} 道），请求答案中。`);
+                    if (questions.length > 10) throw new Error('视频弹题数量超过 10，已停止自动提交');
+                    if (new Set(questions.map((q) => q.doc)).size !== 1) throw new Error('视频弹题跨多个框架，已停止自动提交');
+                    const answers = validateAnswers(questions, await askAnswers(questions));
+                    if (stopped) throw new Error('脚本已停止');
+                    if (!visible(root) || popupSignature(videoPopupQuestions(root)) !== signature) throw new Error('视频弹题在等待答案时已变化，已取消旧题作答');
+                    await selectAnswers(questions, answers);
+                    if (stopped || popupSignature(videoPopupQuestions(root)) !== signature) throw new Error('视频弹题已停止或发生变化，已取消提交');
+                    verifySelectedAnswers(questions, answers);
+                    progress('视频弹题选项已核对，正在提交。');
+                    let result = await submitVideoPopup(root, signature);
+                    // 答错：同一道题换一个没选过的答案再交，每次答案都不同，最多再试 3 次
+                    const tried = questions.map((q, i) => new Set([answers.get(i + 1).slice().sort().join('')]));
+                    for (let retry = 1; result === 'wrong' && retry <= 3; retry++) {
+                        if (questions.length !== 1) throw new Error('平台提示答错（一组多题，无法判断哪题错），请手动处理');
+                        const alt = otherAnswer(questions[0], tried[0]);
+                        if (!alt) throw new Error('平台提示答错，所有选项都已试过，请手动处理');
+                        tried[0].add(alt.slice().sort().join(''));
+                        const again = findButton(root, '重新作答') || findButton(root, '重做') || findButton(root, '再试一次');
+                        if (again) { again.click(); await sleep(400); }
+                        if (stopped) throw new Error('脚本已停止');
+                        const now = videoPopupQuestions(root);
+                        if (!now.length || popupSignature(now) !== signature) throw new Error('平台提示答错后弹题已变化，请手动处理');
+                        questions = now;
+                        const altAnswers = new Map([[1, alt]]);
+                        progress(`视频弹题答错，换一个答案重试（第 ${retry} 次）。`);
+                        await selectAnswers(questions, altAnswers);
+                        verifySelectedAnswers(questions, altAnswers);
+                        result = await submitVideoPopup(root, signature);
+                    }
+                    if (result === 'wrong') throw new Error('平台提示答错，已重试 3 次，请手动处理');
+                    if (result === 'next') { questions = videoPopupQuestions(root); continue; }
+                    app._quizNotified = false;
+                    app._blocked = false;
+                    app._state = 'playing';
+                    app._lastResumeTs = 0;
+                    progress('视频弹题已完成，继续播放。');
+                    app._resume('after-video-quiz');
+                    return;
+                }
+                throw new Error('连续处理已达到 10 组上限，请检查弹题状态');
+            })().catch((error) => {
+                if (stopped) return;
+                progress('视频弹题自动作答已停止：' + error.message + '。请手动作答，答完自动继续', true);
+                quizErrorPopup = true;
+            }).finally(() => { popupBusy = false; app._panelKey = ''; });
+            return true;
+        }
+
+        // ---------- 章节测验 ----------
+        function chapterKey() {
+            const node = document.querySelector('.posCatalog_active');
+            return node ? String(node.id || node.getAttribute('data-id') || node.textContent || '') : '';
+        }
+
+        function leftQuiz(doc, previousChapter) {
+            const currentChapter = chapterKey();
+            if (previousChapter && currentChapter && currentChapter !== previousChapter) return true;
+            const step = stepTitle();
+            if (step === '学习目标' || step === '视频') return true;
+            return Boolean(doc && !courseDocuments().includes(doc) && step && step !== '章节测验');
+        }
+
+        function resumeCurrentPage() {
+            stepPending = false;
+            app._enterLoading('manual');
+            progress('页面已切换，已结束旧测验等待，正在接管当前页面。旧测验结果请以平台显示为准。');
+        }
+
+        async function revealQuizQuestions() {
+            const submit = courseDocuments().map((doc) => findButton(doc, '提交')).find(Boolean);
+            if (!submit) return;
+            let scroller = submit.parentElement;
+            while (scroller && scroller !== submit.ownerDocument.body) {
+                const style = scroller.ownerDocument.defaultView.getComputedStyle(scroller);
+                if (/(auto|scroll)/.test(style.overflowY) && scroller.scrollHeight > scroller.clientHeight + 100) break;
+                scroller = scroller.parentElement;
+            }
+            if (!scroller || scroller === submit.ownerDocument.body) scroller = submit.ownerDocument.scrollingElement;
+            if (!scroller || scroller.scrollHeight <= scroller.clientHeight + 100) return;
+            scroller.scrollTop = 0;
+            await sleep(150);
+            for (let step = 0; step < 50; step++) {
+                const bottom = scroller.scrollHeight - scroller.clientHeight;
+                if (scroller.scrollTop >= bottom - 2) break;
+                scroller.scrollTop = Math.min(bottom, scroller.scrollTop + Math.max(300, scroller.clientHeight * 0.75));
+                await sleep(120);
+            }
+        }
+
+        async function waitForQuizQuestions() {
+            let submitDoc = null;
+            for (let attempt = 0; attempt < 240; attempt++) {
+                if (stopped) throw new Error('脚本已停止');
+                if (quizCompleted()) return null;
+                submitDoc = courseDocuments().find((doc) => findButton(doc, '提交'));
+                if (submitDoc) break;
+                if (attempt > 0 && attempt % 30 === 0) log(`测验提交按钮仍在加载，已等待 ${attempt / 2} 秒`);
+                await sleep(500);
+            }
+            if (!submitDoc) throw new Error('进入章节测验后等待 120 秒，仍未找到“提交”按钮。请检查题目框架是否正常加载');
+            await revealQuizQuestions();
+            let previousSignature = '';
+            let stableCount = 0;
+            for (let attempt = 0; attempt < 240; attempt++) {
+                if (stopped) throw new Error('脚本已停止');
+                if (quizCompleted()) return null;
+                const questions = extractQuestions();
+                const countText = clean(submitDoc.body.innerText).match(/题量\s*[:：]\s*(\d+)/);
+                const expected = countText ? Number(countText[1]) : null;
+                if (questions.length && (!expected || questions.length === expected)) {
+                    const signature = questions.map((q) => `${q.kind}:${q.title}:${q.options.length}`).join('|');
+                    stableCount = signature === previousSignature ? stableCount + 1 : 0;
+                    previousSignature = signature;
+                    if (stableCount >= 3) return questions;
+                } else {
+                    stableCount = 0;
+                    previousSignature = '';
+                }
+                if (attempt > 0 && attempt % 30 === 0) log(`测验题目仍在加载，已等待 ${attempt / 2} 秒；当前识别 ${questions.length} 道`);
+                await sleep(500);
+            }
+            throw new Error('测验框架已打开，但等待 120 秒仍未识别完整题目。可在控制台运行 app.inspectQuiz() 查看当前识别结果');
+        }
+
+        async function confirmSubmitDialog() {
+            for (let i = 0; i < 20; i++) {
+                if (stopped) throw new Error('脚本已停止');
+                if (['学习目标', '视频'].includes(stepTitle())) return;
+                const dialogs = courseDocuments().flatMap((doc) => Array.from(doc.querySelectorAll('#popok,[role="dialog"],[role="alertdialog"],.layui-layer-dialog,.el-message-box,.modal')));
+                const platformButton = dialogs.find((el) => el.id === 'popok' && visible(el));
+                if (platformButton) {
+                    const content = platformButton.ownerDocument.querySelector('#popcontent');
+                    const message = clean(content && content.innerText);
+                    if (/未作答|请选择|请作答|答完/.test(message) && !/确定提交|确认提交/.test(message)) throw new Error(`平台拒绝提交：${message}`);
+                    log(`确认平台提交窗口：${message || '提交'}`);
+                    platformButton.click();
+                    return;
+                }
+                const dialog = dialogs.find((el) => el.id !== 'popok' && visible(el) && /提交|交卷/.test(clean(el.innerText)));
+                if (dialog) {
+                    const confirm = findButton(dialog, '确定') || findButton(dialog, '确认') || findButton(dialog, '提交');
+                    if (!confirm) throw new Error('提交确认窗口未找到确认按钮');
+                    confirm.click();
+                    return;
+                }
+                await sleep(250);
+            }
+        }
+
+        async function submitQuiz(doc) {
+            if (stopped) throw new Error('脚本已停止');
+            const previousChapter = chapterKey();
+            if (leftQuiz(doc, previousChapter)) throw new Error('测验页面已切换，已取消旧页面提交');
+            const submit = findButton(doc, '提交');
+            if (!submit) throw new Error('未找到测验提交按钮');
+            submit.scrollIntoView({ block: 'center' });
+            log('选项已选择，点击章节测验的提交按钮');
+            submit.click();
+            await confirmSubmitDialog();
+            log('提交已确认，等待学习通生成成绩或任务完成标记；确认后再点击“下一节”');
+            let half = 0;
+            while (!stopped && half < 240) {
+                await sleep(500);
+                if (stopped) throw new Error('脚本已停止');
+                half++;
+                if (leftQuiz(doc, previousChapter)) return 'navigated';
+                if (quizCompleted()) return 'completed';
+                if (half % 30 === 0) progress(`提交已发出，等待平台结果（${half / 2} 秒）。`);
+            }
+            if (stopped) throw new Error('脚本已停止');
+            throw new Error('提交后等待 120 秒仍未确认成绩，已停止，避免重复提交。请先检查平台结果。');
+        }
+
+        async function goToNextStep() {
+            if (stopped) throw new Error('脚本已停止');
+            const next = findNextButton();
+            // 没有“下一节”按钮（最后一节或旧版页面）：交回原来的目录跳节，由它处理课程结束
+            if (!next) { stepPending = false; orig.nextUnit(); return; }
+            stepPending = true;
+            const previousStep = stepTitle();
+            const previousChapter = chapterKey();
+            const previousFrames = Array.from(document.querySelectorAll('iframe')).map((frame) => {
+                try { return { frame, doc: frame.contentDocument, src: frame.src }; } catch (_) { return { frame, doc: null, src: frame.src }; }
+            });
+            const previousVideos = app._collectVideos().map((item) => item.video);
+            for (const video of previousVideos) app._staleVideos.add(video);
+            app._enterLoading('next');
+            app._state = 'advancing';
+            next.scrollIntoView({ block: 'center' });
+            log(`${previousStep || '当前学习步骤'}完成，点击页面“下一节”，等待新内容加载`);
+            progress(`${previousStep || '当前步骤'}已完成，正在进入下一步…`);
+            app._clicking = true;
+            try { next.click(); } finally { app._clicking = false; }
+            let currentStep = '';
+            let ready = false;
+            for (let attempt = 0; attempt < 240; attempt++) {
+                if (stopped) throw new Error('脚本已停止');
+                await sleep(500);
+                if (stopped) throw new Error('脚本已停止');
+                currentStep = stepTitle();
+                const framesChanged = previousFrames.some(({ frame, doc, src }) => {
+                    try { return !frame.isConnected || frame.contentDocument !== doc || frame.src !== src; } catch (_) { return !frame.isConnected; }
+                });
+                if ((currentStep !== previousStep || framesChanged) && ['章节测验', '学习目标'].includes(currentStep)) { ready = true; break; }
+                if (currentStep === '视频' && app._collectVideos().some(({ video }) => app._isValid(video) && !previousVideos.includes(video))) { ready = true; break; }
+                // 进入了没有视频 / 测验的小节（课件、资料、讨论等）：换了小节或换了页签就交给原来的逻辑处理，不干等
+                if (attempt >= 2 && ((previousChapter && chapterKey() !== previousChapter) || (framesChanged && currentStep && currentStep !== previousStep))) { ready = true; break; }
+                if (attempt > 0 && attempt % 30 === 0) log(`下一学习步骤仍在加载，已等待 ${attempt / 2} 秒；当前页签：${currentStep || '未显示'}`);
+            }
+            if (!ready) throw new Error(`点击“下一节”后等待 120 秒，新学习步骤仍未加载完成；当前页签：${currentStep || '未显示'}`);
+            stepPending = false;
+            app._enterLoading('next');
+            progress(currentStep === '学习目标' ? '已进入学习目标，正在准备切换视频。' : '已进入下一学习步骤，正在加载。');
+        }
+
+        function nextStep() {
+            if (stopped || quizBusy || stepPending) return;
+            if (!findNextButton()) { orig.nextUnit(); return; }
+            stepPending = true;
+            goToNextStep().catch((error) => {
+                stepPending = false;
+                if (stopped) return;
+                app._stop();
+                progress('切换停止：' + error.message, true);
+            });
+        }
+
+        function advanceChapterTest() {
+            if (stopped || quizBusy || stepPending) return;
+            quizBusy = true;
+            const previousChapter = chapterKey();
+            progress('正在加载章节测验。');
+            (async () => {
+                const questions = quizCompleted() ? null : await waitForQuizQuestions();
+                if (questions === null) {
+                    log('当前章节测验已完成，点击“下一节”继续');
+                    quizBusy = false;
+                    await goToNextStep();
+                    return;
+                }
+                if (questions.length > 30) throw new Error('题目数量超过 30，已停止自动提交');
+                if (new Set(questions.map((q) => q.doc)).size !== 1) throw new Error('题目跨多个框架，已停止自动提交');
+                const countText = clean(questions[0].doc.body.innerText).match(/题量\s*[:：]\s*(\d+)/);
+                if (countText && Number(countText[1]) !== questions.length) throw new Error(`页面显示 ${countText[1]} 道题，脚本只识别 ${questions.length} 道，已停止提交`);
+                const signature = questions.map((q) => `${q.kind}:${q.title}`).join('|');
+                if (attemptedQuizzes.has(signature)) throw new Error('本次测验已尝试过，已停止重复提交');
+                progress(`识别到 ${questions.length} 道题，正在请求答案（${C.quizMode === 'random' ? '随机作答' : 'DeepSeek'}）。`);
+                const answers = validateAnswers(questions, await askAnswers(questions));
+                if (leftQuiz(questions[0].doc, previousChapter)) { resumeCurrentPage(); return; }
+                log('[答题辅助] 答案：' + questions.map((q, i) => `${i + 1}.${answers.get(i + 1).join('')}`).join(' '));
+                progress('已取得答案，正在选择并逐题校验。');
+                await selectAnswers(questions, answers);
+                if (stopped) throw new Error('脚本已停止');
+                verifySelectedAnswers(questions, answers);
+                attemptedQuizzes.add(signature);
+                progress('选项校验通过，正在提交并等待成绩。');
+                const result = await submitQuiz(questions[0].doc);
+                if (result === 'navigated') { resumeCurrentPage(); return; }
+                log('章节测验提交已确认，点击“下一节”继续');
+                quizBusy = false;
+                await goToNextStep();
+            })().catch((error) => {
+                stepPending = false;
+                if (stopped) return;   // 用户点了停止：安静结束，不当成错误
+                if (leftQuiz(null, previousChapter)) { resumeCurrentPage(); return; }
+                app._stop();
+                progress('答题停止：' + error.message, true);
+            }).finally(() => { quizBusy = false; app._panelKey = ''; });
+        }
+
+        // ---------- 控制台调试 ----------
+        app.inspectQuiz = function () {
+            return extractQuestions().map((q, i) => ({ id: i + 1, type: q.kind, question: q.title, options: q.options.map((o) => `${o.letter}. ${o.text}`) }));
+        };
+        app.inspectQuizOptions = function () {
+            return extractQuestions().map((q, i) => ({
+                题号: i + 1, 题型: q.kind, 已选: selectedLetters(q),
+                选项: q.options.map((option) => ({
+                    字母: option.letter, 标签: option.labelElement && option.labelElement.tagName,
+                    容器: option.element.tagName, 类名: option.element.className,
+                    状态: optionState(option), 点击目标数: clickTargets(option).length,
+                })),
+            }));
+        };
+        app.quizStatus = () => ({ 待生效: pending ? JSON.stringify(pending) : '', 开启: !!C.quizAssist, 方式: C.quizMode === 'random' ? '随机作答' : 'DeepSeek', 已填Key: !!deepseekKey(), 生效: active(), 状态: status.message });
+        return app;
+    }
+
+    // ================= FLAC 编码（16 位无损，固定预测 + Rice 编码，纯浏览器实现） =================
+    // 用法：const enc = flacEncoder(rate, ch, total)；逐块 enc.frame([L, R], n) 得到帧数据，最后把 enc.header() 放在最前面。
+    const ENCRYPTED_MSG = '音乐软件的加密格式，受版权保护，不提供解密转换';
+
+    // ================= 唱片机 · RouteCC 的歌单 =================
+    // 只放歌名和歌手，不附带任何音频：点击后在网易云音乐搜索这首歌，用用户自己的网易云播放。
+    // 增删推荐：改下面这份清单即可，每行 [歌名, 歌手]。
+    const RECOMMENDED = [
+        ['River Flows In You', 'Martin Ermen'],
+        ['恋人', '李荣浩'],
+        ['雨后的风景', 'Dizzy dizzo'],
+        ['他不懂', '张杰'],
+        ['海屿你', '马也_Crabbit'],
+    ];
+    const recUrl = (title, artist) => `https://music.163.com/#/search/m/?s=${encodeURIComponent(`${title} ${artist}`)}&type=1`;
+
+    function flacEncoder(rate, ch, total) {
+        const BLOCK = 4096;
+        const rateCode = { 22050: 6, 32000: 8, 44100: 9, 48000: 10 }[rate];
+        if (!rateCode) throw new Error('FLAC 不支持这个采样率');
+        const crc8T = new Uint8Array(256), crc16T = new Uint16Array(256);
+        for (let i = 0; i < 256; i++) {
+            let c = i;
+            for (let k = 0; k < 8; k++) c = c & 0x80 ? ((c << 1) ^ 0x07) & 0xff : (c << 1) & 0xff;
+            crc8T[i] = c;
+            let d = i << 8;
+            for (let k = 0; k < 8; k++) d = d & 0x8000 ? ((d << 1) ^ 0x8005) & 0xffff : (d << 1) & 0xffff;
+            crc16T[i] = d;
+        }
+        // 按位写入，满一个字节落一次
+        function writer(cap) {
+            let buf = new Uint8Array(cap), pos = 0, cur = 0, nb = 0;
+            const grow = () => { const b = new Uint8Array(buf.length * 2); b.set(buf); buf = b; };
+            const bits = (v, n) => {
+                while (n > 0) {
+                    const take = Math.min(n, 8 - nb);
+                    n -= take;
+                    cur = (cur << take) | ((v / 2 ** n) & ((1 << take) - 1));
+                    nb += take;
+                    if (nb === 8) { if (pos >= buf.length) grow(); buf[pos++] = cur; cur = 0; nb = 0; }
+                }
+            };
+            const zeros = (n) => {
+                if (n >= 8 - nb && nb) { const t = 8 - nb; bits(0, t); n -= t; }
+                while (n >= 8) { if (pos >= buf.length) grow(); buf[pos++] = 0; n -= 8; }
+                if (n) bits(0, n);
+            };
+            const align = () => { if (nb) bits(0, 8 - nb); };
+            return { bits, zeros, align, bytes: () => buf.subarray(0, pos) };
+        }
+        const residualOf = (x, n, order) => {
+            const r = new Int32Array(n - order);
+            for (let i = order; i < n; i++) {
+                let p = 0;
+                if (order === 1) p = x[i - 1];
+                else if (order === 2) p = 2 * x[i - 1] - x[i - 2];
+                else if (order === 3) p = 3 * x[i - 1] - 3 * x[i - 2] + x[i - 3];
+                else if (order === 4) p = 4 * x[i - 1] - 6 * x[i - 2] + 4 * x[i - 3] - x[i - 4];
+                r[i - order] = x[i] - p;
+            }
+            return r;
+        };
+        const riceBits = (r, k) => { let s = 0; for (let i = 0; i < r.length; i++) { const v = r[i]; const u = v >= 0 ? 2 * v : -2 * v - 1; s += Math.floor(u / 2 ** k) + 1 + k; } return s; };
+        function subframe(w, x, n) {
+            let constant = true;
+            for (let i = 1; i < n; i++) if (x[i] !== x[0]) { constant = false; break; }
+            if (constant) { w.bits(0, 1); w.bits(0, 6); w.bits(0, 1); w.bits(x[0] & 0xffff, 16); return; }
+            let best = null;
+            for (let order = 0; order <= Math.min(4, n - 1); order++) {
+                const r = residualOf(x, n, order);
+                let sum = 0;
+                for (let i = 0; i < r.length; i++) sum += Math.abs(r[i]);
+                const mean = r.length ? sum / r.length : 0;
+                let k0 = mean > 0 ? Math.max(0, Math.min(14, Math.floor(Math.log2(mean)))) : 0;
+                let bk = -1, bb = Infinity;
+                for (let k = Math.max(0, k0 - 1); k <= Math.min(14, k0 + 1); k++) { const b = riceBits(r, k); if (b < bb) { bb = b; bk = k; } }
+                const total = 8 + order * 16 + 6 + bb;
+                if (!best || total < best.total) best = { order, r, k: bk, total };
+            }
+            if (best.total >= 8 + n * 16) {   // 预测反而更大：原样保存
+                w.bits(0, 1); w.bits(1, 6); w.bits(0, 1);
+                for (let i = 0; i < n; i++) w.bits(x[i] & 0xffff, 16);
+                return;
+            }
+            w.bits(0, 1); w.bits(8 | best.order, 6); w.bits(0, 1);
+            for (let i = 0; i < best.order; i++) w.bits(x[i] & 0xffff, 16);
+            w.bits(0, 2); w.bits(0, 4); w.bits(best.k, 4);   // Rice、分区阶数 0
+            const k = best.k, r = best.r;
+            for (let i = 0; i < r.length; i++) {
+                const v = r[i];
+                const u = v >= 0 ? 2 * v : -2 * v - 1;
+                const q = Math.floor(u / 2 ** k);
+                w.zeros(q); w.bits(1, 1);
+                if (k) w.bits(u % 2 ** k, k);
+            }
+        }
+        let frameNo = 0;
+        return {
+            block: BLOCK,
+            header() {
+                const w = writer(64);
+                for (const c of 'fLaC') w.bits(c.charCodeAt(0), 8);
+                w.bits(1, 1); w.bits(0, 7); w.bits(34, 24);           // 唯一的元数据块：STREAMINFO
+                w.bits(BLOCK, 16); w.bits(BLOCK, 16); w.bits(0, 24); w.bits(0, 24);
+                w.bits(rate, 20); w.bits(ch - 1, 3); w.bits(15, 5);
+                w.bits(Math.floor(total / 2 ** 32) & 0xf, 4); w.bits(total % 2 ** 32, 32);
+                for (let i = 0; i < 16; i++) w.bits(0, 8);             // MD5 未计算（规范允许全 0）
+                return w.bytes().slice();
+            },
+            frame(chans, n) {
+                const w = writer(n * ch * 2 + 64);
+                w.bits(0x3ffe, 14); w.bits(0, 1); w.bits(0, 1);
+                w.bits(n === BLOCK ? 12 : 7, 4); w.bits(rateCode, 4);
+                w.bits(ch - 1, 4); w.bits(4, 3); w.bits(0, 1);
+                // 帧号：UTF-8 式变长编码
+                const f = frameNo++;
+                if (f < 0x80) w.bits(f, 8);
+                else {
+                    const len = f < 0x800 ? 2 : f < 0x10000 ? 3 : f < 0x200000 ? 4 : f < 0x4000000 ? 5 : 6;
+                    const tail = [];
+                    let v = f;
+                    for (let i = 0; i < len - 1; i++) { tail.unshift(0x80 | (v & 0x3f)); v = Math.floor(v / 64); }
+                    w.bits(((0xff << (8 - len)) & 0xff) | v, 8);
+                    for (const b of tail) w.bits(b, 8);
+                }
+                if (n !== BLOCK) w.bits(n - 1, 16);
+                let c8 = 0;
+                const head = w.bytes();
+                for (let i = 0; i < head.length; i++) c8 = crc8T[c8 ^ head[i]];
+                w.bits(c8, 8);
+                for (let c = 0; c < ch; c++) subframe(w, chans[c], n);
+                w.align();
+                const body = w.bytes();
+                let c16 = 0;
+                for (let i = 0; i < body.length; i++) c16 = ((c16 << 8) & 0xffff) ^ crc16T[(c16 >> 8) ^ body[i]];
+                w.bits(c16, 16);
+                return w.bytes().slice();
+            },
+        };
     }
 
     function createApp($) {
@@ -248,6 +1401,8 @@
             autoOpenLive: true,         // 课程页发现未完成的直播回放时，自动打开回放标签页（被浏览器拦截时显示按钮）
             autoUpdate: true,           // 发现新版本后，在两个小节之间自动静默更新（不打断正在播放的视频）
             assistMode: true,           // 学习助手总开关：本节笔记、课程详情、学习记录
+            quizAssist: true,           // 自动答题：作答方式就绪（已填 DeepSeek Key 或选了随机作答）时自动处理章节测验和视频弹题
+            quizMode: 'api',            // 作答方式：api（DeepSeek）/ random（随机作答）
             theme: 'light',             // 浮窗主题：light / mint / sakura / violet / latte / dark / auto / custom
             customColor: '#3B82F6',     // 自定义主题的主色
             customBase: 'light',        // 自定义主题的底色：light 浅色 / dark 深色
@@ -322,6 +1477,8 @@
             const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
             for (const [k] of SETTING_ITEMS) if (typeof saved[k] === 'boolean') C[k] = saved[k];
             if (typeof saved.assistMode === 'boolean') C.assistMode = saved.assistMode;
+            if (typeof saved.quizAssist === 'boolean') C.quizAssist = saved.quizAssist;
+            if (saved.quizMode === 'api' || saved.quizMode === 'random') C.quizMode = saved.quizMode;
             if (typeof saved.theme === 'string' && THEMES.some((t) => t[0] === saved.theme)) C.theme = saved.theme;
             if (/^#[0-9a-f]{6}$/i.test(saved.customColor || '')) C.customColor = saved.customColor;
             if (saved.customBase === 'light' || saved.customBase === 'dark') C.customBase = saved.customBase;
@@ -331,6 +1488,8 @@
                 const o = {};
                 for (const [k] of SETTING_ITEMS) o[k] = C[k];
                 o.assistMode = C.assistMode;
+                o.quizAssist = C.quizAssist;
+                o.quizMode = C.quizMode;
                 o.theme = C.theme;
                 o.customColor = C.customColor;
                 o.customBase = C.customBase;
@@ -343,13 +1502,12 @@
             if (RATE_OPTIONS.includes(saved)) C.playbackRate = saved;
         } catch (e) { /* 无法读取本地存储时使用默认倍速 */ }
 
-        // 最近的日志保存在内存里，“复制诊断信息”时一起带上
+        // 运行信息只显示在浮窗里；最近的日志保存在内存里，“复制诊断信息”时一起带上，不输出到控制台
         const LOGS = [];
         const log = (msg, color = '#607D8B', level = 'log') => {
             const d = new Date();
             LOGS.push(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')} ${level === 'log' ? '' : '[' + level + '] '}${msg}`);
             if (LOGS.length > 80) LOGS.shift();
-            console[level](`%c[学习通V4.1] ${msg}`, `color:${color}`);
         };
 
         const app = {
@@ -424,6 +1582,8 @@
             _panel: null,
             _panelCollapsed: false,
             _panelKey: '',
+            _log(msg, color, level) { log(msg, color, level); },
+            _saveSettings() { saveSettings(); },
 
             // ================= 公共方法 =================
             start() {
@@ -1640,10 +2800,86 @@
             _noteHtml(t) { return String(t).split('\n').map((x) => `<p>${this._esc(x)}</p>`).join(''); },
             _renderHistory(el) {
                 const esc = (t) => this._esc(t);
+                const board = this._histView === 'board';
+                el.querySelector('[data-k="histtitle"]').textContent = board ? '留言板' : '更新记录';
+                el.querySelector('[data-k="histlist"]').style.display = board ? 'none' : '';
+                el.querySelector('[data-k="board"]').style.display = board ? '' : 'none';
+                if (board) { this._renderBoard(el); return; }
                 el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
                     `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
                     e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
                     (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${this._noteHtml(e.note)}</div>` : '') + '</div>').join('');
+            },
+            // ================= 留言板 =================
+            // 读取：GitHub 公开接口，不用登录（每个 IP 每小时 60 次，所以 2 分钟内不重复读取）；发表：复制内容并打开留言 Issue，登录 GitHub 后粘贴发表
+            async _boardLoad(force) {
+                const b = this._board || (this._board = { items: null, ts: 0, err: '', loading: false });
+                if (b.loading || (!force && b.items && Date.now() - b.ts < 120000)) return;
+                b.loading = true; b.err = '';
+                // 可能是在浮窗刷新过程中被调用的：下一拍再刷新，避免嵌套刷新
+                this._boardVer = (this._boardVer || 0) + 1;
+                Promise.resolve().then(() => { this._panelKey = ''; this._renderPanel(); });
+                const get = async (url) => {
+                    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                    const t = ctrl && setTimeout(() => ctrl.abort(), 10000);
+                    try {
+                        const res = await fetch(url, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+                        if (res.status === 403 || res.status === 429) {
+                            const e = new Error(res.headers.get('x-ratelimit-remaining') === '0' ? '查看得太频繁了（GitHub 每小时限 60 次），请过一会儿再刷新' : '暂时无法读取留言，请稍后再试');
+                            throw e;
+                        }
+                        if (!res.ok) throw new Error(`读取留言失败（HTTP ${res.status}）`);
+                        return await res.json();
+                    } catch (e) {
+                        throw e && e.name === 'AbortError' ? new Error('连不上 GitHub，请检查网络后刷新') : (e instanceof TypeError ? new Error('连不上 GitHub，请检查网络后刷新') : e);
+                    } finally { if (t) clearTimeout(t); }
+                };
+                try {
+                    const issue = await get(BOARD_API);
+                    const n = Number(issue.comments) || 0, per = 30, last = Math.max(1, Math.ceil(n / per));
+                    let list = n ? await get(`${BOARD_API}/comments?per_page=${per}&page=${last}`) : [];
+                    if (n && list.length < 15 && last > 1) list = (await get(`${BOARD_API}/comments?per_page=${per}&page=${last - 1}`)).concat(list);
+                    const clean = (t) => String(t || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
+                    b.items = list.map((c) => ({ user: (c.user && c.user.login) || '匿名', owner: !!(c.user && c.user.login === BOARD_OWNER), time: c.created_at, text: clean(c.body).slice(0, 500) }))
+                        .filter((x) => x.text).sort((x, y) => String(y.time).localeCompare(String(x.time))).slice(0, 30);
+                    b.total = n;
+                    b.ts = Date.now();
+                } catch (e) { b.err = e.message; }
+                b.loading = false;
+                this._boardVer++; this._panelKey = ''; this._renderPanel();
+            },
+            _renderBoard(el) {
+                const b = this._board;
+                if (!b || (!b.items && !b.loading && !b.err)) { this._boardLoad(false); return; }
+                if (!b.loading && b.items && Date.now() - b.ts >= 120000) this._boardLoad(false);
+                const esc = (t) => this._esc(t);
+                const st = el.querySelector('[data-k="boardstate"]');
+                st.textContent = b.loading ? '正在读取留言…' : b.err ? b.err : !b.items.length ? '还没有留言，来做第一个留言的人吧' : `共 ${b.total} 条留言${b.total > b.items.length ? `，显示最新 ${b.items.length} 条` : ''}`;
+                st.classList.toggle('err', !!b.err);
+                if (!b.items) return;
+                const fmt = (t) => { const d = new Date(t); return isNaN(d) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+                el.querySelector('[data-k="boardlist"]').innerHTML = b.items.map((m) =>
+                    `<div class="xxt-bm" role="listitem"><div class="xxt-bm-head"><b>${esc(m.user)}</b>${m.owner ? '<span>作者</span>' : ''}<time>${esc(fmt(m.time))}</time></div><div class="xxt-bm-text">${esc(m.text)}</div></div>`).join('');
+            },
+            _boardSend(ta) {
+                const text = (ta.value || '').trim();
+                const note = this._panel && this._panel.querySelector('[data-k="boardnote"]');
+                const say = (t) => { if (note) note.textContent = t; };
+                const go = () => {
+                    if (!openTab(`${BOARD_URL}#new_comment_field`)) say('浏览器拦截了新窗口，请允许本站打开弹出窗口；也可以直接访问 ' + BOARD_URL);
+                };
+                if (!text) { say('先在上面写下留言内容，再点发表'); ta.focus(); return; }
+                const done = (ok) => {
+                    say(ok ? '留言已复制。请在打开的页面登录 GitHub，把内容粘贴到底部评论框并发表；发表后回来点「刷新」' : '没能自动复制，请手动复制上面的留言内容，再到打开的页面粘贴发表');
+                    go();
+                };
+                const legacy = () => {
+                    try { ta.focus(); ta.select(); const ok = document.execCommand('copy'); done(ok); } catch (e) { done(false); }
+                };
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), legacy);
+                    else legacy();
+                } catch (e) { legacy(); }
             },
             _startUpdateCheck() {
                 this._checkUpdate();
@@ -2169,6 +3405,7 @@
                     `更新：${this._latest ? '发现 v' + this._latest : '已是最新'}${this._updateFailed ? '（更新失败）' : ''}`,
                     `后台：防卡顿${C.bgAudio ? (this._bgAudioBlocked ? '（浏览器不允许）' : this._bgAudio ? '（生效中）' : '开') : '关'} · 后台被暂停 ${this._bgPauseCount || 0} 次 · 保活锁${this._lockRelease ? '有' : '无'} · 当前${reallyHidden() ? '在后台' : '在前台'}`,
                     `计时器：${this._timer && this._timer.worker ? 'Worker' : '普通定时器'} · 登录：${this._loginExpired ? '可能已过期' : '正常'}`,
+                    `答题辅助：${this.quizStatus ? (() => { const q = this.quizStatus(); return `自动答题${q.开启 ? '开' : '关'} · ${q.方式}${q.方式 === 'DeepSeek' ? (q.已填Key ? '（已填 Key）' : '（未填 Key）') : ''} · ${q.生效 ? '生效中' : '未生效'}`; })() : '-'}`,
                     `浏览器：${navigator.userAgent}`,
                     '',
                     '—— 最近日志 ——',
@@ -2596,7 +3833,7 @@
                 const extType = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg; codecs=opus', wav: 'audio/wav', flac: 'audio/flac', webm: 'audio/webm' };
                 const needConv = [];
                 for (const f of files) {
-                    if (!f) continue;
+                    if (!f || /\.lrc$/i.test(f.name || '')) continue;
                     const ext = ((f.name || '').match(/\.([^.]+)$/) || [])[1] || '';
                     const type = /^audio\//.test(f.type || '') ? f.type : extType[ext.toLowerCase()] || '';
                     // 视频文件、浏览器放不了的格式：交给格式转换
@@ -2612,20 +3849,61 @@
             // ================= 唱片机 · 音频格式转换 =================
             // 全部在本机浏览器里完成：用浏览器自带的解码器读出声音，再编码成 MP3（lamejs）或 WAV，不上传任何文件。
             // 音乐软件的加密格式（如 .ncm / .qmc / .kgm）属于版权保护，不提供转换。
+            // 功能栏「音频转换」：直接打开唱片机的转换页
+            // 功能栏的「唱片机」「音频转换」共用一个面板：点当前正在显示的页面就关闭，点另一个就切过去
+            _showMusic(view) {
+                const cur = this._musicOpen ? (this._convOpen ? 'conv' : 'player') : '';
+                if (cur === view) { this._musicOpen = false; this._convOpen = false; this._recOpen = false; }
+                else {
+                    this._musicOpen = true;
+                    this._convOpen = view === 'conv';
+                    if (!this._tracks) this._musicLoad();
+                }
+                this._renderMusic();
+                this._renderConv();
+                this._positionFloats();
+                this._renderSide();
+                this._panelKey = ''; this._renderPanel();
+            },
+            _openConv() { this._showMusic('conv'); },
+            _convKey(f) { return String((f && (f.webkitRelativePath || f.name)) || '').replace(/\.[^./\\]+$/, '').toLowerCase(); },
+            _convLrcFor(it) {
+                const m = this._convLrc;
+                if (!m || !m.size) return null;
+                return m.get(this._convKey(it.file)) || m.get(this._convKey({ name: it.file.name })) || null;
+            },
+            _convDownload(file) {
+                const url = URL.createObjectURL(file), a = document.createElement('a');
+                a.href = url; a.download = file.name; a.style.display = 'none';
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            },
             _convOpts() {
-                const d = { fmt: 'mp3', br: 192, sr: 44100, ch: 0, add: true, dl: false };
+                const d = { fmt: 'mp3', br: 192, sr: 44100, ch: 0, add: true, dl: false, norm: false, num: false };
                 try { return Object.assign(d, JSON.parse(localStorage.getItem('xxt-v41-conv') || '{}')); } catch (e) { return d; }
             },
             _convSaveOpts(o) { try { localStorage.setItem('xxt-v41-conv', JSON.stringify(o)); } catch (e) { /* ignore */ } },
+            _convEncrypted(name) { return /\.(ncm|qmc\d*|qmcflac|qmcogg|mflac\d*|mgg\d*|kgm|kgma|vpr|kwm|tkm|bkcmp3|bkcflac|xm|mmp4)$/i.test(name || ''); },
             _convQueue(files, hint) {
                 this._convQ = this._convQ || [];
+                this._convLrc = this._convLrc || new Map();
+                let enc = 0;
                 for (const f of files) {
                     if (!f) continue;
+                    // 音乐软件的加密下载格式（网易云 .ncm、QQ 音乐 .qmc、酷狗 .kgm 等）受版权保护，不提供解密：列出来并说明原因
+                    if (this._convEncrypted(f.name)) {
+                        enc++;
+                        this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'drm', pct: 0, msg: ENCRYPTED_MSG });
+                        continue;
+                    }
+                    // 歌词不转换：按同名（同一文件夹）对上音频，下载时一起改名保存
+                    if (/\.lrc$/i.test(f.name || '')) { this._convLrc.set(this._convKey(f), f); this._convLrc.set(this._convKey({ name: f.name }), f); continue; }
                     this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'wait', pct: 0, msg: '' });
                 }
-                this._convHint = hint || '';
+                this._convHint = enc ? `有 ${enc} 个是音乐软件的加密下载格式（如网易云 .ncm），受版权保护，无法转换。请在原音乐软件里播放，或从提供普通格式下载的正规渠道获取 MP3 / FLAC 后再转换` : (hint || '');
                 this._convOpen = true;
                 this._renderConv();
+                if (this._sideEl) this._renderSide();
             },
             async _loadLame() {
                 if (window.lamejs && window.lamejs.Mp3Encoder) return window.lamejs;
@@ -2650,24 +3928,51 @@
             },
             // 不受后台限速影响的让步，转换长音频时界面不卡
             _yield() { return new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); }); },
-            async _convOne(it, o) {
-                if (/\.(ncm|qmc\d*|qmcflac|qmcogg|mflac\d*|mgg\d*|kgm|kgma|vpr|kwm|tkm|bkcmp3|bkcflac|xm|mmp4)$/i.test(it.name)) {
-                    const e = new Error('音乐软件的加密格式，受版权保护，无法转换。请在原音乐软件里导出或下载普通格式'); e.drm = true; throw e;
+            async _convOne(it, o, seq) {
+                if (this._convEncrypted(it.name)) {
+                    const e = new Error(ENCRYPTED_MSG); e.drm = true; throw e;
                 }
                 it.msg = '读取中…'; this._renderConv();
                 const data = await it.file.arrayBuffer();
                 if (this._convAbort) throw new Error('已停止');
                 it.msg = '解码中…'; this._renderConv();
-                const rate = [48000, 44100, 32000, 22050].includes(Number(o.sr)) ? Number(o.sr) : 44100;
+                // 车载 MP3：固定 44.1kHz、立体声、恒定码率，兼容大多数车机和老播放器
+                const car = o.fmt === 'car';
+                const rate = car ? 44100 : [48000, 44100, 32000, 22050].includes(Number(o.sr)) ? Number(o.sr) : 44100;
                 const OCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
                 let audio;
                 try { audio = await new OCtx(2, 1, rate).decodeAudioData(data); }
                 catch (e) { throw new Error('浏览器无法解码这个文件（WMA、APE、AMR 等格式暂不支持），可以先用其他软件转成 MP3'); }
-                const ch = Number(o.ch) === 1 ? 1 : Number(o.ch) === 2 ? 2 : Math.min(2, audio.numberOfChannels);
-                const L = audio.getChannelData(0), R = audio.numberOfChannels > 1 ? audio.getChannelData(1) : L;
+                const ch = car ? 2 : Number(o.ch) === 1 ? 1 : Number(o.ch) === 2 ? 2 : Math.min(2, audio.numberOfChannels);
+                let L = audio.getChannelData(0), R = audio.numberOfChannels > 1 ? audio.getChannelData(1) : L;
                 const len = audio.length;
+                it.gain = 0;
+                if (o.norm && len) {
+                    // 音量统一：整体响度调到约 -16 dBFS（RMS），同时保证峰值不超过 -1 dBFS，不会爆音
+                    let peak = 0, sum = 0;
+                    for (let i = 0; i < len; i++) {
+                        const a = L[i], b = R[i];
+                        sum += a * a + b * b;
+                        const m = a < 0 ? -a : a, n = b < 0 ? -b : b;
+                        if (m > peak) peak = m;
+                        if (n > peak) peak = n;
+                        if ((i & 0x7ffff) === 0) { await this._yield(); if (this._convAbort) throw new Error('已停止'); }
+                    }
+                    const rms = Math.sqrt(sum / (len * 2));
+                    if (rms > 1e-5 && peak > 0) {
+                        const g = Math.min(0.1585 / rms, 0.8913 / peak);
+                        if (Math.abs(g - 1) > 0.01) {
+                            const scale = (src) => { const out = new Float32Array(src.length); for (let i = 0; i < src.length; i++) out[i] = src[i] * g; return out; };
+                            const L2 = scale(L);
+                            R = R === L ? L2 : scale(R);
+                            L = L2;
+                            it.gain = Math.round(20 * Math.log10(g) * 10) / 10;
+                        }
+                    }
+                }
                 const toI16 = (x) => (x < -1 ? -32768 : x > 1 ? 32767 : (x < 0 ? x * 32768 : x * 32767) | 0);
-                const base = it.name.replace(/\.[^.]+$/, '') || '未命名';
+                const stem = it.name.replace(/\.[^.]+$/, '') || '未命名';
+                const base = o.num ? `${String(seq).padStart(2, '0')} ${stem}` : stem;
                 if (o.fmt === 'wav') {
                     const out = new DataView(new ArrayBuffer(44 + len * ch * 2));
                     const w = (p, s) => { for (let i = 0; i < s.length; i++) out.setUint8(p + i, s.charCodeAt(i)); };
@@ -2681,6 +3986,22 @@
                         if ((i & 0x3ffff) === 0) { it.pct = Math.round((i / len) * 100); this._renderConv(); await this._yield(); if (this._convAbort) throw new Error('已停止'); }
                     }
                     return new File([out.buffer], base + '.wav', { type: 'audio/wav' });
+                }
+                if (o.fmt === 'flac') {
+                    it.msg = '编码中…'; this._renderConv();
+                    const enc = flacEncoder(rate, ch, len);
+                    const B = enc.block, a = new Int16Array(B), b = new Int16Array(B), parts = [];
+                    for (let i = 0, blk = 0; i < len; i += B, blk++) {
+                        const n = Math.min(B, len - i);
+                        for (let k = 0; k < n; k++) {
+                            if (ch === 1) a[k] = toI16((L[i + k] + R[i + k]) / 2);
+                            else { a[k] = toI16(L[i + k]); b[k] = toI16(R[i + k]); }
+                        }
+                        parts.push(enc.frame(ch === 1 ? [a] : [a, b], n));
+                        it.pct = Math.round(((i + n) / len) * 100);
+                        if (blk % 24 === 0) { this._renderConv(); await this._yield(); if (this._convAbort) throw new Error('已停止'); }
+                    }
+                    return new File([enc.header(), ...parts], base + '.flac', { type: 'audio/flac' });
                 }
                 it.msg = '准备编码…'; this._renderConv();
                 const lame = await this._loadLame();
@@ -2711,20 +4032,21 @@
                 this._convRunning = true; this._convAbort = false;
                 this._renderConv();
                 const added = [];
+                let seq = 0;
                 for (const it of q) {
                     if (this._convAbort) break;
                     it.status = 'run'; it.pct = 0; it.msg = '';
                     this._renderConv();
                     try {
-                        const out = await this._convOne(it, o);
+                        const out = await this._convOne(it, o, ++seq);
                         it.status = 'done'; it.pct = 100;
-                        it.msg = `已转成 ${out.name.split('.').pop().toUpperCase()} · ${(out.size / 1048576).toFixed(1)} MB`;
+                        const lrc = this._convLrcFor(it);
+                        it.msg = `已转成 ${o.fmt === 'car' ? '车载 MP3' : out.name.split('.').pop().toUpperCase()} · ${(out.size / 1048576).toFixed(1)} MB` +
+                            (it.gain ? ` · 音量 ${it.gain > 0 ? '+' : ''}${it.gain} dB` : '') + (lrc ? (o.dl ? ' · 歌词已一起保存' : ' · 有同名歌词（勾选下载时一起保存）') : '');
                         if (o.add) added.push(out);
                         if (o.dl) {
-                            const url = URL.createObjectURL(out), a = document.createElement('a');
-                            a.href = url; a.download = out.name; a.style.display = 'none';
-                            document.body.appendChild(a); a.click(); a.remove();
-                            setTimeout(() => URL.revokeObjectURL(url), 60000);
+                            this._convDownload(out);
+                            if (lrc) this._convDownload(new File([lrc], out.name.replace(/\.[^.]+$/, '') + '.lrc', { type: 'text/plain' }));
                         }
                         log(`格式转换：${it.name} → ${out.name}`, '#2196F3');
                     } catch (e) {
@@ -2734,8 +4056,9 @@
                     }
                     this._renderConv();
                 }
-                this._convRunning = false;
+                // 先加入唱片机再标记完成，状态显示“完成”时列表里已经能找到转换结果
                 if (added.length) await this._musicAdd(added, true);
+                this._convRunning = false;
                 this._renderConv();
             },
             _renderConv() {
@@ -2757,9 +4080,14 @@
                     (it.msg && it.status !== 'run' ? `<div class="xm-cq-msg">${esc(it.msg)}</div>` : '') + '</div>').join('')
                     : '<div class="xm-empty">还没有文件</div>';
                 const o = this._convOpts();
-                for (const [k, v] of [['cfmt', o.fmt], ['cbr', o.br], ['csr', o.sr], ['cch', o.ch]]) { const el = q(k); if (document.activeElement !== el) el.value = String(v); }
-                q('cbr').disabled = o.fmt !== 'mp3';
-                q('cadd').checked = !!o.add; q('cdl').checked = !!o.dl;
+                const car = o.fmt === 'car';
+                for (const [k, v] of [['cfmt', o.fmt], ['cbr', o.br], ['csr', car ? 44100 : o.sr], ['cch', car ? 2 : o.ch]]) { const el = q(k); if (document.activeElement !== el) el.value = String(v); }
+                q('cbr').disabled = o.fmt !== 'mp3' && !car;
+                q('csr').disabled = car; q('cch').disabled = car;
+                q('cadd').checked = !!o.add; q('cdl').checked = !!o.dl; q('cnorm').checked = !!o.norm; q('cnum').checked = !!o.num;
+                const lrcN = this._convLrc ? new Set(this._convLrc.values()).size : 0;
+                q('clrc').textContent = lrcN ? `已载入 ${lrcN} 个歌词文件，会和同名音频一起改名${o.dl ? '保存' : '（勾选“同时下载到电脑”后保存）'}` : '';
+                q('clrc').style.display = lrcN ? 'block' : 'none';
                 const running = !!this._convRunning;
                 q('cstart').disabled = running || !list.some((x) => x.status === 'wait' || x.status === 'fail');
                 q('cstart').textContent = running ? '转换中…' : '开始转换';
@@ -3008,12 +4336,7 @@
                 if (!this._seeking) seek.value = a.duration ? Math.round((a.currentTime / a.duration) * 1000) : 0;
                 seek.style.setProperty('--p', (seek.value / 10) + '%');
             },
-            _toggleMusic() {
-                this._musicOpen = !this._musicOpen;
-                if (this._musicOpen && !this._tracks) this._musicLoad();
-                this._renderMusic();
-                this._panelKey = ''; this._renderPanel();
-            },
+            _toggleMusic() { this._showMusic(this._musicOpen ? (this._convOpen ? 'conv' : 'player') : 'player'); },
             _ensureMusic() {
                 if (this._musicEl && this._musicEl.isConnected) return this._musicEl;
                 const d = document.createElement('div');
@@ -3023,7 +4346,7 @@
                 const icon = (path, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
                 d.innerHTML =
                     '<style>' +
-                    '#xxt-v41-music{position:fixed;z-index:2147483646;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
+                    '#xxt-v41-music{position:fixed;z-index:2147483647;box-sizing:border-box;width:288px;display:flex;flex-direction:column;padding:14px 16px 12px;border-radius:16px;' +
                       'background:radial-gradient(120% 70% at 50% 0%,#2C2422 0%,#1B1615 60%,#141110 100%);color:#EDE6E2;box-shadow:0 12px 36px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);' +
                       'font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;' +
                       'transition:opacity .38s cubic-bezier(.22,1,.36,1),transform .38s cubic-bezier(.22,1,.36,1)}' +
@@ -3069,6 +4392,29 @@
                     '#xxt-v41-music .xm-list{flex:1 1 auto;min-height:60px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -6px;padding:0 6px;border-top:1px solid rgba(255,255,255,.07)}' +
                     '#xxt-v41-music .xm-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:9px;background:none;text-align:left}' +
                     '#xxt-v41-music .xm-sec{margin:10px 8px 2px;font-size:11px;font-weight:600;color:#7D726D;letter-spacing:.5px}' +
+                    // 「RouteCC 的歌单」：入口在标题栏；旁边有空位时从唱片机侧面滑出，没有空位时盖在唱片机上滑入
+                    '#xxt-v41-music .xm-dbtn{display:inline-flex;align-items:center;gap:4px;border:0;border-radius:8px;padding:4px 9px;background:rgba(255,255,255,.08);color:#EDE6E2;font-size:12px;font-weight:600;white-space:nowrap}' +
+                    '#xxt-v41-music .xm-dbtn:hover,#xxt-v41-music .xm-dbtn:focus-visible{background:rgba(255,255,255,.14);outline:none}' +
+                    '#xxt-v41-music .xm-dbtn[aria-expanded=true]{background:var(--xm-accent,#E8A87C);color:var(--xm-on,#1E1917)}' +
+                    '#xxt-v41-music.conv .xm-dbtn,#xxt-v41-music.conv .xm-drawer{display:none}' +
+                    '#xxt-v41-music .xm-drawer{position:absolute;top:52px;left:100%;margin-left:8px;z-index:2;pointer-events:none}' +
+                    '#xxt-v41-music.dleft .xm-drawer{left:auto;right:100%;margin:0 8px 0 0}' +
+                    '#xxt-v41-music.dinside .xm-drawer{left:10px;right:10px;margin:0}' +
+                    '#xxt-v41-music .xm-dbody{width:236px;overflow:hidden;opacity:0;transform:translateX(-12px);transition:opacity .28s cubic-bezier(.22,1,.36,1),transform .32s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-music.dleft .xm-dbody{transform:translateX(12px)}' +
+                    '#xxt-v41-music.dinside .xm-dbody{width:auto;transform:translateX(24px)}' +
+                    '#xxt-v41-music .xm-drawer.open{pointer-events:auto}' +
+                    '#xxt-v41-music .xm-drawer.open .xm-dbody{opacity:1;transform:none}' +
+                    '#xxt-v41-music .xm-dinner{box-sizing:border-box;padding:12px 12px 10px;border-radius:14px;background:#1E1917;border:1px solid rgba(255,255,255,.08);box-shadow:0 12px 30px rgba(0,0,0,.45)}' +
+                    '#xxt-v41-music .xm-dhead b{display:block;font-size:13px}' +
+                    '#xxt-v41-music .xm-dsub{display:block;margin:2px 0 8px;font-size:11px;color:#7D726D}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-music .xm-dbody{transition:none}}' +
+                    '#xxt-v41-music .xm-reclist{max-height:320px;overflow-y:auto;scrollbar-width:thin;margin:0 -4px;padding:0 4px}' +
+                    '#xxt-v41-music .xm-rec{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:7px 8px;border-radius:9px;cursor:pointer}' +
+                    '#xxt-v41-music .xm-rec:hover{background:rgba(255,255,255,.06)}' +
+                    '#xxt-v41-music .xm-rec .xm-name small{display:block;color:#7D726D;font-size:11px}' +
+                    '#xxt-v41-music .xm-rec .xm-no{color:var(--xm-accent,#E8A87C)}' +
+                    '#xxt-v41-music .xm-rec:focus-visible{outline:2px solid var(--xm-accent,#E8A87C);outline-offset:-2px}' +
                     '#xxt-v41-music input[type=range]:disabled{cursor:default;opacity:.45}' +
                     '#xxt-v41-music .xm-item:hover{background:rgba(255,255,255,.06)}' +
                     '#xxt-v41-music .xm-item.cur{background:rgba(255,255,255,.1)}' +
@@ -3123,9 +4469,19 @@
                     '#xxt-v41-music .xm-add{width:100%;margin-top:8px;padding:8px 0;border:1px dashed rgba(255,255,255,.22);border-radius:10px;background:none;color:#EDE6E2;font-size:12px;font-weight:600}' +
                     '#xxt-v41-music .xm-add:hover,#xxt-v41-music .xm-add:focus-visible,#xxt-v41-music.drag .xm-add{border-color:var(--xm-accent,#E8A87C);color:#fff;background:rgba(255,255,255,.05);outline:none}' +
                     '#xxt-v41-music .xm-hint{margin-top:6px;font-size:10.5px;color:#7D726D;text-align:center}' +
+                    '#xxt-v41-music .xm-dir{width:100%;height:30px;border-radius:9px;background:transparent;border:1px solid rgba(255,255,255,.14)!important;color:#D9CFCA;font-size:12px}' +
+                    '#xxt-v41-music .xm-dir:hover,#xxt-v41-music .xm-dir:focus-visible{background:rgba(255,255,255,.06);outline:none}' +
+                    '#xxt-v41-music .xm-conv-lrc{display:none;font-size:11px;color:#A89D98;line-height:1.5}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-music,#xxt-v41-music .xm-arm{transition:none}#xxt-v41-music .xm-disc,#xxt-v41-music .xm-eq i{animation:none}}' +
                     '</style>' +
-                    '<div class="xm-head"><b>唱片机</b><button type="button" class="xm-x" data-m="close" aria-label="关闭唱片机">×</button></div>' +
+                    '<div class="xm-head"><b>唱片机</b>' +
+                      (RECOMMENDED.length ? '<button type="button" class="xm-dbtn" data-m="rechandle" aria-expanded="false" aria-controls="xxt-v41-rec">♪ 歌单</button>' : '') +
+                      '<button type="button" class="xm-x" data-m="close" aria-label="关闭唱片机">×</button></div>' +
+                    (RECOMMENDED.length ? '<div class="xm-drawer" data-m="drawer">' +
+                      '<div class="xm-dbody" data-m="recbody" id="xxt-v41-rec" role="region" aria-label="RouteCC 的歌单" inert><div class="xm-dinner">' +
+                        '<div class="xm-dhead"><b>RouteCC 的歌单</b><span class="xm-dsub">点歌名，在网易云音乐里播放</span></div>' +
+                        '<div class="xm-reclist" data-m="reclist" role="list"></div>' +
+                      '</div></div></div>' : '') +
                     '<div class="xm-deck"><div class="xm-plinth"></div><div class="xm-disc"><div class="xm-label" data-m="label"><span data-m="labeltxt">♪</span></div></div>' +
                       '<svg class="xm-arm" viewBox="0 0 88 150" aria-hidden="true"><circle cx="62" cy="20" r="15" fill="#2A2321"/><circle cx="62" cy="20" r="9" fill="#F3EDEA"/><circle cx="62" cy="20" r="3.5" fill="#BDB3AE"/>' +
                       '<path d="M62 20 C 64 60, 66 82, 52 104 L 38 120" fill="none" stroke="#F3EDEA" stroke-width="5" stroke-linecap="round"/>' +
@@ -3143,24 +4499,29 @@
                     `<div class="xm-vol">${icon('<path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 00-2.5-4v8a4.5 4.5 0 002.5-4z"/>', 15)}<input type="range" data-m="vol" min="0" max="100" aria-label="音量"></div>` +
                     '<div class="xm-list" data-m="list" role="list"></div>' +
                     '<div class="xm-add-row"><button type="button" class="xm-add" data-m="add">＋ 添加本地音乐</button><button type="button" class="xm-add xm-conv-btn" data-m="convopen">⇄ 格式转换</button></div>' +
-                    '<input type="file" data-m="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus,.wma,.ape,.amr" multiple hidden>' +
+                    '<input type="file" data-m="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.ogg,.wav,.flac,.opus,.wma,.ape,.amr,.ncm,.qmc0,.qmc3,.qmcflac,.qmcogg,.mflac,.mgg,.kgm,.kgma,.kwm" multiple hidden>' +
                     '<div class="xm-hint">音乐只保存在这台电脑的浏览器里，不会上传</div>' +
                     '<div class="xm-conv" data-m="conv">' +
                       '<div class="xm-conv-head"><b>音频格式转换</b><button type="button" class="xm-x xm-back" data-m="convback">‹ 返回</button></div>' +
                       '<div class="xm-conv-hint" data-m="convhint"></div>' +
-                      '<button type="button" class="xm-drop" data-m="convdrop">点击添加或拖入音频 / 视频文件<small>支持 MP3、M4A、AAC、FLAC、WAV、OGG、OPUS，也能提取 MP4 等视频里的声音</small></button>' +
-                      '<input type="file" data-m="convfile" accept="audio/*,video/*" multiple hidden>' +
+                      '<button type="button" class="xm-drop" data-m="convdrop">点击添加或拖入音频 / 视频文件<small>支持 MP3、M4A、AAC、FLAC、WAV、OGG、OPUS，也能提取 MP4 等视频里的声音；同名 .lrc 歌词可以一起拖进来</small></button>' +
+                      '<input type="file" data-m="convfile" accept="audio/*,video/*,.lrc,.ncm,.qmc0,.qmc3,.qmcflac,.qmcogg,.mflac,.mgg,.kgm,.kgma,.kwm" multiple hidden>' +
+                      '<button type="button" class="xm-dir" data-m="convdirbtn">＋ 添加整个文件夹（含子文件夹）</button>' +
+                      '<input type="file" data-m="convdir" webkitdirectory multiple hidden>' +
                       '<div class="xm-cq" data-m="convlist"></div>' +
                       '<div class="xm-cset">' +
-                        '<label>格式<select data-m="cfmt"><option value="mp3">MP3</option><option value="wav">WAV（无损）</option></select></label>' +
+                        '<label>格式<select data-m="cfmt"><option value="mp3">MP3</option><option value="car">车载 MP3</option><option value="flac">FLAC（无损）</option><option value="wav">WAV（无损）</option></select></label>' +
                         '<label>质量<select data-m="cbr"><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option><option value="320">320 kbps</option></select></label>' +
                         '<label>采样率<select data-m="csr"><option value="44100">44100 Hz</option><option value="48000">48000 Hz</option><option value="32000">32000 Hz</option><option value="22050">22050 Hz</option></select></label>' +
                         '<label>声道<select data-m="cch"><option value="0">与源音频一致</option><option value="2">立体声</option><option value="1">单声道</option></select></label>' +
                         '<label class="xm-chk"><input type="checkbox" data-m="cadd">转换后加入唱片机</label>' +
                         '<label class="xm-chk"><input type="checkbox" data-m="cdl">同时下载到电脑</label>' +
+                        '<label class="xm-chk"><input type="checkbox" data-m="cnorm">音量统一</label>' +
+                        '<label class="xm-chk"><input type="checkbox" data-m="cnum">文件名加序号</label>' +
                       '</div>' +
+                      '<div class="xm-conv-lrc" data-m="clrc"></div>' +
                       '<div class="xm-cbtns"><button type="button" data-m="cclear">清空列表</button><button type="button" data-m="cstop">停止</button><button type="button" class="xm-primary" data-m="cstart">开始转换</button></div>' +
-                      '<div class="xm-hint">全部在本机浏览器里转换，不上传文件；音乐软件的加密格式无法转换</div>' +
+                      '<div class="xm-hint">全部在本机浏览器里转换，不上传、不改动原文件；音乐软件的加密格式无法转换</div>' +
                     '</div>';
                 const q = (k) => d.querySelector(`[data-m="${k}"]`);
                 q('close').addEventListener('click', () => this._toggleMusic());
@@ -3189,8 +4550,8 @@
                     try { localStorage.setItem('xxt-v41-music-vol', String(v)); } catch (e) { /* ignore */ }
                 });
                 q('add').addEventListener('click', () => q('file').click());
-                q('convopen').addEventListener('click', () => { this._convOpen = true; this._convHint = ''; this._renderConv(); });
-                q('convback').addEventListener('click', () => { this._convOpen = false; this._renderConv(); this._positionMusic(); });
+                q('convopen').addEventListener('click', () => { this._convHint = ''; this._showMusic('conv'); });
+                q('convback').addEventListener('click', () => this._showMusic('player'));
                 q('convdrop').addEventListener('click', () => q('convfile').click());
                 q('convfile').addEventListener('change', () => { const fs = [...q('convfile').files]; q('convfile').value = ''; this._convQueue(fs, ''); });
                 q('convlist').addEventListener('click', (e) => {
@@ -3200,14 +4561,40 @@
                     this._renderConv();
                 });
                 const saveOpt = () => {
-                    this._convSaveOpts({ fmt: q('cfmt').value, br: Number(q('cbr').value), sr: Number(q('csr').value), ch: Number(q('cch').value), add: q('cadd').checked, dl: q('cdl').checked });
+                    const prev = this._convOpts();
+                    const car = q('cfmt').value === 'car';
+                    this._convSaveOpts({ fmt: q('cfmt').value, br: Number(q('cbr').value), sr: car ? prev.sr : Number(q('csr').value), ch: car ? prev.ch : Number(q('cch').value), add: q('cadd').checked, dl: q('cdl').checked, norm: q('cnorm').checked, num: q('cnum').checked });
                     this._renderConv();
                 };
-                for (const k of ['cfmt', 'cbr', 'csr', 'cch', 'cadd', 'cdl']) q(k).addEventListener('change', saveOpt);
+                for (const k of ['cfmt', 'cbr', 'csr', 'cch', 'cadd', 'cdl', 'cnorm', 'cnum']) q(k).addEventListener('change', saveOpt);
                 q('cstart').addEventListener('click', () => this._convRun());
                 q('cstop').addEventListener('click', () => { this._convAbort = true; });
-                q('cclear').addEventListener('click', () => { this._convQ = []; this._convHint = ''; this._renderConv(); });
+                q('cclear').addEventListener('click', () => { this._convQ = []; this._convLrc = new Map(); this._convHint = ''; this._renderConv(); });
+                q('convdirbtn').addEventListener('click', () => q('convdir').click());
+                q('convdir').addEventListener('change', () => {
+                    const fs = [...q('convdir').files].filter((f) => /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|webm|mp4|m4v|mov|mkv|lrc|ncm|qmc\d*|kgm|kgma)$/i.test(f.name || ''));
+                    q('convdir').value = '';
+                    this._convQueue(fs, fs.length ? '' : '这个文件夹里没有找到音频、视频或歌词文件');
+                });
                 q('file').addEventListener('change', () => { const fs = [...q('file').files]; q('file').value = ''; this._musicAdd(fs); });
+                const openRec = (el) => {
+                    const r = RECOMMENDED[Number(el.getAttribute('data-rec'))];
+                    if (!r) return;
+                    if (!openTab(recUrl(r[0], r[1]))) this._notice = { kind: 'bg', until: Date.now() + 8000, text: `浏览器拦截了新窗口，请允许本站打开弹出窗口后再点「${r[0]}」` };
+                    log(`唱片机：在网易云音乐中打开「${r[0]} - ${r[1]}」`, '#2196F3');
+                    this._panelKey = ''; this._renderPanel();
+                };
+                if (q('drawer')) {
+                    q('rechandle').addEventListener('click', () => { this._recOpen = !this._recOpen; this._renderMusic(); });
+                    q('drawer').addEventListener('keydown', (e) => {
+                        const rec = e.target.closest && e.target.closest('[data-rec]');
+                        if (rec && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRec(rec); }
+                    });
+                    q('drawer').addEventListener('click', (e) => {
+                        const rec = e.target.closest('[data-rec]');
+                        if (rec) openRec(rec);
+                    });
+                }
                 q('list').addEventListener('click', (e) => {
                     const del = e.target.closest('[data-del]');
                     if (del) { e.stopPropagation(); this._musicRemove(del.getAttribute('data-del')); return; }
@@ -3246,6 +4633,10 @@
                 d.style.left = Math.round(left) + 'px';
                 d.style.top = Math.round(top) + 'px';
                 d.style.maxHeight = (H - 16) + 'px';
+                // 歌单：右侧放得下（约 250px）从右侧滑出，否则左侧，两边都放不下就盖在唱片机上
+                const roomRight = W - (left + w) >= 252, roomLeft = left >= 252;
+                d.classList.toggle('dleft', !roomRight && roomLeft);
+                d.classList.toggle('dinside', !roomRight && !roomLeft);
                 try {
                     const cs = getComputedStyle(el);
                     const acc = cs.getPropertyValue('--x-accent').trim(), on = cs.getPropertyValue('--x-on-accent').trim();
@@ -3295,6 +4686,17 @@
                     q('list').innerHTML = '<div class="xm-sec">内置环境音</div>' + builtins.map(row).join('') +
                         '<div class="xm-sec">我的音乐</div>' +
                         (mine.length ? mine.map((t, i) => row(t, i)).join('') : '<div class="xm-empty">点下面的按钮，从电脑里添加喜欢的音乐</div>');
+
+                }
+                // 「RouteCC 的歌单」侧拉栏：默认收起
+                if (q('drawer')) {
+                    q('drawer').classList.toggle('open', !!this._recOpen);
+                    q('rechandle').setAttribute('aria-expanded', String(!!this._recOpen));
+                    q('recbody').toggleAttribute('inert', !this._recOpen);
+                    if (!q('reclist').children.length) {
+                        q('reclist').innerHTML = RECOMMENDED.map(([title, artist], i) => `<div class="xm-rec" data-rec="${i}" role="listitem" tabindex="0" title="在网易云音乐中打开：${esc(title)} - ${esc(artist)}">` +
+                            `<span class="xm-no">↗</span><span class="xm-name">${esc(title)}<small>${esc(artist)}</small></span></div>`).join('');
+                    }
                 }
                 this._musicTick();
                 this._renderConv();
@@ -3319,7 +4721,9 @@
                 const ico = (p) => `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
                 const items = [
                     ['music', '唱片机', ico('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5"/>')],
+                    ['conv', '音频转换', ico('<path d="M4 9v6M8 6v12M12 10v4M16 7v10M20 11v2"/>')],
                     ['history', '更新记录', ico('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>')],
+                    ['board', '留言板', ico('<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>')],
                     ['feedback', '反馈问题', ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>')],
                 ];
                 d.innerHTML =
@@ -3361,9 +4765,13 @@
                     '</div>';
                 const q = (k) => d.querySelector(`[data-s="${k}"]`);
                 q('handle').addEventListener('click', () => { this._sideOpen = !this._sideOpen; this._renderSide(); this._positionFloats(); });
-                q('music').addEventListener('click', () => this._toggleMusic());
+                q('music').addEventListener('click', () => this._showMusic('player'));
+                q('conv').addEventListener('click', () => this._showMusic('conv'));
                 q('history').addEventListener('click', () => {
-                    this._animatePanel(() => { this._histOpen = !this._histOpen; this._histFromSettings = false; this._settingsOpen = false; });
+                    this._animatePanel(() => { this._histOpen = !(this._histOpen && this._histView !== 'board'); this._histView = 'log'; this._histFromSettings = false; this._settingsOpen = false; });
+                });
+                q('board').addEventListener('click', () => {
+                    this._animatePanel(() => { this._histOpen = !(this._histOpen && this._histView === 'board'); this._histView = 'board'; this._histFromSettings = false; this._settingsOpen = false; });
                 });
                 q('feedback').addEventListener('click', () => {
                     this._animatePanel(() => {
@@ -3391,8 +4799,10 @@
                 const tray = d.querySelector('[data-s="tray"]');
                 if (show && this._sideOpen) tray.removeAttribute('inert'); else tray.setAttribute('inert', '');
                 const set = (k, on) => { const b = d.querySelector(`[data-s="${k}"]`); b.classList.toggle('on', !!on); b.setAttribute('aria-pressed', String(!!on)); };
-                set('music', this._musicOpen);
-                set('history', this._histOpen);
+                set('music', this._musicOpen && !this._convOpen);
+                set('conv', this._musicOpen && this._convOpen);
+                set('history', this._histOpen && this._histView !== 'board');
+                set('board', this._histOpen && this._histView === 'board');
                 set('feedback', this._settingsOpen && this._fbOpen);
                 d.querySelector('[data-s="music"]').classList.toggle('spin', !!this._musicPlaying);
                 // 跟随浮窗主题配色
@@ -3507,7 +4917,7 @@
                 if (this._mode === 'course') st.chap = this._chapterLine();
                 this._checkAlert(st);
                 const prog = this._mode === 'course' ? this._progressLine() : null;
-                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}`;
+                const key = `${st.color}|${st.label}|${st.text}|${st.sub || ''}|${st.chap || ''}|${prog ? prog.text : ''}|${this._settingsOpen}|${this._mode === 'list' ? JSON.stringify((this._courses || []).map((x) => [x.cid, x.done, x.total])) : ''}|${this._statsOpen}|${Math.floor(this._statSummary().todaySec / 60)}|${SETTING_ITEMS.map(([k]) => C[k] ? 1 : 0).join('')}|${this._panelCollapsed}|${C.playbackRate}|${this._rateGaveUp}|${this._mode}|${this._latest}|${this._updating}|${this._ratesOpen}|${this._userStopped}|${this._lives.map((l) => l.pct + (l.done ? 'd' : '') + (this._liveOpened.has(l.frame || l.info) ? 'o' : '')).join(',')}|${this._liveBlocked}|${this._notice && Date.now() < this._notice.until ? this._notice.text : ''}|${this._tab}|${C.assistMode}|${this._musicOpen}|${this._sideOpen}|${C.theme}|${this._resolvedTheme()}|${C.customColor}|${C.customBase}|${!!this._loadSize()}|${this._fbOpen}|${this._fbType}|${this._histOpen}|${this._whatsNewFrom}|${(() => { try { return localStorage.getItem(WHATSNEW_KEY); } catch (e) { return ''; } })()}|${this._notesVer || 0}|${this._mode === 'course' ? this._currentNodeTitle() : ''}|${dayKey()}|${this._progress ? this._progress.manual.join('/') : ''}|${this._histView}|${this._boardVer || 0}`;
                 const el = this._ensurePanel();
                 if (!el || key === this._panelKey) return;
                 this._panelKey = key;
@@ -3827,6 +5237,15 @@
                     '#xxt-v41-panel .xxt-wn-all{margin-top:6px;padding:0;border:0;background:none;font:inherit;font-size:12px;font-weight:600;color:var(--x-accent-strong);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-wn-all:hover,#xxt-v41-panel .xxt-wn-all:focus-visible{text-decoration:underline;outline:none}' +
                     '#xxt-v41-panel .xxt-hv{padding:8px 0;border-top:1px solid var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-board .xxt-note{min-height:58px}' +
+                    '#xxt-v41-panel .xxt-board-st{margin:10px 0 2px;font-size:12px;color:var(--x-muted)}' +
+                    '#xxt-v41-panel .xxt-board-st.err{color:#B45309}' +
+                    '#xxt-v41-panel .xxt-bm{padding:8px 0;border-top:1px solid var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-bm-head{display:flex;align-items:center;gap:6px;font-size:12px}' +
+                    '#xxt-v41-panel .xxt-bm-head b{color:var(--x-strong);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+                    '#xxt-v41-panel .xxt-bm-head span{flex:none;font-size:10px;padding:1px 5px;border-radius:4px;background:var(--x-accent-soft);color:var(--x-accent-strong)}' +
+                    '#xxt-v41-panel .xxt-bm-head time{margin-left:auto;flex:none;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-panel .xxt-bm-text{margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--x-text2);white-space:pre-wrap;overflow-wrap:anywhere}' +
                     '#xxt-v41-panel .xxt-hv:first-child{border-top:0;padding-top:0}' +
                     '#xxt-v41-panel .xxt-hv-head{display:flex;align-items:center;gap:6px}' +
                     '#xxt-v41-panel .xxt-hv-head b{font-size:13px;color:var(--x-strong);font-variant-numeric:tabular-nums}' +
@@ -3891,6 +5310,33 @@
                     '#xxt-v41-panel .xxt-set-row{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer}' +
                     '#xxt-v41-panel .xxt-set-row span{flex:1;min-width:0;font-size:13px;color:var(--x-text2)}' +
                     '#xxt-v41-panel .xxt-set-row small{display:block;font-size:11px;color:var(--x-faint);line-height:1.35}' +
+                    '#xxt-v41-panel .xxt-quiz-st{margin:2px 0 6px;padding:6px 9px;border-radius:8px;background:var(--x-soft2);font-size:12px;color:var(--x-text2);line-height:1.45}' +
+                    '#xxt-v41-panel .xxt-quiz-st.err{color:#B45309;background:rgba(245,165,36,.12)}' +
+                    '#xxt-v41-panel .xxt-quiz-row{display:flex;align-items:center;gap:6px;margin:6px 0}' +
+                    '#xxt-v41-panel .xxt-quiz-row .xxt-set-btn{flex:none;padding:6px 11px}' +
+                    '#xxt-v41-panel .xxt-quiz-in{flex:1;min-width:0;box-sizing:border-box;margin:0;padding:6px 9px;border:1px solid var(--x-line);border-radius:7px;background:var(--x-input);color:var(--x-fg);font:12px/1.4 inherit;outline:none}' +
+                    '#xxt-v41-panel .xxt-quiz-in:focus{border-color:var(--x-accent-ring)}' +
+                    '#xxt-v41-panel .xxt-quiz-link{display:inline-block;margin:0 0 4px;font-size:12px;color:var(--x-accent-strong);text-decoration:none}' +
+                    '#xxt-v41-panel .xxt-quiz-link:hover,#xxt-v41-panel .xxt-quiz-link:focus-visible{text-decoration:underline}' +
+                    '#xxt-v41-panel .xxt-quiz-label{display:flex;align-items:center;justify-content:space-between}' +
+                    '#xxt-v41-panel .xxt-quiz-guide-btn{margin:0;padding:0;border:0;background:none;font:inherit;font-size:12px;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-quiz-cost{display:block;margin:0 0 4px;padding:5px 8px;border-radius:7px;font-size:11.5px;line-height:1.45;color:#B45309;background:rgba(245,165,36,.12)}' +
+                    '#xxt-v41-panel .xxt-flash{animation:xxt-flash 1.2s ease-in-out 2;border-radius:8px}' +
+                    '@keyframes xxt-flash{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 3px var(--x-accent-ring);background:var(--x-accent-softer)}}' +
+                    '#xxt-v41-panel .xxt-guide{margin-top:10px;padding:9px 12px;border-radius:10px;background:linear-gradient(135deg,var(--x-accent-softer),var(--x-soft));box-shadow:inset 0 0 0 1px var(--x-accent-soft)}' +
+                    '#xxt-v41-panel .xxt-guide-mini{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--x-accent-text)}' +
+                    '#xxt-v41-panel .xxt-guide-mini span{flex:1;min-width:0;font-weight:600}' +
+                    '#xxt-v41-panel .xxt-guide-go{flex:none;margin:0;border:0;border-radius:7px;padding:4px 10px;background:var(--x-accent);color:var(--x-on-accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}' +
+                    '#xxt-v41-panel .xxt-guide-head{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-panel .xxt-guide-head b{font-size:13px;color:var(--x-strong)}' +
+                    '#xxt-v41-panel .xxt-guide-head span{margin-left:auto;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-panel .xxt-guide p{margin:6px 0 8px;font-size:12px;line-height:1.6;color:var(--x-text2)}' +
+                    '#xxt-v41-panel .xxt-guide-btns{display:flex;gap:6px}' +
+                    '#xxt-v41-panel .xxt-guide-btns .xxt-set-btn{padding:5px 0}' +
+                    '#xxt-v41-panel .xxt-guide-dots{display:flex;justify-content:center;gap:5px;margin-top:8px}' +
+                    '#xxt-v41-panel .xxt-guide-dots i{width:5px;height:5px;border-radius:50%;background:var(--x-line-strong)}' +
+                    '#xxt-v41-panel .xxt-guide-dots i.on{background:var(--x-accent);width:14px;border-radius:3px}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-panel .xxt-flash{animation:none;box-shadow:0 0 0 3px var(--x-accent-ring)}}' +
                     '#xxt-v41-panel .xxt-switch{appearance:none;-webkit-appearance:none;flex:none;width:32px;height:18px;border-radius:9px;background:var(--x-switch-off);position:relative;cursor:pointer;margin:0;transition:background .15s}' +
                     '#xxt-v41-panel .xxt-switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}' +
                     '#xxt-v41-panel .xxt-switch:checked{background:var(--x-accent)}' +
@@ -4039,10 +5485,22 @@
                         '<div class="xxt-presets" aria-label="常用颜色">' + ['#3B82F6', '#06B6D4', '#14B8A6', '#22C55E', '#84CC16', '#EAB308', '#F97316', '#EF4444', '#E11D48', '#D946EF', '#6366F1', '#64748B'].map((c) =>
                           `<button type="button" data-cpreset="${c}" style="background:${c}" title="${c}" aria-label="${c}"></button>`).join('') + '</div>' +
                       '</div>' +
+                      (this._mode === 'course' ?
+                        '<div class="xxt-set-label xxt-quiz-label" data-k="quizlabel">答题辅助<button type="button" class="xxt-quiz-link xxt-quiz-guide-btn" data-k="quizguide">上手教程 ›</button></div>' +
+                        '<label class="xxt-set-row"><span>自动答题<small>章节测验、视频弹题自动作答并提交</small></span><input type="checkbox" class="xxt-switch" data-k="quizon"></label>' +
+                        '<div class="xxt-goal-opts" role="radiogroup" aria-label="作答方式"><button type="button" class="xxt-rate-opt" data-qmode="api" role="radio">DeepSeek</button><button type="button" class="xxt-rate-opt" data-qmode="random" role="radio">随机作答</button></div>' +
+                        '<div data-k="quizst" class="xxt-quiz-st"></div>' +
+                        '<div data-k="quizapi">' +
+                          '<div class="xxt-quiz-row"><input type="password" data-k="quizkey" class="xxt-quiz-in" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key"><button type="button" data-k="quizkeysave" class="xxt-set-btn">保存</button><button type="button" data-k="quizkeyclear" class="xxt-set-btn">清除</button></div>' +
+                          `<a class="xxt-quiz-link" href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener noreferrer">去 DeepSeek 开放平台申请 Key ›</a><span class="xxt-quiz-cost">使用 DeepSeek API Key 作答会消耗你自己 DeepSeek 账号的余额（按调用量计费）</span>` +
+                        '</div>' +
+                        '<div data-k="quiznote" class="xxt-fb-hint"></div>' +
+                        '<div class="xxt-set-label">通用</div>' : '') +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
                         '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
                         '<button type="button" data-k="histopen" class="xxt-set-btn">更新记录</button>' +
+                        '<button type="button" data-k="boardopen" class="xxt-set-btn">留言板</button>' +
                       '</div>' +
                       '<div class="xxt-set-actions" style="border-top:0;padding-top:0">' +
                         '<button type="button" data-k="diag" class="xxt-set-btn">复制诊断信息</button>' +
@@ -4050,8 +5508,18 @@
                       '</div>' +
                     '</div>' +
                     '<div data-k="history" class="xxt-settings xxt-hist" style="display:none">' +
-                      '<div class="xxt-fb-head"><b>更新记录</b><button type="button" data-k="histback" class="xxt-fb-back">‹ 返回</button></div>' +
+                      '<div class="xxt-fb-head"><b data-k="histtitle">更新记录</b><button type="button" data-k="histback" class="xxt-fb-back">‹ 返回</button></div>' +
                       '<div data-k="histlist"></div>' +
+                      '<div data-k="board" class="xxt-board" style="display:none">' +
+                        '<textarea data-k="boardtext" class="xxt-note" rows="3" maxlength="1000" placeholder="写点什么吧：使用体验、学习心得、想对作者说的话…" aria-label="留言内容"></textarea>' +
+                        '<div class="xxt-set-actions" style="border-top:0;padding-top:6px">' +
+                          '<button type="button" data-k="boardsend" class="xxt-set-btn xxt-fb-send">复制并去 GitHub 发表</button>' +
+                          '<button type="button" data-k="boardrefresh" class="xxt-set-btn">刷新</button>' +
+                        '</div>' +
+                        '<div data-k="boardnote" class="xxt-fb-hint">留言所有人可见，发表需要登录 GitHub。请勿留下手机号、学号等个人信息。</div>' +
+                        '<div data-k="boardstate" class="xxt-board-st"></div>' +
+                        '<div data-k="boardlist" role="list"></div>' +
+                      '</div>' +
                     '</div>' +
                     '<div data-k="feedback" class="xxt-settings xxt-fb" style="display:none">' +
                       '<div class="xxt-fb-head"><b>反馈问题 / 提建议</b><button type="button" data-k="fbback" class="xxt-fb-back">‹ 返回</button></div>' +
@@ -4148,9 +5616,14 @@
                     inp.addEventListener('change', () => this._toggleSetting(inp.getAttribute('data-set'), inp.checked));
                 }
                 el.querySelector('[data-k="diag"]').addEventListener('click', () => this._copyDiagnostics());
-                const openHist = () => this._animatePanel(() => { this._histOpen = true; this._histFromSettings = this._settingsOpen; this._settingsOpen = false; });
-                el.querySelector('[data-k="histopen"]').addEventListener('click', openHist);
-                el.querySelector('[data-k="wnall"]').addEventListener('click', () => { this._dismissWhatsNew(); openHist(); });
+                const openHist = (view = 'log') => this._animatePanel(() => { this._histOpen = true; this._histView = view; this._histFromSettings = this._settingsOpen; this._settingsOpen = false; });
+                el.querySelector('[data-k="histopen"]').addEventListener('click', () => openHist('log'));
+                el.querySelector('[data-k="boardopen"]').addEventListener('click', () => openHist('board'));
+                const btext = el.querySelector('[data-k="boardtext"]');
+                for (const t of ['keydown', 'keyup', 'keypress']) btext.addEventListener(t, (e) => e.stopPropagation());
+                el.querySelector('[data-k="boardsend"]').addEventListener('click', () => this._boardSend(btext));
+                el.querySelector('[data-k="boardrefresh"]').addEventListener('click', () => this._boardLoad(true));
+                el.querySelector('[data-k="wnall"]').addEventListener('click', () => { this._dismissWhatsNew(); openHist('log'); });
                 el.querySelector('[data-k="histback"]').addEventListener('click', () => this._animatePanel(() => { this._histOpen = false; this._settingsOpen = !!this._histFromSettings; }));
                 el.querySelector('[data-k="wnx"]').addEventListener('click', () => this._animatePanel(() => this._dismissWhatsNew()));
                 el.querySelector('[data-k="fbopen"]').addEventListener('click', () => this._animatePanel(() => { this._fbOpen = true; }));
