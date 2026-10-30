@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.11
+// @version      4.6.13
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,11 +25,18 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.11';
+    const VERSION = '4.6.13';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     // 没有 v 的条目会单独显示为「作者吐槽」，不参与“新版本”判断
     const CHANGELOG = [
+        { v: '4.6.13', date: '2026-10-31', items: [
+            '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
+            '新增 app.taskDiag()：卡在这种弹窗时运行它，会打印找到几个候选容器、命中文案几个、容器里有哪些按钮，一眼看出是哪一环断了',
+        ] },
+        { v: '4.6.12', date: '2026-10-30', items: [
+            '修复：唱片机的「内置环境音」和「我的音乐」不再共用一条播放序列——列表循环 / 单曲循环 / 随机播放只在「我的音乐」里轮转，不会再自动播到环境音；环境音只能自己点开，正在放环境音时点「下一首」才会切回我的音乐。列表里内置项序号改成 ♪，和我的音乐分开',
+        ] },
         { v: '4.6.11', date: '2026-10-30', items: [
             '修复：视频播完后卡在「当前章节还有任务点未完成，是否去完成？」——新版弹窗只有「去学习 / 下一节」两个按钮，原来的处理只认「取消 / 确定」，两个都对不上，最后只是把弹窗节点删掉、页面状态没变，于是一直卡着。现在按文案兜底找到这种弹层，并点「下一节」继续',
             '修复：视频弹题里的判断题仍然识别不出——弹层里有原生 radio 时会走“按控件识别”那条路，而选项行和题目容器是同一个元素，取不到行就直接放弃了，压根没轮到 4.6.8 改的文字识别。现在控件那条路取不到行会退到相邻兄弟，再不行就交回文字识别；文字识别也会把原生 radio 按顺序绑上去，点得更准',
@@ -44,7 +51,7 @@
         { v: '4.6.8', date: '2026-10-30', items: [
             '修复：视频弹题提示「没有识别出完整题目」——选项各自包在独立容器里时，原来的判定要求所有选项同父节点，对不上就直接放弃。现在按文档顺序排列并校验字母是否连续，不再要求同父；画出来的圆圈读不到选中状态时改为“信任点击”，判断题/多选题也能正确判型',
         ] },
-        { v: '4.6.7', date: '2026-10-30', note: '遇到了些有意思的事情，写在留言板里', items: [
+        { v: '4.6.7', date: '2026-10-30', note: '遇到了些有意思的事情，写在留言板里。\n你可以尝试把一首网易云音乐导入到格式转换器', items: [
             '修复：新版 .ncm（密钥段整段加密的那批）原来被判成“解不开”，实际和标准版只差三处——密钥段要整段 AES 解密后再取前缀之后的密钥、密钥流是“只做 KSA 的查表”而不是标准 RC4、封面帧长度要单独跳过。现在 14 个真实样本全部能解出 mp3/flac，元数据里的歌名歌手也能读出来',
         ] },
         { v: '4.6.6', date: '2026-10-30', items: [
@@ -1341,16 +1348,21 @@
             const out = [];
             for (const doc of courseDocuments()) {
                 const found = Array.from(doc.querySelectorAll(sel)).filter((el) => visible(el));
-                if (found.length) { out.push(...found); continue; }
-                // 新版组件的类名不固定（x-component 之类）：按文案兜底，取文字最短的那层（最具体）
+                out.push(...found);
+                // 命中的容器里已经有目标文案就不用兜底；否则（命中的都是无关弹层）继续按文案扫一层
+                if (found.some((el) => TASK_BLOCKER_RE.test(clean(el.innerText || el.textContent)))) continue;
+                // 新版组件的类名不固定（x-component 之类）：按文案兜底
+                // 优先挑“自己或后代里带按钮”的容器（按钮常在文案的兄弟节点里），再取文字最短的
                 const cands = [];
                 for (const el of Array.from(doc.querySelectorAll('div,section,article'))) {
                     if (!visible(el)) continue;
                     const t = clean(el.innerText || el.textContent);
-                    if (t.length <= 200 && TASK_BLOCKER_RE.test(t)) cands.push({ el, len: t.length });
+                    if (t.length > 200 || !TASK_BLOCKER_RE.test(t)) continue;
+                    const hasBtn = Array.from(el.querySelectorAll('button,a,[role="button"]')).some((b) => /^(下一节|去学习|确定|确认|取消|是|否)$/.test(clean(b.innerText || b.textContent)));
+                    cands.push({ el, len: t.length, hasBtn });
                 }
                 if (cands.length) {
-                    cands.sort((a, b) => a.len - b.len);
+                    cands.sort((a, b) => (Number(b.hasBtn) - Number(a.hasBtn)) || (a.len - b.len));
                     out.push(cands[0].el);
                 }
             }
@@ -1391,8 +1403,10 @@
                     return true;
                 }
             }
+            // 实在找不到按钮：只把节点摘掉（页面遮罩可能还在），并把原因写清楚
             for (const el of hits) { try { el.remove(); } catch (e) { /* ignore */ } }
             taskGuardHits++;
+            log('平台弹窗里没找到可点的按钮，已移除弹层节点；若仍卡住请手动点一下', '#FF9800', 'warn');
             return true;
         }
 
@@ -1573,6 +1587,21 @@
                 `\n--- 弹层 HTML（前 2500 字）---\n` + String(root.outerHTML || '').slice(0, 2500);
         };
         app.quizStatus = () => ({ 待生效: pending ? JSON.stringify(pending) : '', 开启: !!C.quizAssist, 方式: C.quizMode === 'random' ? '随机作答' : 'DeepSeek', 已填Key: !!deepseekKey(), 生效: active(), 状态: status.message });
+        // 诊断：卡在“还有任务点未完成”时用，看脚本到底有没有找到那个弹层
+        app.taskDiag = () => {
+            const nodes = taskBlockerNodes();
+            const hits = nodes.filter((el) => TASK_BLOCKER_RE.test(clean(el.innerText || el.textContent)));
+            const btns = [];
+            for (const el of hits) {
+                for (const b of Array.from(el.querySelectorAll('button,a,div,span'))) {
+                    const t = clean(b.innerText || b.textContent);
+                    if (t && t.length <= 8 && !btns.includes(t)) btns.push(t);
+                }
+            }
+            return `文档 ${courseDocuments().length} 个 · 候选容器 ${nodes.length} 个 · 命中文案 ${hits.length} 个` +
+                (hits.length ? `（${hits.map((el) => `<${el.tagName.toLowerCase()} class="${String(el.className).slice(0, 40)}">`).join(' ')}）` : '') +
+                `\n候选按钮：${btns.slice(0, 12).join(' / ') || '无'}`;
+        };
         return app;
     }
 
@@ -4726,6 +4755,8 @@
                 ];
             },
             _allTracks() { return this._builtinTracks().concat(this._tracks || []); },
+            // 播放队列只放「我的音乐」：内置环境音不参与顺序/随机，只能手动点开
+            _queueTracks() { return (this._tracks || []).slice(); },
             _musicVolume() {
                 if (this._audio) return this._audio.volume;
                 try { const x = parseFloat(localStorage.getItem('xxt-v41-music-vol')); return x >= 0 && x <= 1 ? x : 0.6; } catch (e) { return 0.6; }
@@ -4881,7 +4912,11 @@
                     return;
                 }
                 if (!this._curTrack) {
-                    const list = this._allTracks();
+                    const list = this._queueTracks();
+                    if (!list.length) {
+                        log('唱片机：还没有添加音乐，点「添加音乐」或直接把文件拖进来', '#FF9800');
+                        return;
+                    }
                     let last = null;
                     try { last = localStorage.getItem('xxt-v41-music-last'); } catch (e) { /* ignore */ }
                     const t = list.find((x) => x.id === last) || list[0];
@@ -4899,9 +4934,14 @@
                 this._renderMusic();
             },
             // auto：一首放完自动接下一首（按播放模式）；step：-1 上一首
+            // 只在「我的音乐」里轮转，内置环境音永远不进队列
             _musicNext(auto, step = 1) {
-                const list = this._allTracks();
-                if (!list.length) { this._musicStop(); return; }
+                const list = this._queueTracks();
+                if (!list.length) {
+                    // 没有我的音乐：环境音就让它继续放着，其它情况停掉
+                    if (!(this._curTrack && this._curTrack.startsWith('gen:'))) this._musicStop();
+                    return;
+                }
                 const mode = this._musicMode();
                 const i = list.findIndex((x) => x.id === this._curTrack);
                 if (auto && mode === 'one' && i >= 0 && this._audio) { this._audio.currentTime = 0; this._musicPlay(list[i].id); return; }
@@ -5283,7 +5323,7 @@
                 if (this._musicListKey !== listKey) {
                     this._musicListKey = listKey;
                     const row = (t, i) => `<div class="xm-item${t.id === this._curTrack ? ' cur' : ''}${t.builtin ? ' builtin' : ''}" data-track="${esc(t.id)}" role="listitem" tabindex="0" title="${esc(t.name)}">` +
-                        (t.id === this._curTrack ? '<span class="xm-eq"><i></i><i></i><i></i></span>' : `<span class="xm-no">${i + 1}</span>`) +
+                        (t.id === this._curTrack ? '<span class="xm-eq"><i></i><i></i><i></i></span>' : `<span class="xm-no">${t.builtin ? '♪' : i + 1}</span>`) +
                         `<span class="xm-name">${esc(t.name)}</span>` +
                         (t.builtin ? '' : `<button type="button" class="xm-del" data-del="${esc(t.id)}" aria-label="移除 ${esc(t.name)}">×</button>`) + '</div>';
                     const builtins = list.filter((t) => t.builtin);

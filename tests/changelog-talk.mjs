@@ -18,7 +18,8 @@ function sliceArray(name) {
 }
 
 const CHANGELOG = new Function(`return ${sliceArray('CHANGELOG')};`)();
-const NOTE = '遇到了些有意思的事情，写在留言板里';
+const NOTE_LINES = ['遇到了些有意思的事情，写在留言板里', '你可以尝试把一首网易云音乐导入到格式转换器'];
+const expectVer = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version;
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => {
@@ -27,14 +28,15 @@ const check = (name, cond, extra = '') => {
 };
 
 console.log('版本条目');
-check('第一条是最新版本 4.6.11', CHANGELOG[0].v === '4.6.11', CHANGELOG[0].v);
+check(`第一条是最新版本 ${expectVer}`, CHANGELOG[0].v === expectVer, CHANGELOG[0].v);
 check('没有无版本的长吐槽条目', CHANGELOG.every((e) => typeof e.v === 'string'));
 
 console.log('\n4.6.7（ncm 那版）的作者吐槽');
 const e467 = CHANGELOG.find((e) => e.v === '4.6.7');
 check('条目存在', !!e467);
-check('note 内容正确', e467 && e467.note === NOTE, JSON.stringify(e467 && e467.note));
-check('CHANGELOG.md 同步了同一句', md.includes(NOTE));
+check('第一句在', e467 && e467.note.includes(NOTE_LINES[0]), JSON.stringify(e467 && e467.note));
+check('第二句在', e467 && e467.note.includes(NOTE_LINES[1]), JSON.stringify(e467 && e467.note));
+check('CHANGELOG.md 同步了两句', NOTE_LINES.every((l) => md.includes(l)));
 
 console.log('\n渲染能力');
 const renderSrc = src.slice(src.indexOf('histlist"]\')'), src.indexOf('histlist"]\')') + 1800);

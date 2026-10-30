@@ -21,7 +21,7 @@ const cleanLine = src.match(/const clean = .*?;\n/)[0];
 const reLine = src.match(/const TASK_BLOCKER_RE = .*?;\n/)[0];
 
 const body = [
-  'const visible = (el) => Boolean(el && el.isConnected);',
+  'const visible = (el) => Boolean(el && el.isConnected && !(el.style && el.style.display === "none"));',
   'const courseDocuments = () => [document];',
   'let taskGuardHits = 0;',
   'const log = (m) => logs.push(m);',
@@ -56,6 +56,18 @@ const CASE_LAYUI = `
 const CASE_OTHER = `
 <div class="x-dialog"><div class="x-dialog-body">确定提交本次测验吗？</div><button>确定</button></div>`;
 
+// 页面上有无关 dialog 占位，真正的提示弹层没有任何已知类名 —— 必须靠文案兜底找到
+const CASE_OBSCURED = `
+<div class="el-dialog" style="display:none">登录过期提示</div>
+<div class="el-dialog">课程公告</div>
+<div class="sw-mask">
+  <div class="sw-box">
+    <div class="sw-title">提示</div>
+    <div class="sw-body">当前章节还有任务点未完成，是否去完成？</div>
+    <div class="sw-foot"><button type="button">去学习</button><button type="button">下一节</button></div>
+  </div>
+</div>`;
+
 function run(name, html, expect) {
   const dom = new JSDOM(`<body>${html}</body>`);
   // jsdom 不实现 innerText，补一个（否则 findButton 永远匹配不到文字）
@@ -77,6 +89,7 @@ function run(name, html, expect) {
   const ok = handled === expect && (!expect || clicked === (name === '老版弹窗（有取消）' ? '取消' : '下一节'));
   console.log(`\n[${ok ? 'PASS' : 'FAIL'}] ${name}`);
   console.log(`   找到弹层 ${nodes.length} 个 · handled=${handled} · 点击了「${clicked || '无'}」`);
+  console.log(`   容器: ${nodes.map((e) => `${e.tagName.toLowerCase()}.${e.className || '-'}`).join(' | ') || '无'}`);
   if (logs.length) console.log(`   日志: ${logs[0]}`);
   if (!ok) process.exitCode = 1;
   return ok;
@@ -86,6 +99,7 @@ let pass = 0, fail = 0;
 pass += run('新版弹窗（去学习 / 下一节）', CASE_XCOMP, true) ? 1 : 0;
 pass += run('老版弹窗（有取消）', CASE_LAYUI, true) ? 1 : 0;
 pass += run('无关弹窗不该处理', CASE_OTHER, false) ? 1 : 0;
-fail = 3 - pass;
-console.log(`\n通过 ${pass} / 3`);
+pass += run('页面上有无关弹层时仍能按文案兜底', CASE_OBSCURED, true) ? 1 : 0;
+fail = 4 - pass;
+console.log(`\n通过 ${pass} / 4`);
 if (fail) process.exitCode = 1;

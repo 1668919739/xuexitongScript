@@ -4,7 +4,7 @@
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "test": "node tests/verify-v3.mjs",
-    "test:all": "node tests/verify-v3.mjs && node tests/ncm-verify.mjs && node tests/popup-recognize.mjs && node tests/popup-radio.mjs && node tests/task-blocker.mjs && node tests/rate-maintain.mjs && node tests/panel-status.mjs && node tests/changelog-talk.mjs",
+    "test:all": "node tests/verify-v3.mjs && node tests/ncm-verify.mjs && node tests/popup-recognize.mjs && node tests/popup-radio.mjs && node tests/task-blocker.mjs && node tests/rate-maintain.mjs && node tests/panel-status.mjs && node tests/changelog-talk.mjs && node tests/music-queue.mjs",
     "test:e2e": "node tests/e2e/run.mjs",
     "release": "node scripts/release.mjs"
   },
