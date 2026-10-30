@@ -19,7 +19,8 @@ const jsonVersion = JSON.parse(readFileSync(resolve(root, 'version.json'), 'utf8
 if (jsonVersion !== srcVersion) throw new Error(`version.json 未同步：${jsonVersion} ≠ ${srcVersion}`);
 if (!srcVersion || srcVersion !== metaVersion) throw new Error(`版本号不一致：源码 VERSION=${srcVersion}，油猴 @version=${metaVersion}`);
 
-const firstLog = (/const CHANGELOG = \[\s*\{ v: '([^']+)', date: '\d{4}-\d{2}-\d{2}'/.exec(source) || [])[1];
+// 顶部可能有不带版本的纯吐槽条目，所以取“第一个带版本的条目”
+const firstLog = (/const CHANGELOG = \[[\s\S]*?\{ v: '([^']+)', date: '\d{4}-\d{2}-\d{2}'/.exec(source) || [])[1];
 if (firstLog !== srcVersion) throw new Error(`源码顶部 CHANGELOG 第一条应是当前版本 ${srcVersion}，现在是 ${firstLog}`);
 if (!readFileSync(resolve(root, 'CHANGELOG.md'), 'utf8').includes(`## v${srcVersion}`)) throw new Error(`CHANGELOG.md 缺少 v${srcVersion}`);
 

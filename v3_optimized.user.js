@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.10
+// @version      4.6.11
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,16 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.10';
+    const VERSION = '4.6.11';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
+    // 没有 v 的条目会单独显示为「作者吐槽」，不参与“新版本”判断
     const CHANGELOG = [
+        { v: '4.6.11', date: '2026-10-30', items: [
+            '修复：视频播完后卡在「当前章节还有任务点未完成，是否去完成？」——新版弹窗只有「去学习 / 下一节」两个按钮，原来的处理只认「取消 / 确定」，两个都对不上，最后只是把弹窗节点删掉、页面状态没变，于是一直卡着。现在按文案兜底找到这种弹层，并点「下一节」继续',
+            '修复：视频弹题里的判断题仍然识别不出——弹层里有原生 radio 时会走“按控件识别”那条路，而选项行和题目容器是同一个元素，取不到行就直接放弃了，压根没轮到 4.6.8 改的文字识别。现在控件那条路取不到行会退到相邻兄弟，再不行就交回文字识别；文字识别也会把原生 radio 按顺序绑上去，点得更准',
+            '更新记录支持不带版本号的「作者吐槽」条目，和版本更新分开显示；「当前版本」标记改成按版本号判断，不会被其它条目挤掉',
+        ] },
         { v: '4.6.10', date: '2026-10-30', items: [
             '修复：浮窗偶尔一直显示「页面暂停了视频」，但其实视频正在正常播放——解除条件原来要求“没暂停”和“进度离开卡住位置 0.5 秒”同时成立，视频恢复后常常卡在这里，还会连带跳过播放结束、报错等检查。现在只要视频没暂停就解除；状态文字也改成只有真的暂停才提示需要处理',
         ] },
@@ -38,7 +44,7 @@
         { v: '4.6.8', date: '2026-10-30', items: [
             '修复：视频弹题提示「没有识别出完整题目」——选项各自包在独立容器里时，原来的判定要求所有选项同父节点，对不上就直接放弃。现在按文档顺序排列并校验字母是否连续，不再要求同父；画出来的圆圈读不到选中状态时改为“信任点击”，判断题/多选题也能正确判型',
         ] },
-        { v: '4.6.7', date: '2026-10-30', items: [
+        { v: '4.6.7', date: '2026-10-30', note: '遇到了些有意思的事情，写在留言板里', items: [
             '修复：新版 .ncm（密钥段整段加密的那批）原来被判成“解不开”，实际和标准版只差三处——密钥段要整段 AES 解密后再取前缀之后的密钥、密钥流是“只做 KSA 的查表”而不是标准 RC4、封面帧长度要单独跳过。现在 14 个真实样本全部能解出 mp3/flac，元数据里的歌名歌手也能读出来',
         ] },
         { v: '4.6.6', date: '2026-10-30', items: [
@@ -165,7 +171,7 @@
     ];
     // 版本号区间（如 4.2.0–4.2.3、4.1.x）取上限，用于比较
     const changelogTop = (label) => String(label).split('–').pop().replace(/x/gi, '99');
-    const changelogSince = (from) => CHANGELOG.filter((e) => newerThan(changelogTop(e.v), from) && !newerThan(changelogTop(e.v), VERSION));
+    const changelogSince = (from) => CHANGELOG.filter((e) => e.v && newerThan(changelogTop(e.v), from) && !newerThan(changelogTop(e.v), VERSION));
     const REPO_URL = 'https://github.com/1668919739/xuexitongScript';
     // 留言板：仓库里的一个 Issue，评论即留言。所有人都能在浮窗里看到；发表需登录 GitHub；作者可在 GitHub 上删除留言
     const BOARD_ISSUE = 2;
@@ -740,20 +746,27 @@
             }
             if (!groups.size) return letterPopupQuestions(root);
             // 多组题目没有各自容器时，不能把总题干套给每一组
-            if (groups.size > 1 && Array.from(groups.values()).some((group) => group.card === root)) return [];
+            if (groups.size > 1 && Array.from(groups.values()).some((group) => group.card === root)) return letterPopupQuestions(root);
             for (const group of groups.values()) {
-                if (group.controls.length < 2 || group.controls.length > 8) return [];
+                if (group.controls.length < 2 || group.controls.length > 8) return letterPopupQuestions(root);
                 const options = group.controls.map((control, index) => {
                     const linkedLabel = control.id ? Array.from(root.querySelectorAll('label')).find((label) => label.htmlFor === control.id || label.getAttribute('for') === control.id) : null;
-                    const row = control.closest('label,li,[data-option],.option,.videoquiz-option') || linkedLabel || control.parentElement;
+                    let row = control.closest('label,li,[data-option],.option,.videoquiz-option') || linkedLabel;
+                    // radio 常常直接挂在题目容器里（没有 label 包裹）：先退到相邻兄弟，再退到父节点
+                    if (!row || row === group.card) {
+                        const sib = control.nextElementSibling || control.previousElementSibling;
+                        if (sib && sib !== group.card) row = sib;
+                    }
+                    if (!row || row === group.card) row = control.parentElement;
                     if (!row || row === group.card) return null;
                     const raw = clean(row.innerText || row.textContent);
+                    if (!raw) return null;
                     const prefix = raw.match(/^([A-H])[.、．:：\s]+/);
                     const letter = prefix ? prefix[1] : String.fromCharCode(65 + index);
                     const text = prefix ? raw.slice(prefix[0].length).trim() : raw;
                     return text && text.length <= 500 ? { letter, text, element: row, labelElement: control } : null;
                 });
-                if (options.some((option) => !option) || new Set(options.map((option) => option.letter)).size !== options.length) return [];
+                if (options.some((option) => !option) || new Set(options.map((option) => option.letter)).size !== options.length) return letterPopupQuestions(root);
                 const titleEl = group.card.querySelector('[data-question-title],.videoquiz-title,.question-title,.title,h1,h2,h3,h4,legend');
                 let title = stripPopupTitle(titleEl && (titleEl.innerText || titleEl.textContent));
                 if (!title) {
@@ -761,8 +774,10 @@
                     copy.querySelectorAll('label,li,[data-option],.option,.videoquiz-option,input,button,[role="button"],.feedback').forEach((el) => el.remove());
                     title = stripPopupTitle(copy.textContent);
                 }
-                if (!title || title.length > 500 || options.some((option) => title.includes(option.text))) return [];
-                questions.push({ kind: group.type === 'checkbox' ? '多选题' : '单选题', title, options, card: group.card, doc: root.ownerDocument });
+                if (!title || title.length > 500 || options.some((option) => option.text.length >= 2 && title.includes(option.text))) return letterPopupQuestions(root);
+                const body = clean(root.innerText || root.textContent);
+                const kind = group.type === 'checkbox' ? '多选题' : (/判断题/.test(body) ? '判断题' : '单选题');
+                questions.push({ kind, title, options, card: group.card, doc: root.ownerDocument });
             }
             return questions;
         }
@@ -773,7 +788,7 @@
                 .replace(/^\s*(?:单选题|多选题|判断题)\s*/, '').replace(/\s+(?:单选题|多选题|判断题)\s*$/, '').replace(/^\d+[.、．]\s*/, '').replace(/\s+/g, ' ').trim();
         }
 
-        // 没有原生单选 / 复选框的弹题（选项是画出来的圆圈）：按“A、…”“B、…”这样的选项文字识别
+        // 选项是画出来的圆圈（或 radio 藏在别处）时：按“A、…”“B、…”这样的选项文字识别
         function letterPopupQuestions(root) {
             const isOpt = (el) => /^[A-H]\s*[、.．:：]\s*\S/.test(clean(el.innerText || el.textContent));
             const found = Array.from(root.querySelectorAll('li,label,div,p,span,a,dd'))
@@ -791,12 +806,16 @@
                 };
             });
             if (options.some((o, i) => o.letter !== String.fromCharCode(65 + i) || !o.text)) return [];
+            // 弹层里若还有原生 radio，按顺序绑上去：点它比点画出来的圆圈可靠
+            const radios = Array.from(root.querySelectorAll('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]')).filter((el) => !el.disabled);
+            if (radios.length === options.length) options.forEach((o, i) => { o.labelElement = radios[i]; });
             const copy = root.cloneNode(true);
             const all = Array.from(root.querySelectorAll('*')), copies = Array.from(copy.querySelectorAll('*'));
             rows.map((r) => copies[all.indexOf(r)]).forEach((el) => el && el.remove());
             copy.querySelectorAll('button,[role="button"],input,.feedback').forEach((el) => el.remove());
             const title = stripPopupTitle(copy.innerText || copy.textContent).replace(/(?:提交|确定|继续|下一题)\s*$/g, '').trim();
-            if (!title || title.length > 500 || options.some((o) => title.includes(o.text))) return [];
+            // 单字选项（对/错/是/否）容易和题干撞字，只在选项文本至少两个字时才排除
+            if (!title || title.length > 500 || options.some((o) => o.text.length >= 2 && title.includes(o.text))) return [];
             const text = clean(root.innerText || root.textContent);
             const kind = /多选题/.test(text) ? '多选题' : /判断题/.test(text) ? '判断题' : '单选题';
             return [{ kind, title, options, card: root, doc: root.ownerDocument }];
@@ -1318,10 +1337,22 @@
         }
 
         function taskBlockerNodes() {
-            const sel = '#popok,#popcancel,#popcontent,#confirmDiv,[role="dialog"],[role="alertdialog"],.layui-layer,.layui-layer-dialog,.el-message-box,.modal,.Mask,.popup';
+            const sel = '#popok,#popcancel,#popcontent,#confirmDiv,[role="dialog"],[role="alertdialog"],.layui-layer,.layui-layer-dialog,.el-message-box,.modal,.Mask,.popup,[class*="dialog"],[class*="confirm"],[class*="modal"],[class*="popup"]';
             const out = [];
             for (const doc of courseDocuments()) {
-                for (const el of Array.from(doc.querySelectorAll(sel))) if (visible(el)) out.push(el);
+                const found = Array.from(doc.querySelectorAll(sel)).filter((el) => visible(el));
+                if (found.length) { out.push(...found); continue; }
+                // 新版组件的类名不固定（x-component 之类）：按文案兜底，取文字最短的那层（最具体）
+                const cands = [];
+                for (const el of Array.from(doc.querySelectorAll('div,section,article'))) {
+                    if (!visible(el)) continue;
+                    const t = clean(el.innerText || el.textContent);
+                    if (t.length <= 200 && TASK_BLOCKER_RE.test(t)) cands.push({ el, len: t.length });
+                }
+                if (cands.length) {
+                    cands.sort((a, b) => a.len - b.len);
+                    out.push(cands[0].el);
+                }
             }
             return out;
         }
@@ -1337,6 +1368,17 @@
                     taskGuardHits++;
                     try { cancel.click(); } catch (e) { /* ignore */ }
                     log('平台提示还有任务点未完成，已点「取消」，改用目录跳节', '#FF9800', 'warn');
+                    return true;
+                }
+            }
+            // 新版弹窗只有「去学习 / 下一节」，没有取消：点「下一节」继续流程
+            for (const el of hits) {
+                const next = findButton(el, '下一节') || findButton(el, '去学习') || findButton(el, '继续');
+                if (next) {
+                    taskGuardHits++;
+                    const label = clean(next.innerText || next.textContent) || '下一节';
+                    try { next.click(); } catch (e) { /* ignore */ }
+                    log(`平台提示还有任务点未完成，已点「${label}」继续`, '#FF9800', 'warn');
                     return true;
                 }
             }
@@ -1527,7 +1569,8 @@
                 ` · 选项候选 ${cands.length} 末端 ${tails.length} 分组 ${groupInfo} 字母 ${letters || '-'}` +
                 (qs.length
                     ? ` · 识别 ${qs.length} 题：${qs.map((q) => `${q.kind}「${q.title.slice(0, 40)}」${q.options.map((o) => o.letter).join('')}`).join('；')}`
-                    : ` · 识别 0 题；弹层文字：${clean(root.innerText).slice(0, 200)}`);
+                    : ` · 识别 0 题；弹层文字：${clean(root.innerText || root.textContent).slice(0, 200)}`) +
+                `\n--- 弹层 HTML（前 2500 字）---\n` + String(root.outerHTML || '').slice(0, 2500);
         };
         app.quizStatus = () => ({ 待生效: pending ? JSON.stringify(pending) : '', 开启: !!C.quizAssist, 方式: C.quizMode === 'random' ? '随机作答' : 'DeepSeek', 已填Key: !!deepseekKey(), 生效: active(), 状态: status.message });
         return app;
@@ -3338,10 +3381,12 @@
                 el.querySelector('[data-k="histlist"]').style.display = board ? 'none' : '';
                 el.querySelector('[data-k="board"]').style.display = board ? '' : 'none';
                 if (board) { this._renderBoard(el); return; }
-                el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e, i) =>
-                    `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${i === 0 && e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
-                    e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
-                    (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${this._noteHtml(e.note)}</div>` : '') + '</div>').join('');
+                el.querySelector('[data-k="histlist"]').innerHTML = CHANGELOG.map((e) => e.v
+                    ? `<div class="xxt-hv"><div class="xxt-hv-head"><b>v${esc(e.v)}</b>${e.v === VERSION ? '<span>当前版本</span>' : ''}${e.date ? `<time datetime="${esc(e.date)}">${esc(e.date)}</time>` : ''}</div><ul>` +
+                      e.items.map((t) => t.startsWith('  ') ? `<li class="sub">${esc(t.trim())}</li>` : `<li>${esc(t)}</li>`).join('') + '</ul>' +
+                      (e.note ? `<div class="xxt-hv-note"><b>💬 作者RouteCC：</b>${this._noteHtml(e.note)}</div>` : '') + '</div>'
+                    : `<div class="xxt-hv xxt-hv-talk"><div class="xxt-hv-head"><b>作者吐槽</b><span>随便说说</span></div>` +
+                      (e.note ? `<div class="xxt-hv-note">${this._noteHtml(e.note)}</div>` : '') + '</div>').join('');
             },
             // ================= 留言板 =================
             // 读取：GitHub 公开接口，不用登录（每个 IP 每小时 60 次，所以 2 分钟内不重复读取）；发表：复制内容并打开留言 Issue，登录 GitHub 后粘贴发表
@@ -5797,6 +5842,8 @@
                     '#xxt-v41-panel .xxt-wn-all{margin-top:6px;padding:0;border:0;background:none;font:inherit;font-size:12px;font-weight:600;color:var(--x-accent-strong);cursor:pointer}' +
                     '#xxt-v41-panel .xxt-wn-all:hover,#xxt-v41-panel .xxt-wn-all:focus-visible{text-decoration:underline;outline:none}' +
                     '#xxt-v41-panel .xxt-hv{padding:8px 0;border-top:1px solid var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-hv-talk{padding:10px 12px;border-top:0;margin-bottom:8px;border-radius:10px;background:var(--x-soft);box-shadow:inset 0 0 0 1px var(--x-line)}' +
+                    '#xxt-v41-panel .xxt-hv-talk .xxt-hv-note{background:transparent;margin-top:6px;font-size:12.5px;line-height:1.7}' +
                     '#xxt-v41-panel .xxt-board .xxt-note{min-height:58px}' +
                     '#xxt-v41-panel .xxt-board-st{margin:10px 0 2px;font-size:12px;color:var(--x-muted)}' +
                     '#xxt-v41-panel .xxt-board-st.err{color:#B45309}' +
