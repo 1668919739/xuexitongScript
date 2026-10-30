@@ -6,10 +6,19 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.7';
+    const VERSION = '4.6.10';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.10', date: '2026-10-30', items: [
+            '修复：浮窗偶尔一直显示「页面暂停了视频」，但其实视频正在正常播放——解除条件原来要求“没暂停”和“进度离开卡住位置 0.5 秒”同时成立，视频恢复后常常卡在这里，还会连带跳过播放结束、报错等检查。现在只要视频没暂停就解除；状态文字也改成只有真的暂停才提示需要处理',
+        ] },
+        { v: '4.6.9', date: '2026-10-30', items: [
+            '修复：倍速常常变成 1x——原来只在接管视频时设一次，页面在 play/加载完成后把 playbackRate 改回 1x，连续两次就整节课放弃。现在改成低频维持（最多每 3 秒纠正一次），只有同一小节被改回 6 次才放弃，切换小节自动重试；卡顿降速也改成临时 20 秒，到点自动恢复设定倍速',
+        ] },
+        { v: '4.6.8', date: '2026-10-30', items: [
+            '修复：视频弹题提示「没有识别出完整题目」——选项各自包在独立容器里时，原来的判定要求所有选项同父节点，对不上就直接放弃。现在按文档顺序排列并校验字母是否连续，不再要求同父；画出来的圆圈读不到选中状态时改为“信任点击”，判断题/多选题也能正确判型',
+        ] },
         { v: '4.6.7', date: '2026-10-30', items: [
             '修复：新版 .ncm（密钥段整段加密的那批）原来被判成“解不开”，实际和标准版只差三处——密钥段要整段 AES 解密后再取前缀之后的密钥、密钥流是“只做 KSA 的查表”而不是标准 RC4、封面帧长度要单独跳过。现在 14 个真实样本全部能解出 mp3/flac，元数据里的歌名歌手也能读出来',
         ] },
@@ -748,15 +757,19 @@
         // 没有原生单选 / 复选框的弹题（选项是画出来的圆圈）：按“A、…”“B、…”这样的选项文字识别
         function letterPopupQuestions(root) {
             const isOpt = (el) => /^[A-H]\s*[、.．:：]\s*\S/.test(clean(el.innerText || el.textContent));
-            const rows = Array.from(root.querySelectorAll('li,label,div,p,span,a,dd')).filter((el) => visible(el) && isOpt(el) && clean(el.innerText).length <= 500 &&
-                !Array.from(el.querySelectorAll('li,label,div,p,span,a,dd')).some((c) => c !== el && isOpt(c)));
-            if (rows.length < 2 || rows.length > 8) return [];
-            const parent = rows[0].parentElement;
-            if (!rows.every((r) => r.parentElement === parent)) return [];
+            const found = Array.from(root.querySelectorAll('li,label,div,p,span,a,dd'))
+                .filter((el) => visible(el) && isOpt(el) && clean(el.innerText).length <= 500 &&
+                    !Array.from(el.querySelectorAll('li,label,div,p,span,a,dd')).some((c) => c !== el && isOpt(c)));
+            if (found.length < 2 || found.length > 8) return [];
+            // 选项可能各自包在自己的容器里（父节点不相同），所以按文档顺序排、再校验字母连续，而不是要求同父
+            const rows = found.slice().sort((a, b) => (a === b ? 0 : (a.compareDocumentPosition(b) & 4 ? -1 : 1)));
             const options = rows.map((row) => {
-                const raw = clean(row.innerText || row.textContent);
-                const m = raw.match(/^([A-H])\s*[、.．:：]\s*/);
-                return { letter: m[1], text: raw.slice(m[0].length).trim(), element: row, labelElement: row.querySelector('i,em,span,[class*="radio"],[class*="check"]') || row };
+                const line = clean(row.innerText || row.textContent);
+                const m = line.match(/^([A-H])\s*[、.．:：]\s*/);
+                return {
+                    letter: m[1], text: line.slice(m[0].length).trim(), element: row,
+                    labelElement: row.querySelector('i,em,span,[class*="radio"],[class*="check"]') || row,
+                };
             });
             if (options.some((o, i) => o.letter !== String.fromCharCode(65 + i) || !o.text)) return [];
             const copy = root.cloneNode(true);
@@ -765,7 +778,7 @@
             copy.querySelectorAll('button,[role="button"],input,.feedback').forEach((el) => el.remove());
             const title = stripPopupTitle(copy.innerText || copy.textContent).replace(/(?:提交|确定|继续|下一题)\s*$/g, '').trim();
             if (!title || title.length > 500 || options.some((o) => title.includes(o.text))) return [];
-            const text = clean(root.innerText);
+            const text = clean(root.innerText || root.textContent);
             const kind = /多选题/.test(text) ? '多选题' : /判断题/.test(text) ? '判断题' : '单选题';
             return [{ kind, title, options, card: root, doc: root.ownerDocument }];
         }
@@ -888,6 +901,8 @@
             if (aria.length) return aria.some((el) => el.getAttribute('aria-checked') === 'true');
             // 只认明确的选中标记；不能把任意样式或整题 HTML 变化当成选中
             if (nodes.some((el) => Array.from(el.classList).some((name) => /^(checked|selected|active|on|is-checked|is-selected)$/i.test(name)))) return true;
+            // 画出来的圆圈常把状态放在子元素的类名里（如 xxx-checked / xxx-selected）
+            if (nodes.some((el) => /\b(checked|selected|is-checked|is-selected)\b/i.test(String(el.className || '')))) return true;
             return null;
         }
 
@@ -929,8 +944,8 @@
                     if (!q.card.isConnected || !option.element.isConnected) throw new Error(`第 ${no} 题选项已变化`);
                     if (isSelected() === wanted) return;
                 }
-                // 状态不可识别且发生了变化时停止，避免再次点击把已选答案取消
-                if (optionState(option) === null && before !== option.element.outerHTML) break;
+                // 状态不可识别但点击确实改变了 DOM：视为已生效（画出来的圆圈没有可读的选中状态）
+                if (optionState(option) === null && before !== option.element.outerHTML) return;
             }
             throw new Error(`第 ${no} 题 ${option.letter} 选项未确认${wanted ? '选中' : '取消'}，已停止提交；可在控制台运行 app.inspectQuizOptions() 查看控件状态`);
         }
@@ -939,6 +954,8 @@
             for (let i = 0; i < questions.length; i++) {
                 const q = questions[i];
                 if (!q.card.isConnected || q.options.some((option) => !option.element.isConnected)) throw new Error(`第 ${i + 1} 题选项已变化，已停止提交`);
+                // 选项状态完全读不出来（画出来的圆圈）：信任点击结果，不做比对
+                if (q.options.every((option) => optionState(option) === null)) continue;
                 const expected = [...answers.get(i + 1)].sort().join('');
                 const actual = selectedLetters(q).sort().join('');
                 if (actual !== expected) throw new Error(`第 ${i + 1} 题选中结果与答案不一致，已停止提交`);
@@ -1480,8 +1497,18 @@
             if (!root) return '无弹题';
             const qs = videoPopupQuestions(root);
             const inputs = root.querySelectorAll('input[type=radio],input[type=checkbox],[role=radio],[role=checkbox]').length;
-            return `弹层 <${root.tagName.toLowerCase()} class="${String(root.className).slice(0, 80)}"> · 原生选项控件 ${inputs} 个 · 识别 ${qs.length} 题` +
-                (qs.length ? `：${qs.map((q) => `${q.kind}「${q.title.slice(0, 40)}」${q.options.map((o) => o.letter).join('')}`).join('；')}` : `；弹层文字：${clean(root.innerText).slice(0, 160)}`);
+            const isOpt = (el) => /^[A-H]\s*[、.．:：]\s*\S/.test(clean(el.innerText || el.textContent));
+            const cands = Array.from(root.querySelectorAll('li,label,div,p,span,a,dd')).filter((el) => visible(el) && isOpt(el) && clean(el.innerText).length <= 500);
+            const tails = cands.filter((el) => !Array.from(el.querySelectorAll('li,label,div,p,span,a,dd')).some((c) => c !== el && isOpt(c)));
+            const groups = new Map();
+            for (const c of tails) groups.set(c.parentElement, (groups.get(c.parentElement) || 0) + 1);
+            const groupInfo = [...groups.values()].sort((a, b) => b - a).slice(0, 5).join('/') || '0';
+            const letters = tails.map((el) => (clean(el.innerText).match(/^([A-H])/) || [])[1]).join('');
+            return `弹层 <${root.tagName.toLowerCase()} class="${String(root.className).slice(0, 60)}"> · 原生控件 ${inputs}` +
+                ` · 选项候选 ${cands.length} 末端 ${tails.length} 分组 ${groupInfo} 字母 ${letters || '-'}` +
+                (qs.length
+                    ? ` · 识别 ${qs.length} 题：${qs.map((q) => `${q.kind}「${q.title.slice(0, 40)}」${q.options.map((o) => o.letter).join('')}`).join('；')}`
+                    : ` · 识别 0 题；弹层文字：${clean(root.innerText).slice(0, 200)}`);
         };
         app.quizStatus = () => ({ 待生效: pending ? JSON.stringify(pending) : '', 开启: !!C.quizAssist, 方式: C.quizMode === 'random' ? '随机作答' : 'DeepSeek', 已填Key: !!deepseekKey(), 生效: active(), 状态: status.message });
         return app;
@@ -1996,6 +2023,9 @@
             _rate: C.playbackRate,
             _rateResets: 0,
             _rateGaveUp: false,
+            _rateForceTs: 0,
+            _rateTempUntil: 0,
+            _rateWarned: false,
             _note: '',
             _noVideoWait: false,
             _latest: null,
@@ -2084,6 +2114,9 @@
                 try { localStorage.setItem(RATE_KEY, String(r)); } catch (e) { /* ignore */ }
                 this._rateGaveUp = false;
                 this._rateResets = 0;
+                this._rateForceTs = 0;
+                this._rateTempUntil = 0;
+                this._rateWarned = false;
                 this._rate = r;
                 if (this._mode !== 'live' && this._isValid(this._video)) this._setRate(this._video, r);
                 log(`倍速已设为 ${r}x`, '#2196F3');
@@ -2343,6 +2376,7 @@
                 const v = this._video;
                 const now = Date.now();
                 const ct = v.currentTime || 0;
+                this._maintainRate();
 
                 // 1. 视频内弹题：不和弹题抢播放
                 if (this._quizVisible(v)) {
@@ -2365,7 +2399,8 @@
 
                 // 2. 页面在同一位置反复暂停 → 等待手动处理，不再拉扯
                 if (this._blocked) {
-                    if (!v.paused && Math.abs(ct - this._blockedAt) > 0.5) {
+                    // 只要视频其实在播（用户点了播放），或进度已经离开卡住的位置，就解除等待
+                    if (!v.paused || Math.abs(ct - this._blockedAt) > 0.5) {
                         this._blocked = false;
                         this._pauseLog = [];
                         document.title = this._origTitle;
@@ -2449,26 +2484,47 @@
                 }, C.pauseResumeDelayMs);
             },
 
-            // 倍速：只在接管时设置一次；页面改回去最多再设一次，之后接受页面的倍速，不再来回拉扯
+            // 倍速：平台常在 play / loadedmetadata 之后把 playbackRate 重置回 1x，
+            // 所以不能只在接管时设一次——由 _maintainRate 低频纠正（每次最多 3 秒一次）。
             _onRateChange(v) {
                 if (v !== this._video) return;
-                if (Math.abs(v.playbackRate - this._rate) < 0.01) return; // 是脚本自己设置的
-                this._rateResets++;
-                if (this._rateGaveUp || this._rateResets >= 2) {
-                    if (!this._rateGaveUp) {
-                        log(`课程限制倍速（被页面改回 ${v.playbackRate}x），之后按页面倍速播放，避免反复暂停`, '#FF9800', 'warn');
-                    }
-                    this._rateGaveUp = true;
-                    this._rate = v.playbackRate;
-                    return;
+                if (Math.abs(v.playbackRate - this._rate) < 0.01) return;  // 脚本自己设的
+                if (!this._rateWarned) {
+                    this._rateWarned = true;
+                    log(`页面把倍速改回 ${v.playbackRate}x，稍后自动纠正`, '#607D8B');
                 }
-                this._later(() => this._setRate(v, this._rate), 500);
             },
 
             _setRate(v, r) {
                 if (!this._isValid(v) || this._rateGaveUp) return;
                 this._rate = r;
                 try { v.playbackRate = r; } catch (e) { /* ignore */ }
+            },
+
+            // 维持浮窗里设定的倍速：偏低就纠正，纠正太多次才放弃（且只放弃本小节）
+            _maintainRate() {
+                const v = this._video;
+                if (this._mode === 'live' || !this._isValid(v) || this._rateGaveUp) return;
+                const now = Date.now();
+                // 卡顿降速期间不干预，到点后自然恢复目标倍速
+                if (this._rateTempUntil) {
+                    if (now < this._rateTempUntil) return;
+                    this._rateTempUntil = 0;
+                    log(`卡顿降速结束，倍速恢复到 ${C.playbackRate}x`, '#4CAF50');
+                }
+                const want = C.playbackRate;
+                if (Math.abs(want - this._rate) > 0.01) this._rate = want;
+                if (Math.abs(v.playbackRate - this._rate) < 0.01) { this._rateWarned = false; return; }
+                if (v.seeking || v.readyState < 1) return;
+                if (now - (this._rateForceTs || 0) < 3000) return;
+                this._rateForceTs = now;
+                this._rateResets++;
+                try { v.playbackRate = this._rate; } catch (e) { /* ignore */ }
+                if (this._rateResets === 1) log(`重新应用倍速 ${this._rate}x`, '#607D8B');
+                if (this._rateResets >= 6) {
+                    this._rateGaveUp = true;
+                    log(`倍速被页面反复改回（${this._rateResets} 次），本小节按 ${v.playbackRate}x 播放；切换小节后会自动重试`, '#FF9800', 'warn');
+                }
             },
 
             // 卡顿分级恢复
@@ -2486,8 +2542,9 @@
                 if (buffering) {
                     // 缓冲慢：不回退进度（回退会丢掉已缓冲内容，反而更卡）
                     if (lvl === 1 && canSlowDown) {
-                        log(`网络缓冲较慢，本节倍速降为 ${C.fallbackRate}x`, '#FF5722');
+                        log(`网络缓冲较慢，本节倍速降为 ${C.fallbackRate}x（20 秒后自动恢复）`, '#FF5722');
                         this._setRate(v, C.fallbackRate);
+                        this._rateTempUntil = now + 20000;
                     } else if (lvl <= 1) {
                         log('缓冲时间较长，继续等待', '#FF9800');
                     } else {
@@ -2505,8 +2562,9 @@
                     try { v.currentTime = Math.max(0, (v.currentTime || 0) - 1); } catch (e) { /* ignore */ }
                     this._resume('rewind');
                 } else if (lvl === 3 && canSlowDown) {
-                    log(`连续卡顿，本节倍速降为 ${C.fallbackRate}x`, '#FF5722');
+                    log(`连续卡顿，本节倍速降为 ${C.fallbackRate}x（20 秒后自动恢复）`, '#FF5722');
                     this._setRate(v, C.fallbackRate);
+                    this._rateTempUntil = now + 20000;
                     this._resume('slowdown');
                 } else {
                     this._reloadVideo('连续卡顿');
@@ -2600,7 +2658,13 @@
                 this._pauseLog = [];
                 this._blocked = false;
                 this._waiting = false;
-                if (!this._rateGaveUp) this._rate = C.playbackRate;
+                // 换小节/换视频时重新尝试倍速：平台对每个视频的限制不一定相同，不能一次失败就整节课放弃
+                this._rateGaveUp = false;
+                this._rateResets = 0;
+                this._rateForceTs = 0;
+                this._rateTempUntil = 0;
+                this._rateWarned = false;
+                this._rate = C.playbackRate;
                 if (reason !== 'reload') this._reloadCount = 0;
                 if (reason === 'next' || reason === 'manual' || reason === 'start') this._testAdvanceTimes = 0;
                 this._quizNotified = false;
@@ -5343,7 +5407,8 @@
                     case 'playing': {
                         if (!v) break;
                         if (this._quizNotified) return { color: RED, label: '需要处理', text: '检测到视频内弹题，请手动作答，答完自动继续' };
-                        if (this._blocked) return { color: RED, label: '需要处理', text: '页面暂停了视频，请手动处理后点击播放' };
+                        // 只有真的处于暂停才提示“需要处理”，避免视频已在播放却一直挂着这条
+                        if (this._blocked && v.paused) return { color: RED, label: '需要处理', text: '页面暂停了视频，请手动处理后点击播放' };
                         const vp = isFinite(v.duration) && v.duration > 0 ? Math.min(100, Math.round((v.currentTime / v.duration) * 100)) : 0;
                         const sub = `${fmt(v.currentTime)} / ${fmt(v.duration)} · 本节 ${vp}%`;
                         if (!v.paused && (v.readyState < 3 || this._waiting)) return { color: ORANGE, label: '缓冲中', text: `网络缓冲中：${this._title}`, sub };
@@ -5950,7 +6015,7 @@
                           RATE_OPTIONS.map((r) => `<button type="button" data-rate="${r}" class="xxt-rate-opt">${r}x</button>`).join('') +
                         '</div>' +
                       '</div>' +
-                      '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">本课程限制倍速，当前按页面允许的速度播放</div>' +
+                      '<div data-k="ratehint" style="display:none;margin-top:6px;font-size:12px;color:#B45309">这个小节的播放器反复把倍速改回原速，本节先按页面速度播放；切换小节后会自动重试（想立刻重试：点一下上面的倍速按钮）</div>' +
                       '<div class="xxt-set-label">浮窗主题</div>' +
                       '<div class="xxt-themes" role="radiogroup" aria-label="浮窗主题">' + THEMES.map(([k, name, color]) =>
                         `<button type="button" class="xxt-theme" data-theme-opt="${k}" role="radio" title="${name}"><i style="background:${color || THEME_SWATCH[k]}"></i>${name}</button>`).join('') + '</div>' +
