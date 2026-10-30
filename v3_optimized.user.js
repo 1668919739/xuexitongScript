@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.2
+// @version      4.6.4
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,17 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.2';
+    const VERSION = '4.6.4';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.4', date: '2026-10-30', items: [
+            '修复：视频弹题答对后停在「继续学习」按钮上不动——答对后的按钮原先只按「继续」精确匹配，遇到「继续学习」「继续播放」「下一题」都点不到，10 秒后报「提交后仍未关闭」。现在按文字宽松识别并自动点掉；就算脚本没认出题目、你自己手动答的，答完也会自动继续播放',
+        ] },
+        { v: '4.6.3', date: '2026-10-29', items: [
+            '修复：章节测验提交后，平台弹「当前章节还有任务点未完成，是否去完成？」把流程卡死——现在点「下一节」前会先等任务点状态刷新，弹框会被自动取消并改用目录跳节，不会再干等 120 秒后停止',
+            '修复：上手教程只在没填 Key 时出现过一次就再也不弹——改成带版本号的记录，教程内容一更新就重新提示一次；设置里「上手教程」随时能重看，教程文字也改得更直白',
+        ] },
         { v: '4.6.2', date: '2026-10-28', items: [
             '修复：DeepSeek 偶尔提示“输出达到长度上限”而停止答题——现在每次最多 10 题，思考用光长度时自动改为直接作答；唱片机加宽，列表不再出现左右滚动条，拖入文件时按钮不再闪动',
         ] },
@@ -385,17 +392,24 @@
             app._panelKey = '';
         };
 
-        // ---------- 上手教程（本次大更新的答题辅助） ----------
-        // 没填 Key 时在浮窗主界面显示一张小卡片：先是一行提示，点「开始」后分三步讲解；看完或关掉后不再自动出现，设置里随时能重看
+        // ---------- 上手教程（答题辅助） ----------
+        // 记录里带版本号 GUIDE_VER：教程文案一改就 +1，老用户也会重新看到一次（不会再「更新后就不弹了」）。
+        // 教程进度也存下来，关掉浮窗、刷新页面后还能接着看；设置里「上手教程」随时能重看。
         const GUIDE_KEY = 'xxt-v41-quiz-guide';
-        let guideStep = -1;        // -1：收起的一行提示；0~2：第几步
+        const GUIDE_VER = 2;
+        let guideStep = -1;        // -1：收起的一行提示；0~N：第几步
         let guideForced = false;   // 从设置里点了「上手教程」
-        const guideDone = () => { try { return localStorage.getItem(GUIDE_KEY) === 'done'; } catch (e) { return false; } };
-        const finishGuide = () => { try { localStorage.setItem(GUIDE_KEY, 'done'); } catch (e) { /* ignore */ } guideForced = false; guideStep = -1; app._panelKey = ''; app._renderPanel(); };
+        const guideSaved = () => { try { const s = JSON.parse(localStorage.getItem(GUIDE_KEY) || '{}'); return s && typeof s === 'object' ? s : {}; } catch (e) { return {}; } };
+        const guideDone = () => { const s = guideSaved(); return s.v === GUIDE_VER && s.done === true; };
+        const saveGuide = (patch) => { try { localStorage.setItem(GUIDE_KEY, JSON.stringify(Object.assign({}, guideSaved(), patch, { v: GUIDE_VER }))); } catch (e) { /* ignore */ } };
+        const finishGuide = () => { saveGuide({ done: true, step: 0 }); guideForced = false; guideStep = -1; app._panelKey = ''; app._renderPanel(); };
+        // 每一步：[标题, 说明, 主按钮文字]
         const GUIDE = [
-            ['打开答题辅助', '点浮窗右上角的齿轮，找到「答题辅助」。「自动答题」默认已开启，作答方式默认是 DeepSeek。', '带我去看'],
-            ['填入 DeepSeek Key', '在 DeepSeek 开放平台登录并充值，创建一个 API Key（以 sk- 开头），复制后粘贴到设置里点「保存」，只需填一次。调用会消耗你自己 DeepSeek 账号的余额。', '去申请 Key'],
-            ['开始学习', '进入章节测验或视频出现弹题时会自动作答，进度显示在状态框；结果不明时会停下来提醒。不想用时关掉「自动答题」；也可以选「随机作答」，不联网、不花钱，但答案只是随机的。', '我知道了'],
+            ['先认识这个浮窗', '页面左下角这块就是浮窗。点右上角的齿轮进设置，答题相关的开关都在里面；「自动答题」默认就是开的，不用另外找。', '带我去看'],
+            ['选一种作答方式', 'DeepSeek：答案比较准，但要自己申请 Key，花自己账号的钱；随机作答：不联网、不花钱，但答案基本靠运气，适合只想把题目点掉。两种随时能换。', '看设置'],
+            ['填 DeepSeek Key（选了随机作答就跳过）', '打开 DeepSeek 开放平台登录，创建一个以 sk- 开头的 Key，粘贴进设置里的输入框，点「保存」。只填一次，以后一直有效。', '去申请 Key'],
+            ['让它自己跑', '进入章节后它会自己动：视频自动播，测验自动作答再提交，进度写在状态框里。不想让它继续，点浮窗上的电源键暂停。', '知道了'],
+            ['卡住了怎么办', '看到「请手动处理」这类提示，就是它停下来等你了。常见原因是本章还有讨论、作业这类它不做的任务点，或者测验要你自己确认。手动处理完，切一下小节它就会接着跑。', '开始使用'],
         ];
         function flashQuizSettings(el) {
             const targets = ['quizlabel', 'quizon', 'quizst', 'quizapi'].map((k) => el.querySelector(`[data-k="${k}"]`)).filter(Boolean).map((n) => n.closest('.xxt-set-row') || n);
@@ -411,15 +425,15 @@
             card.setAttribute('data-k', 'quizguidecard');
             card.style.display = 'none';
             card.innerHTML =
-                '<div class="xxt-guide-mini" data-k="gmini"><span>🎓 新功能：答题辅助 · 30 秒上手</span><button type="button" class="xxt-guide-go" data-k="gstart">开始 ›</button><button type="button" class="xxt-notice-x" data-k="gclose" aria-label="关闭教程">×</button></div>' +
+                '<div class="xxt-guide-mini" data-k="gmini"><span>🎓 答题辅助 · 1 分钟上手</span><button type="button" class="xxt-guide-go" data-k="gstart">开始 ›</button><button type="button" class="xxt-notice-x" data-k="gclose" aria-label="关闭教程">×</button></div>' +
                 '<div class="xxt-guide-step" data-k="gstep" role="group" aria-label="答题辅助上手教程">' +
                   '<div class="xxt-guide-head"><b data-k="gtitle"></b><span data-k="gno"></span><button type="button" class="xxt-notice-x" data-k="gclose2" aria-label="关闭教程">×</button></div>' +
                   '<p data-k="gtext"></p>' +
                   '<div class="xxt-guide-btns"><button type="button" class="xxt-set-btn" data-k="gprev">上一步</button><button type="button" class="xxt-set-btn xxt-fb-send" data-k="gact"></button><button type="button" class="xxt-set-btn" data-k="gnext">下一步</button></div>' +
-                  '<div class="xxt-guide-dots" data-k="gdots" aria-hidden="true"><i></i><i></i><i></i></div>' +
+                  '<div class="xxt-guide-dots" data-k="gdots" aria-hidden="true">' + GUIDE.map(() => '<i></i>').join('') + '</div>' +
                 '</div>';
             anchor.insertAdjacentElement('afterend', card);
-            const go = (n) => { guideStep = Math.max(0, Math.min(GUIDE.length - 1, n)); app._panelKey = ''; app._renderPanel(); };
+            const go = (n) => { guideStep = Math.max(0, Math.min(GUIDE.length - 1, n)); saveGuide({ done: false, step: guideStep }); app._panelKey = ''; app._renderPanel(); };
             card.querySelector('[data-k="gstart"]').addEventListener('click', () => go(0));
             card.querySelector('[data-k="gclose"]').addEventListener('click', finishGuide);
             card.querySelector('[data-k="gclose2"]').addEventListener('click', finishGuide);
@@ -440,7 +454,15 @@
             const card = el.querySelector('[data-k="quizguidecard"]');
             if (!card) return;
             const wn = el.querySelector('[data-k="whatsnew"]');
-            const want = guideForced || (!guideDone() && !deepseekKey() && C.quizMode !== 'random');
+            // 上次关在了第几步：接着看（刷新/收起浮窗都不会把进度弄丢）
+            if (!guideForced && guideStep < 0) {
+                const saved = guideSaved();
+                if (saved.v === GUIDE_VER && !saved.done && Number.isInteger(saved.step) && saved.step > 0) {
+                    guideStep = Math.min(GUIDE.length - 1, saved.step);
+                }
+            }
+            // 没看过这一版教程就提示；填没填 Key、选没选随机作答都不再影响它出现
+            const want = guideForced || !guideDone();
             const show = want && app._mode === 'course' && !app._panelCollapsed && !app._settingsOpen && !app._histOpen && !(wn && wn.style.display !== 'none');
             card.style.display = show ? '' : 'none';
             if (!show) return;
@@ -464,11 +486,14 @@
             boundPanel = el;
             buildGuide(el);
             const q = (k) => el.querySelector(`[data-k="${k}"]`);
+            // 「上手教程」可能有两个入口（答题辅助标签旁、设置底部的按钮），一起绑上
+            for (const btn of el.querySelectorAll('[data-k="quizguide"]')) {
+                btn.addEventListener('click', () => {
+                    guideForced = true; guideStep = 0;
+                    app._animatePanel(() => { app._settingsOpen = false; app._fbOpen = false; app._histOpen = false; });
+                });
+            }
             if (!q('quizon')) return;
-            q('quizguide').addEventListener('click', () => {
-                guideForced = true; guideStep = 0;
-                app._animatePanel(() => { app._settingsOpen = false; app._fbOpen = false; app._histOpen = false; });
-            });
             for (const t of ['keydown', 'keyup', 'keypress']) q('quizkey').addEventListener(t, (e) => e.stopPropagation());
             q('quizon').addEventListener('change', (e) => app.setQuizEnabled(e.target.checked));
             for (const b of el.querySelectorAll('[data-qmode]')) b.addEventListener('click', () => {
@@ -591,6 +616,8 @@
             if (busy()) return;
             if (runQueued) { runQueued = false; app.run(); return; }
             applyPending();
+            // 弹题答对后卡在「继续学习」上：不管答案是谁点的，这里点一下让它往下走
+            if (active() && !stopped && nudgeVideoPopupContinue()) return;
             if (quizErrorPopup && !visiblePopupRoot()) { quizError = ''; quizErrorPopup = false; }
             if (active() && !stopped && !['stopped', 'advancing', 'idle', 'reading'].includes(this._state)) {
                 const step = this._stepTitle();
@@ -947,6 +974,52 @@
         }
 
         // ---------- 视频弹题 ----------
+        // 答对之后，平台上出现的可能是「继续学习」「继续播放」「下一题」中的一个；
+        // 原来的 findButton(root,'继续') 是精确匹配，遇到「继续学习」就永远点不到，弹层一直挂着，
+        // 10 秒后抛「提交后仍未关闭」，表现就是停在这里不动。
+        const CONTINUE_TEXT = /^(继续学习|继续播放|继续观看|继续课程|继续|下一题|我知道了|知道了|关闭弹题|收起)$/;
+        function findContinueButton(scope) {
+            const root = scope && scope.querySelectorAll ? scope : document;
+            const found = [];
+            for (const el of root.querySelectorAll('button,a,input[type="button"],[role="button"],div,span')) {
+                if (!visible(el)) continue;
+                if (el.closest && el.closest('#xxt-v41-panel')) continue;
+                const label = clean(el.value || el.innerText || el.textContent);
+                if (!label || label.length > 8 || !CONTINUE_TEXT.test(label)) continue;
+                // 只留最里层那个：父节点会把子节点的文字一起带出来
+                if (Array.from(el.children).some((child) => clean(child.innerText) === label)) continue;
+                found.push(el);
+            }
+            return found.find((el) => /^(BUTTON|A|INPUT)$/.test(el.tagName)) || found[0] || null;
+        }
+
+        // 答对后点一下「继续学习」：手动作答、脚本没识别出题目时也照样往下走
+        let popupNudgeTs = 0;
+        const popupNudgeHits = new WeakMap();
+        function nudgeVideoPopupContinue() {
+            const root = visiblePopupRoot();
+            if (!root) return false;
+            const now = Date.now();
+            if (now - popupNudgeTs < 1500) return false;
+            if ((popupNudgeHits.get(root) || 0) >= 5) return false;   // 同一块弹题最多点 5 次，防死循环
+            const btn = findContinueButton(root) || findContinueButton(root.ownerDocument);
+            if (!btn || btn.disabled) return false;
+            // 只点“答完题才出现”的那种按钮：弹层里、或按钮所在容器里得有答对 / 已完成的字样
+            const holder = (btn.closest && btn.closest('[class*="videoquiz"],[class*="ans-"],.mask,.popup,[role="dialog"]')) || btn.parentElement;
+            const text = clean(root.innerText) + ' ' + clean(holder ? holder.innerText : '');
+            if (!/回答正确|答对了|恭喜|回答成功|已答对|全部作答|已完成/.test(text)) return false;
+            popupNudgeTs = now;
+            popupNudgeHits.set(root, (popupNudgeHits.get(root) || 0) + 1);
+            const label = clean(btn.innerText) || '继续';
+            try { btn.click(); } catch (e) { return false; }
+            popupBlockedRoot = null;
+            quizError = '';
+            quizErrorPopup = false;
+            log(`弹题已完成，自动点击「${label}」继续播放`, '#4CAF50');
+            app._panelKey = '';
+            return true;
+        }
+
         async function submitVideoPopup(root, signature) {
             if (stopped) throw new Error('脚本已停止');
             const submit = findButton(root, '提交') || findButton(root, '确定');
@@ -954,7 +1027,7 @@
             submit.scrollIntoView({ block: 'center' });
             submit.click();
             let nextClicked = false;
-            for (let i = 0; i < 40; i++) {
+            for (let i = 0; i < 80; i++) {
                 await sleep(250);
                 if (stopped) throw new Error('脚本已停止');
                 if (!root.isConnected || !visible(root)) {
@@ -966,10 +1039,15 @@
                 const feedback = clean(root.innerText);
                 if (/请选择|请先作答/.test(feedback)) throw new Error('平台提示还没有作答，已停止自动处理，请手动作答');
                 if (/真遗憾|回答错误|答错|再接再厉/.test(feedback)) return 'wrong';
-                const next = findButton(root, '下一题') || findButton(root, '继续');
-                if (!nextClicked && next && !next.disabled && /回答正确|答对了|恭喜|回答成功/.test(feedback)) { next.click(); nextClicked = true; }
+                // 答对后平台给的按钮叫「继续学习」/「继续播放」，不一定是「继续」：用宽松匹配
+                const next = findContinueButton(root) || findContinueButton(root.ownerDocument);
+                if (!nextClicked && next && !next.disabled && /回答正确|答对了|恭喜|回答成功|已答对/.test(feedback)) {
+                    next.click();
+                    nextClicked = true;
+                    log(`弹题答对，自动点击「${clean(next.innerText) || '继续'}」`, '#4CAF50');
+                }
             }
-            throw new Error('视频弹题提交后 10 秒仍未关闭或切换下一题，已停止自动处理');
+            throw new Error('视频弹题提交后 20 秒仍未关闭或切换下一题，已停止自动处理');
         }
 
         // 换一个没试过的答案：单选 / 判断换一个选项，多选随机换一种组合
@@ -1185,12 +1263,112 @@
             throw new Error('提交后等待 120 秒仍未确认成绩，已停止，避免重复提交。请先检查平台结果。');
         }
 
+        // ---------- 平台提示框：「当前章节还有任务点未完成，是否去完成？」 ----------
+        // 提交测验后，平台的章节任务点状态要过几秒才刷新，这时点「下一节」就会弹这个框；
+        // 框一出来页面不跳转，原来的代码只会干等 120 秒然后停止，看起来就是「卡在弹框上」。
+        const TASK_BLOCKER_RE = /任务点[^。\n]{0,24}未完成|还有任务点|是否去完成/;
+        let taskGuardInstalled = false;
+        let taskGuardHits = 0;
+
+        // 原生 confirm 也拦一层（@grant none，这里改的就是页面自己的 confirm）
+        function installTaskGuard() {
+            if (taskGuardInstalled) return;
+            taskGuardInstalled = true;
+            try {
+                if (typeof window.confirm !== 'function') return;
+                const rawConfirm = window.confirm;
+                window.confirm = function (message) {
+                    try {
+                        if (TASK_BLOCKER_RE.test(String(message || ''))) {
+                            taskGuardHits++;
+                            log('拦截平台确认框：' + message + '（已选「否」，改用目录跳节）', '#FF9800', 'warn');
+                            return false;
+                        }
+                    } catch (e) { /* ignore */ }
+                    return rawConfirm.apply(window, arguments);
+                };
+            } catch (e) { /* ignore */ }
+        }
+
+        function taskBlockerNodes() {
+            const sel = '#popok,#popcancel,#popcontent,#confirmDiv,[role="dialog"],[role="alertdialog"],.layui-layer,.layui-layer-dialog,.el-message-box,.modal,.Mask,.popup';
+            const out = [];
+            for (const doc of courseDocuments()) {
+                for (const el of Array.from(doc.querySelectorAll(sel))) if (visible(el)) out.push(el);
+            }
+            return out;
+        }
+
+        // 返回 true 表示已经处理掉一个挡路的框
+        function dismissTaskBlocker() {
+            const hits = taskBlockerNodes().filter((el) => TASK_BLOCKER_RE.test(clean(el.innerText || el.textContent)));
+            if (!hits.length) return false;
+            for (const el of hits) {
+                const cancel = el.querySelector('#popcancel,.layui-layer-btn1,.el-message-box__btns .el-button:not(.el-button--primary)') ||
+                    findButton(el, '取消') || findButton(el, '否') || findButton(el, '关闭');
+                if (cancel) {
+                    taskGuardHits++;
+                    try { cancel.click(); } catch (e) { /* ignore */ }
+                    log('平台提示还有任务点未完成，已点「取消」，改用目录跳节', '#FF9800', 'warn');
+                    return true;
+                }
+            }
+            for (const el of hits) {
+                const ok = el.querySelector('#popok') || findButton(el, '确定') || findButton(el, '确认') || findButton(el, '是');
+                if (ok) {
+                    taskGuardHits++;
+                    try { ok.click(); } catch (e) { /* ignore */ }
+                    log('平台提示还有任务点未完成，已点「确定」', '#FF9800', 'warn');
+                    return true;
+                }
+            }
+            for (const el of hits) { try { el.remove(); } catch (e) { /* ignore */ } }
+            taskGuardHits++;
+            return true;
+        }
+
+        // 点「下一节」之前先等目录里的任务点对勾刷新，能省掉大多数弹框
+        async function waitTaskPointSettled(limit) {
+            const wait = Math.max(0, Number(limit) || 0);
+            if (!wait) return true;
+            const deadline = Date.now() + wait;
+            while (!stopped && Date.now() < deadline) {
+                let done = false;
+                try { done = typeof app._activeNodeCompleted === 'function' && app._activeNodeCompleted(); } catch (e) { done = false; }
+                if (done) return true;
+                await sleep(400);
+            }
+            return false;
+        }
+
+        // 兜底：不点「下一节」，直接从左侧目录跳到下一小节
+        function hopByCatalog(reason) {
+            try {
+                if (typeof app._nodes !== 'function') return false;
+                const nodes = app._nodes();
+                if (!nodes || !nodes.length) return false;
+                const cur = app._currentIndex();
+                if (cur < 0) return false;
+                if (app._processedTitle && app._nodeTitle(nodes.get(cur)) === app._processedTitle) app._markManual(nodes.get(cur));
+                const nx = nodes.get(cur + 1);
+                log(`改用目录跳节（${reason}）→ ${nx ? (app._nodeTitle(nx) || '下一小节') : '本课程结束'}`, '#FF9800', 'warn');
+                stepPending = false;
+                app._goToNode(cur + 1);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
         async function goToNextStep() {
             if (stopped) throw new Error('脚本已停止');
+            installTaskGuard();
             const next = findNextButton();
             // 没有“下一节”按钮（最后一节或旧版页面）：交回原来的目录跳节，由它处理课程结束
             if (!next) { stepPending = false; orig.nextUnit(); return; }
             stepPending = true;
+            // 提交测验后平台的章节任务点状态会晚几秒才刷新：先等一会儿，能省掉「还有任务点未完成」的弹框
+            await waitTaskPointSettled(C.taskSettleMs);
             const previousStep = stepTitle();
             const previousChapter = chapterKey();
             const previousFrames = Array.from(document.querySelectorAll('iframe')).map((frame) => {
@@ -1207,10 +1385,13 @@
             try { next.click(); } finally { app._clicking = false; }
             let currentStep = '';
             let ready = false;
+            let blockers = 0;
             for (let attempt = 0; attempt < 240; attempt++) {
                 if (stopped) throw new Error('脚本已停止');
                 await sleep(500);
                 if (stopped) throw new Error('脚本已停止');
+                // 平台用自绘弹层问「是否去完成」：点掉它，别在这儿干等
+                if (dismissTaskBlocker()) { blockers++; await sleep(300); if (blockers >= 2) break; continue; }
                 currentStep = stepTitle();
                 const framesChanged = previousFrames.some(({ frame, doc, src }) => {
                     try { return !frame.isConnected || frame.contentDocument !== doc || frame.src !== src; } catch (_) { return !frame.isConnected; }
@@ -1221,7 +1402,11 @@
                 if (attempt >= 2 && ((previousChapter && chapterKey() !== previousChapter) || (framesChanged && currentStep && currentStep !== previousStep))) { ready = true; break; }
                 if (attempt > 0 && attempt % 30 === 0) log(`下一学习步骤仍在加载，已等待 ${attempt / 2} 秒；当前页签：${currentStep || '未显示'}`);
             }
-            if (!ready) throw new Error(`点击“下一节”后等待 120 秒，新学习步骤仍未加载完成；当前页签：${currentStep || '未显示'}`);
+            if (!ready) {
+                // 被平台拦住了，或者点了确实没反应：退到目录跳节，别让整条流程停在这里
+                if (hopByCatalog(blockers ? '平台提示还有任务点未完成' : '点“下一节”后没有跳转')) return;
+                throw new Error(`点击“下一节”后等待 120 秒，新学习步骤仍未加载完成；当前页签：${currentStep || '未显示'}`);
+            }
             stepPending = false;
             app._enterLoading('next');
             progress(currentStep === '学习目标' ? '已进入学习目标，正在准备切换视频。' : '已进入下一学习步骤，正在加载。');
@@ -1229,6 +1414,7 @@
 
         function nextStep() {
             if (stopped || quizBusy || stepPending) return;
+            installTaskGuard();
             if (!findNextButton()) { orig.nextUnit(); return; }
             stepPending = true;
             goToNextStep().catch((error) => {
@@ -1241,6 +1427,7 @@
 
         function advanceChapterTest() {
             if (stopped || quizBusy || stepPending) return;
+            installTaskGuard();
             quizBusy = true;
             const previousChapter = chapterKey();
             progress('正在加载章节测验。');
@@ -1464,6 +1651,7 @@
             blockedPauseCount: 3,       // 同一位置被页面暂停几次判定为“页面要求处理”
             blockedWindowMs: 10000,     // 上述统计的时间窗口
             finishSettleMs: 1500,       // 视频结束后等待任务点状态刷新的时间
+            taskSettleMs: 3000,         // 点“下一节”前等待本章任务点状态刷新的最长时间（提交测验后平台会晚几秒才刷新）
             unitLoadTimeoutMs: 20000,   // 小节加载后多久仍无视频视为“无视频小节”
             maxReloadPerUnit: 3,        // 每个小节最多重载视频次数
             autoAdvanceNoVideo: false,  // 无视频小节是否自动跳过
@@ -5591,6 +5779,7 @@
                         '<div class="xxt-set-label">通用</div>' : '') +
                       SETTING_ITEMS.map(([k, name, desc]) => `<label class="xxt-set-row"><span>${name}<small>${desc}</small></span><input type="checkbox" class="xxt-switch" data-set="${k}"></label>`).join('') +
                       '<div class="xxt-set-actions">' +
+                        (this._mode === 'course' ? '<button type="button" data-k="quizguide" class="xxt-set-btn">上手教程</button>' : '') +
                         '<button type="button" data-k="fbopen" class="xxt-set-btn xxt-fb-entry">反馈问题 / 提建议</button>' +
                         '<button type="button" data-k="histopen" class="xxt-set-btn">更新记录</button>' +
                         '<button type="button" data-k="boardopen" class="xxt-set-btn">留言板</button>' +
