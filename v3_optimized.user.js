@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.6
+// @version      4.6.7
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,10 +25,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.6';
+    const VERSION = '4.6.7';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.7', date: '2026-10-30', items: [
+            '修复：新版 .ncm（密钥段整段加密的那批）原来被判成“解不开”，实际和标准版只差三处——密钥段要整段 AES 解密后再取前缀之后的密钥、密钥流是“只做 KSA 的查表”而不是标准 RC4、封面帧长度要单独跳过。现在 14 个真实样本全部能解出 mp3/flac，元数据里的歌名歌手也能读出来',
+        ] },
         { v: '4.6.6', date: '2026-10-30', items: [
             '修复：遇到新版 .ncm（密钥段被整段加密，派生方式与标准版不同）时给出明确提示，不再抛一句看不懂的错；标准版 .ncm 照常解密。元数据解析兼容新版多出来的 "music:" 包裹',
         ] },
@@ -1600,26 +1603,26 @@
         return out.subarray(0, n);
     }
 
-    // RC4：只取前 256 字节密钥流，NCM 每 0x8000 字节块都用同一段流
-    function ncmKeyStream(keyBytes) {
+    // NCM 的流密码不是标准 RC4 PRGA：只做 KSA，之后按固定公式查表（没有交换步骤）
+    // 算法取自 taurusxin/ncmdump 的 buildKeyBox + Dump，已用真实样本 + ffmpeg 解码验证
+    function ncmKeyBox(keyBytes) {
         const key = toU8(keyBytes);
         if (!key.length) throw new Error('密钥为空');
-        const s = new Uint8Array(256);
-        for (let i = 0; i < 256; i++) s[i] = i;
-        let j = 0;
+        const box = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) box[i] = i;
+        let last = 0, off = 0;
         for (let i = 0; i < 256; i++) {
-            j = (j + s[i] + key[i % key.length]) & 0xFF;
-            const t = s[i]; s[i] = s[j]; s[j] = t;
+            const swap = box[i];
+            const c = (swap + last + key[off]) & 0xFF;
+            off = off + 1 >= key.length ? 0 : off + 1;
+            box[i] = box[c];
+            box[c] = swap;
+            last = c;
         }
-        const out = new Uint8Array(256);
-        let a = 0, b = 0;
-        for (let i = 0; i < 256; i++) {
-            a = (a + 1) & 0xFF;
-            b = (b + s[a]) & 0xFF;
-            const t = s[a]; s[a] = s[b]; s[b] = t;
-            out[i] = s[(s[a] + s[b]) & 0xFF];
-        }
-        return out;
+        // 每 0x8000 字节块都从 i=0 重来，而公式只依赖 (i+1)&0xFF，所以密钥流是 256 字节周期
+        const ks = new Uint8Array(256);
+        for (let j = 0; j < 256; j++) ks[j] = box[(box[j] + box[(box[j] + j) & 0xFF]) & 0xFF];
+        return ks;
     }
 
     // 解密出来的裸流是什么格式：靠文件头判断，不靠扩展名
@@ -1650,22 +1653,10 @@
         p += keyLen;
         const plain = new Uint8Array(keyLen);
         for (let i = 0; i < keyLen; i++) plain[i] = box[i] ^ 0x64;
-        let rc4Key;
-        if (asciiAt(plain, 0, 17) === NCM_KEY_HEAD) {
-            // 标准版：前 17 字节是明文前缀，其后是 AES-128-ECB 加密的 RC4 密钥
-            rc4Key = aesEcbDecrypt(NCM_CORE_KEY, plain.subarray(17));
-        } else {
-            // 变体（新版）：整段密钥被 AES 加密，解开才看到前缀 + 密钥材料，派生方式与标准版不同
-            let whole = null;
-            try { whole = aesEcbDecrypt(NCM_CORE_KEY, plain); } catch (e) { whole = null; }
-            if (whole && asciiAt(whole, 0, 17) === NCM_KEY_HEAD) {
-                const e = new Error('这是新版 .ncm（密钥段整段加密），密钥派生方式和标准版不同，浏览器里解不开；可以先用其他工具转成 mp3/flac 再拖进来');
-                e.drm = true;
-                throw e;
-            }
-            throw new Error('.ncm 密钥段不符合预期（文件可能损坏）');
-        }
-        const ks = ncmKeyStream(rc4Key);
+        // 整段密钥被 AES-128-ECB 加密，解开才看到 "neteasecloudmusic" 前缀，其后就是密钥材料
+        const keyData = aesEcbDecrypt(NCM_CORE_KEY, plain);
+        if (asciiAt(keyData, 0, 17) !== NCM_KEY_HEAD) throw new Error('.ncm 密钥段不符合预期（文件可能损坏）');
+        const ks = ncmKeyBox(keyData.subarray(17));
         const metaLen = u32();
         let meta = null;
         if (metaLen && p + metaLen <= u.length) {
@@ -1682,20 +1673,26 @@
                 meta = JSON.parse(text);
             } catch (e) { meta = null; }
         }
-        p += 4;                     // crc32
-        p += 1;                     // 版本位（0 或 1）
+        p += 5;                     // crc32(4) + 版本位(1)
+        const coverFrameLen = u32();
         const imgLen = u32();
         if (imgLen && p + imgLen <= u.length) p += imgLen;
+        // 封面帧可能比图片本身长（多帧/附加数据），这里按帧长度补齐
+        if (coverFrameLen > imgLen && p + (coverFrameLen - imgLen) <= u.length) p += coverFrameLen - imgLen;
         const audio = u.subarray(p);
         if (!audio.length) throw new Error('.ncm 里没有音频数据');
         const out = new Uint8Array(audio.length);
         for (let off = 0; off < audio.length; off += 0x8000) {
             const n = Math.min(0x8000, audio.length - off);
-            for (let k = 0; k < n; k++) out[off + k] = audio[off + k] ^ ks[k];
+            for (let i = 0; i < n; i++) out[off + i] = audio[off + i] ^ ks[(i + 1) & 0xFF];
         }
         const ext = sniffAudioExt(out);
         if (!ext) throw new Error('解密后不是可识别的音频（可能是新版本 .ncm）');
-        return { buf: out.buffer, ext, meta, title: [meta && meta.musicName, meta && meta.artist].filter(Boolean).join(' - ') };
+        const m = meta || {};
+        const artists = Array.isArray(m.artist)
+            ? m.artist.map((a) => (Array.isArray(a) ? a[0] : a)).filter(Boolean).join('/')
+            : (m.artist || '');
+        return { buf: out.buffer, ext, meta, title: [m.musicName, artists].filter(Boolean).join(' - ') };
     }
 
 
