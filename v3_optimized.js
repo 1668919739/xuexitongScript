@@ -6,10 +6,14 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.4';
+    const VERSION = '4.6.5';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.5', date: '2026-10-30', items: [
+            '新增：网易云 .ncm 加密音乐可以直接拖进「音频转换」，在本机解密成 mp3 / flac 再转码；目标格式和源格式一样时直接输出解密后的原文件，不重新编码。解密用自带的 AES-128 与 RC4 实现，全程在浏览器里，文件不上传',
+            '说明：QQ 音乐 .mflac/.mgg、酷狗 .kgm 等需要原客户端运行时的密钥，浏览器取不到，列表里会写明原因并标「需密钥」，不再当成转换失败',
+        ] },
         { v: '4.6.4', date: '2026-10-30', items: [
             '修复：视频弹题答对后停在「继续学习」按钮上不动——答对后的按钮原先只按「继续」精确匹配，遇到「继续学习」「继续播放」「下一题」都点不到，10 秒后报「提交后仍未关闭」。现在按文字宽松识别并自动点掉；就算脚本没认出题目、你自己手动答的，答完也会自动继续播放',
         ] },
@@ -1479,7 +1483,184 @@
 
     // ================= FLAC 编码（16 位无损，固定预测 + Rice 编码，纯浏览器实现） =================
     // 用法：const enc = flacEncoder(rate, ch, total)；逐块 enc.frame([L, R], n) 得到帧数据，最后把 enc.header() 放在最前面。
-    const ENCRYPTED_MSG = '音乐软件的加密格式，受版权保护，不提供解密转换';
+    // ================= 加密音乐格式：本机解密（网易云 .ncm） =================
+    // 取证对象：sunwoo 音频格式转换器 v1.7.1（D:\sunwoo音频格式转换器\sunwoo.exe）
+    //   · 程序内 crate `sunwoo_decrypto` 提供 ncm / kgm / qmc / kuwo / mg3d / xiami / xmly 各解密入口；
+    //     `sunwoo_frida` 负责注入原客户端进程取运行时密钥（QQ 音乐 ekey、酷狗 key）。
+    //   · 其中 NCM 是纯内置算法，二进制中可直接确认：魔数 "CTENFDAM"、XOR 前缀 "neteasecloudmusic"、
+    //     core key "hzHRAmso5kInbaxW"（68 7A 48 52 41 6D 73 6F 35 6B 49 6E 62 61 78 57）。
+    //   · QQ 音乐 .mflac/.mgg、酷狗 .kgm 依赖上一步的注入密钥，浏览器拿不到，因此这里只解 .ncm，
+    //     其它加密格式给出明确原因，不做假实现。
+    const ENCRYPTED_MSG = '这个加密格式需要原音乐客户端运行时的密钥（QQ 音乐 ekey / 酷狗 key），浏览器里取不到；网易云 .ncm 可以直接解密转换';
+    const NCM_SIG = 'CTENFDAM';
+    const NCM_KEY_HEAD = 'neteasecloudmusic';
+    const NCM_CORE_KEY = new Uint8Array([0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57]);
+    const NCM_META_KEY = new Uint8Array([0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28]);
+
+    const toU8 = (buf) => (buf instanceof Uint8Array ? buf : new Uint8Array(buf));
+    const asciiAt = (u, s, e) => { let t = ''; for (let i = s; i < e && i < u.length; i++) t += String.fromCharCode(u[i]); return t; };
+
+    // 浏览器只提供 CBC/CTR/GCM，没有 ECB 而且 CBC 会强制校验填充，所以自带一份最小 AES-128 解密
+    const AES128_DEC = (() => {
+        const sbox = new Uint8Array(256), inv = new Uint8Array(256);
+        const rotl = (x, n) => ((x << n) | (x >>> (8 - n))) & 0xFF;
+        const xt = (a) => ((a << 1) ^ ((a & 0x80) ? 0x1B : 0)) & 0xFF;
+        let p = 1, q = 1;
+        do {
+            p = (p ^ xt(p)) & 0xFF;
+            q = (q ^ (q << 1)) & 0xFF; q = (q ^ (q << 2)) & 0xFF; q = (q ^ (q << 4)) & 0xFF;
+            if (q & 0x80) q ^= 0x09;
+            sbox[p] = ((q ^ rotl(q, 1) ^ rotl(q, 2) ^ rotl(q, 3) ^ rotl(q, 4)) & 0xFF) ^ 0x63;
+        } while (p !== 1);
+        sbox[0] = 0x63;
+        for (let i = 0; i < 256; i++) inv[sbox[i]] = i;
+        const mul = (a, b) => { let r = 0; while (b) { if (b & 1) r ^= a; a = xt(a); b >>= 1; } return r; };
+        const expand = (key) => {
+            const w = new Uint8Array(176);
+            w.set(key);
+            let rcon = 1;
+            for (let i = 16; i < 176; i += 4) {
+                let t0 = w[i - 4], t1 = w[i - 3], t2 = w[i - 2], t3 = w[i - 1];
+                if (i % 16 === 0) {
+                    const t = t0;
+                    t0 = sbox[t1] ^ rcon; t1 = sbox[t2]; t2 = sbox[t3]; t3 = sbox[t];
+                    rcon = xt(rcon);
+                }
+                w[i] = w[i - 16] ^ t0; w[i + 1] = w[i - 15] ^ t1;
+                w[i + 2] = w[i - 14] ^ t2; w[i + 3] = w[i - 13] ^ t3;
+            }
+            return w;
+        };
+        // 状态按列主序存放：s[r + 4c]
+        const invShiftRows = (s) => {
+            const t = new Uint8Array(16);
+            for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) t[r + 4 * c] = s[r + 4 * ((c - r + 4) % 4)];
+            s.set(t);
+        };
+        const block = (w, inp) => {
+            const s = new Uint8Array(inp);
+            const addKey = (round) => { for (let i = 0; i < 16; i++) s[i] ^= w[round * 16 + i]; };
+            addKey(10);
+            for (let round = 9; round >= 1; round--) {
+                invShiftRows(s);
+                for (let i = 0; i < 16; i++) s[i] = inv[s[i]];
+                addKey(round);
+                for (let c = 0; c < 4; c++) {
+                    const a0 = s[4 * c], a1 = s[4 * c + 1], a2 = s[4 * c + 2], a3 = s[4 * c + 3];
+                    s[4 * c] = mul(a0, 14) ^ mul(a1, 11) ^ mul(a2, 13) ^ mul(a3, 9);
+                    s[4 * c + 1] = mul(a0, 9) ^ mul(a1, 14) ^ mul(a2, 11) ^ mul(a3, 13);
+                    s[4 * c + 2] = mul(a0, 13) ^ mul(a1, 9) ^ mul(a2, 14) ^ mul(a3, 11);
+                    s[4 * c + 3] = mul(a0, 11) ^ mul(a1, 13) ^ mul(a2, 9) ^ mul(a3, 14);
+                }
+            }
+            invShiftRows(s);
+            for (let i = 0; i < 16; i++) s[i] = inv[s[i]] ^ w[i];
+            return s;
+        };
+        return { expand, block };
+    })();
+
+    // AES-128-ECB 解密，末尾按 PKCS7 去填充（NCM 的密钥段与元数据段都是这种）
+    function aesEcbDecrypt(keyBytes, dataBytes) {
+        const key = toU8(keyBytes), data = toU8(dataBytes);
+        if (key.length !== 16) throw new Error('AES-128 密钥应为 16 字节');
+        if (!data.length || data.length % 16) throw new Error('密文长度不是 16 的倍数');
+        const w = AES128_DEC.expand(key);
+        const out = new Uint8Array(data.length);
+        for (let off = 0; off < data.length; off += 16) out.set(AES128_DEC.block(w, data.subarray(off, off + 16)), off);
+        let n = out.length;
+        const pad = out[n - 1];
+        if (pad >= 1 && pad <= 16) {
+            let ok = true;
+            for (let i = n - pad; i < n; i++) if (out[i] !== pad) { ok = false; break; }
+            if (ok) n -= pad;
+        }
+        return out.subarray(0, n);
+    }
+
+    // RC4：只取前 256 字节密钥流，NCM 每 0x8000 字节块都用同一段流
+    function ncmKeyStream(keyBytes) {
+        const key = toU8(keyBytes);
+        if (!key.length) throw new Error('密钥为空');
+        const s = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) s[i] = i;
+        let j = 0;
+        for (let i = 0; i < 256; i++) {
+            j = (j + s[i] + key[i % key.length]) & 0xFF;
+            const t = s[i]; s[i] = s[j]; s[j] = t;
+        }
+        const out = new Uint8Array(256);
+        let a = 0, b = 0;
+        for (let i = 0; i < 256; i++) {
+            a = (a + 1) & 0xFF;
+            b = (b + s[a]) & 0xFF;
+            const t = s[a]; s[a] = s[b]; s[b] = t;
+            out[i] = s[(s[a] + s[b]) & 0xFF];
+        }
+        return out;
+    }
+
+    // 解密出来的裸流是什么格式：靠文件头判断，不靠扩展名
+    function sniffAudioExt(u) {
+        if (u.length > 4 && u[0] === 0x66 && u[1] === 0x4C && u[2] === 0x61 && u[3] === 0x43) return 'flac';
+        if (u.length > 4 && u[0] === 0x4F && u[1] === 0x67 && u[2] === 0x67 && u[3] === 0x53) return 'ogg';
+        if (u.length > 12 && u[0] === 0x52 && u[1] === 0x49 && u[2] === 0x46 && u[3] === 0x46) return 'wav';
+        if (u.length > 3 && u[0] === 0x49 && u[1] === 0x44 && u[2] === 0x33) return 'mp3';
+        if (u.length > 2 && u[0] === 0xFF && (u[1] & 0xE0) === 0xE0) return 'mp3';
+        if (u.length > 8 && asciiAt(u, 4, 8) === 'ftyp') return 'm4a';
+        return '';
+    }
+
+    // .ncm 结构：魔数(8) + 间隔(2) + 密钥长度(4) + 密钥(长度，逐字节 ^0x64) + 元数据长度(4) + 元数据(^0x63)
+    //            + crc(4) + 版本位(1) + 封面长度(4) + 封面 + 音频（每 0x8000 字节用 RC4 密钥流异或）
+    async function ncmDecrypt(buf) {
+        const u = toU8(buf);
+        if (u.length < 64 || asciiAt(u, 0, 8) !== NCM_SIG) throw new Error('不是有效的 .ncm 文件');
+        let p = 10;
+        const u32 = () => {
+            const v = (u[p] | (u[p + 1] << 8) | (u[p + 2] << 16) | (u[p + 3] << 24)) >>> 0;
+            p += 4;
+            return v;
+        };
+        const keyLen = u32();
+        if (!keyLen || p + keyLen > u.length) throw new Error('.ncm 头部损坏（密钥段越界）');
+        const box = u.subarray(p, p + keyLen);
+        p += keyLen;
+        const plain = new Uint8Array(keyLen);
+        for (let i = 0; i < keyLen; i++) plain[i] = box[i] ^ 0x64;
+        if (asciiAt(plain, 0, 17) !== NCM_KEY_HEAD) throw new Error('.ncm 密钥段前缀不符合预期');
+        const rc4Key = await aesEcbDecrypt(NCM_CORE_KEY, plain.subarray(17));
+        const ks = ncmKeyStream(rc4Key);
+        const metaLen = u32();
+        let meta = null;
+        if (metaLen && p + metaLen <= u.length) {
+            const mbox = u.subarray(p, p + metaLen);
+            p += metaLen;
+            try {
+                const raw = new Uint8Array(metaLen);
+                for (let i = 0; i < metaLen; i++) raw[i] = mbox[i] ^ 0x63;
+                const bin = atob(asciiAt(raw, 22, raw.length));      // 去掉 "163 key(Don't modify):"
+                const m = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) m[i] = bin.charCodeAt(i);
+                meta = JSON.parse(new TextDecoder().decode(await aesEcbDecrypt(NCM_META_KEY, m)));
+            } catch (e) { meta = null; }
+        }
+        p += 4;                     // crc32
+        p += 1;                     // 版本位（0 或 1）
+        const imgLen = u32();
+        if (imgLen && p + imgLen <= u.length) p += imgLen;
+        const audio = u.subarray(p);
+        if (!audio.length) throw new Error('.ncm 里没有音频数据');
+        const out = new Uint8Array(audio.length);
+        for (let off = 0; off < audio.length; off += 0x8000) {
+            const n = Math.min(0x8000, audio.length - off);
+            for (let k = 0; k < n; k++) out[off + k] = audio[off + k] ^ ks[k];
+        }
+        const ext = sniffAudioExt(out);
+        if (!ext) throw new Error('解密后不是可识别的音频（可能是新版本 .ncm）');
+        return { buf: out.buffer, ext, meta, title: [meta && meta.musicName, meta && meta.artist].filter(Boolean).join(' - ') };
+    }
+
 
     // ================= 唱片机 · RouteCC 的歌单 =================
     // 只放歌名和歌手，不附带任何音频：点击后在网易云音乐搜索这首歌，用用户自己的网易云播放。
@@ -4102,8 +4283,9 @@
                 if (needConv.length) this._convQueue(needConv, `有 ${needConv.length} 个文件不能直接播放（视频或特殊格式），已放进下面的列表，点「开始转换」转成 MP3 后会自动加入唱片机`);
             },
             // ================= 唱片机 · 音频格式转换 =================
-            // 全部在本机浏览器里完成：用浏览器自带的解码器读出声音，再编码成 MP3（lamejs）或 WAV，不上传任何文件。
-            // 音乐软件的加密格式（如 .ncm / .qmc / .kgm）属于版权保护，不提供转换。
+            // 全部在本机浏览器里完成：用浏览器自带的解码器读出声音，再编码成 MP3（lamejs）、FLAC 或 WAV，不上传任何文件。
+            // 网易云 .ncm 会在本机直接解密（见上方 ncmDecrypt）；解密后的原始格式与目标格式一致时直接输出，不重新编码。
+            // QQ 音乐 .mflac/.mgg、酷狗 .kgm 等需要原客户端运行时密钥，浏览器取不到，列表里会写明原因。
             // 功能栏「音频转换」：直接打开唱片机的转换页
             // 功能栏的「唱片机」「音频转换」共用一个面板：点当前正在显示的页面就关闭，点另一个就切过去
             _showMusic(view) {
@@ -4145,8 +4327,8 @@
                 let enc = 0;
                 for (const f of files) {
                     if (!f) continue;
-                    // 音乐软件的加密下载格式（网易云 .ncm、QQ 音乐 .qmc、酷狗 .kgm 等）受版权保护，不提供解密：列出来并说明原因
-                    if (this._convEncrypted(f.name)) {
+                    // 加密格式：.ncm 本机自动解密后照常转换；其它（QQ 音乐 / 酷狗 / 咪咕等）需要原客户端运行时密钥，先列出来写明原因
+                    if (this._convEncrypted(f.name) && !/\.ncm$/i.test(f.name || '')) {
                         enc++;
                         this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'drm', pct: 0, msg: ENCRYPTED_MSG });
                         continue;
@@ -4155,7 +4337,7 @@
                     if (/\.lrc$/i.test(f.name || '')) { this._convLrc.set(this._convKey(f), f); this._convLrc.set(this._convKey({ name: f.name }), f); continue; }
                     this._convQ.push({ id: Math.random().toString(36).slice(2, 9), file: f, name: f.name || '未命名', status: 'wait', pct: 0, msg: '' });
                 }
-                this._convHint = enc ? `有 ${enc} 个是音乐软件的加密下载格式（如网易云 .ncm），受版权保护，无法转换。请在原音乐软件里播放，或从提供普通格式下载的正规渠道获取 MP3 / FLAC 后再转换` : (hint || '');
+                this._convHint = enc ? `有 ${enc} 个加密格式需要原音乐客户端运行时的密钥（QQ 音乐 .mflac/.mgg、酷狗 .kgm 等），浏览器里取不到，转换不了。网易云 .ncm 可以直接拖进来，会自动解密` : (hint || '');
                 this._convOpen = true;
                 this._renderConv();
                 if (this._sideEl) this._renderSide();
@@ -4184,12 +4366,29 @@
             // 不受后台限速影响的让步，转换长音频时界面不卡
             _yield() { return new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); }); },
             async _convOne(it, o, seq) {
-                if (this._convEncrypted(it.name)) {
+                const encName = String(it.name || '');
+                if (this._convEncrypted(encName) && !/\.ncm$/i.test(encName)) {
                     const e = new Error(ENCRYPTED_MSG); e.drm = true; throw e;
                 }
                 it.msg = '读取中…'; this._renderConv();
-                const data = await it.file.arrayBuffer();
+                let data = await it.file.arrayBuffer();
                 if (this._convAbort) throw new Error('已停止');
+                // 加密格式先在本机解密成普通音频，再走后面的解码 / 转码
+                let srcExt = '';
+                if (/\.ncm$/i.test(encName)) {
+                    it.msg = '解密中…'; this._renderConv();
+                    const dec = await ncmDecrypt(data);
+                    data = dec.buf;
+                    srcExt = dec.ext;
+                    it.msg = dec.title ? `已解密：${dec.title}` : '已解密';
+                }
+                const stem0 = encName.replace(/\.[^.]+$/, '') || '未命名';
+                const base0 = o.num ? `${String(seq).padStart(2, '0')} ${stem0}` : stem0;
+                // 目标格式和源格式一样：直接给出解密后的原文件，不重新编码（无损，也快得多）
+                if (srcExt && !o.norm && o.fmt === srcExt) {
+                    it.msg = `已解密为 ${srcExt.toUpperCase()}，未重新编码`;
+                    return new File([data], base0 + '.' + srcExt, { type: 'audio/' + srcExt });
+                }
                 it.msg = '解码中…'; this._renderConv();
                 // 车载 MP3：固定 44.1kHz、立体声、恒定码率，兼容大多数车机和老播放器
                 const car = o.fmt === 'car';
@@ -4324,7 +4523,7 @@
                 if (!this._convOpen) return;
                 const esc = (t) => this._esc(t);
                 const list = this._convQ || [];
-                const label = { wait: '等待转换', run: '转换中', done: '完成', fail: '失败', drm: '无法转换' };
+                const label = { wait: '等待转换', run: '转换中', done: '完成', fail: '失败', drm: '需密钥' };
                 q('convhint').textContent = this._convHint || '';
                 q('convhint').style.display = this._convHint ? 'block' : 'none';
                 q('convlist').innerHTML = list.length ? list.map((it) =>
