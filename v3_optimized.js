@@ -6,10 +6,13 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.5';
+    const VERSION = '4.6.6';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     const CHANGELOG = [
+        { v: '4.6.6', date: '2026-10-30', items: [
+            '修复：遇到新版 .ncm（密钥段被整段加密，派生方式与标准版不同）时给出明确提示，不再抛一句看不懂的错；标准版 .ncm 照常解密。元数据解析兼容新版多出来的 "music:" 包裹',
+        ] },
         { v: '4.6.5', date: '2026-10-30', items: [
             '新增：网易云 .ncm 加密音乐可以直接拖进「音频转换」，在本机解密成 mp3 / flac 再转码；目标格式和源格式一样时直接输出解密后的原文件，不重新编码。解密用自带的 AES-128 与 RC4 实现，全程在浏览器里，文件不上传',
             '说明：QQ 音乐 .mflac/.mgg、酷狗 .kgm 等需要原客户端运行时的密钥，浏览器取不到，列表里会写明原因并标「需密钥」，不再当成转换失败',
@@ -1628,8 +1631,21 @@
         p += keyLen;
         const plain = new Uint8Array(keyLen);
         for (let i = 0; i < keyLen; i++) plain[i] = box[i] ^ 0x64;
-        if (asciiAt(plain, 0, 17) !== NCM_KEY_HEAD) throw new Error('.ncm 密钥段前缀不符合预期');
-        const rc4Key = await aesEcbDecrypt(NCM_CORE_KEY, plain.subarray(17));
+        let rc4Key;
+        if (asciiAt(plain, 0, 17) === NCM_KEY_HEAD) {
+            // 标准版：前 17 字节是明文前缀，其后是 AES-128-ECB 加密的 RC4 密钥
+            rc4Key = aesEcbDecrypt(NCM_CORE_KEY, plain.subarray(17));
+        } else {
+            // 变体（新版）：整段密钥被 AES 加密，解开才看到前缀 + 密钥材料，派生方式与标准版不同
+            let whole = null;
+            try { whole = aesEcbDecrypt(NCM_CORE_KEY, plain); } catch (e) { whole = null; }
+            if (whole && asciiAt(whole, 0, 17) === NCM_KEY_HEAD) {
+                const e = new Error('这是新版 .ncm（密钥段整段加密），密钥派生方式和标准版不同，浏览器里解不开；可以先用其他工具转成 mp3/flac 再拖进来');
+                e.drm = true;
+                throw e;
+            }
+            throw new Error('.ncm 密钥段不符合预期（文件可能损坏）');
+        }
         const ks = ncmKeyStream(rc4Key);
         const metaLen = u32();
         let meta = null;
@@ -1642,7 +1658,9 @@
                 const bin = atob(asciiAt(raw, 22, raw.length));      // 去掉 "163 key(Don't modify):"
                 const m = new Uint8Array(bin.length);
                 for (let i = 0; i < bin.length; i++) m[i] = bin.charCodeAt(i);
-                meta = JSON.parse(new TextDecoder().decode(await aesEcbDecrypt(NCM_META_KEY, m)));
+                let text = new TextDecoder().decode(aesEcbDecrypt(NCM_META_KEY, m));
+                if (text.startsWith('music:')) text = text.slice(6);   // 新版会多一层 "music:" 包裹
+                meta = JSON.parse(text);
             } catch (e) { meta = null; }
         }
         p += 4;                     // crc32
