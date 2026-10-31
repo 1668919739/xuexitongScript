@@ -1803,10 +1803,10 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
         const want = XxtZiwei.SI_HUA_TABLE[stem];
         const marks = [...document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-hua.ov')].map((x) => x.textContent);
         const tagCell = document.querySelector('#xxt-v41-ziwei .zw-cell.ovp');
-        return { marks, want, tagBr: tagCell && Number(tagCell.getAttribute('data-br')), dxBr: dx.palaceBranch, tag: tagCell && tagCell.querySelector('.zw-tag').textContent, info: document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent };
+        return { marks, want, tagBr: tagCell && Number(tagCell.getAttribute('data-br')), dxBr: dx.palaceBranch, tag: tagCell && tagCell.querySelector('.zw-rel').textContent, info: document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent, shen: document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-shen').length };
     });
-    assert(v1.marks.sort().join() === ['限禄', '限权', '限科', '限忌'].sort().join() && v1.tagBr === v1.dxBr && /限命/.test(v1.tag), `大限叠加不对：${JSON.stringify(v1)}`);
-    assert(v1.want.every((n) => v1.info.includes(n)) && /当前大限/.test(v1.info), `大限说明不对：${v1.info}`);
+    assert(v1.marks.sort().join() === ['限禄', '限权', '限科', '限忌'].sort().join() && v1.tagBr === v1.dxBr && v1.tag === '限命', `大限叠加不对：${JSON.stringify(v1)}`);
+    assert(v1.want.every((n) => v1.info.includes(n)) && /（当前）/.test(v1.info) && v1.shen === 12, `大限说明 / 十二神不对：${JSON.stringify(v1)}`);
     // 翻到下一个大限
     const before = await p.evaluate(() => app._zwDx);
     await p.click('#xxt-v41-ziwei [data-zact=dx][data-step="1"]'); await sleep(200);
@@ -1814,10 +1814,29 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
     // 流年 2026 丙午：天同禄 天机权 文昌科 廉贞忌，流年命宫在午
     await p.evaluate(() => { app._zwYear = 2026; });
     await p.click('#xxt-v41-ziwei [data-zact=view][data-v=ln]'); await sleep(200);
-    const v2 = await p.evaluate(() => ({ info: document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent, tagBr: Number(document.querySelector('#xxt-v41-ziwei .zw-cell.ovp')?.getAttribute('data-br')), marks: document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-hua.ov').length }));
-    assert(/2026 丙午年/.test(v2.info) && /虚岁 37/.test(v2.info) && /天同化禄/.test(v2.info) && /廉贞化忌/.test(v2.info) && v2.tagBr === 6 && v2.marks === 4, `流年不对：${JSON.stringify(v2)}`);
+    const v2 = await p.evaluate(() => ({ info: document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent, tagBr: Number(document.querySelector('#xxt-v41-ziwei .zw-cell.ovp')?.getAttribute('data-br')), marks: [...document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-hua.ov')].map((x) => x.textContent), sub: !!document.querySelector('#xxt-v41-ziwei .zw-views.sub') }));
+    assert(/2026 丙午年/.test(v2.info) && /虚岁 37/.test(v2.info) && /年丙：天同禄 天机权 文昌科 廉贞忌/.test(v2.info) && v2.tagBr === 6 && v2.sub, `流年不对：${JSON.stringify(v2)}`);
+    assert(v2.marks.length === 8 && v2.marks.filter((x) => x[0] === '限').length === 4 && v2.marks.filter((x) => x[0] === '年').length === 4, `流年应叠加「限」「年」两层四化：${v2.marks.join()}`);
     await p.click('#xxt-v41-ziwei [data-zact=ln][data-step="1"]'); await sleep(200);
     assert(/2027 丁未年/.test(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent)), '下一年按钮没生效');
+    // 小限 / 流月 / 流日 / 流时：各层命宫、宫名重排、分层四化（规则已与原站对拍）
+    await p.evaluate(() => { app._zwYear = 2026; app._zwMonth = 9; app._zwDay = 22; app._zwHour = 8; });
+    const lv = async (v) => { await p.click(`#xxt-v41-ziwei [data-zact=view][data-v=${v}]`); await sleep(200); return p.evaluate(() => ({ ming: Number(document.querySelector('#xxt-v41-ziwei .zw-cell.ovp')?.getAttribute('data-br')), rel: [...document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-rel')].length, tags: [...new Set([...document.querySelectorAll('#xxt-v41-ziwei .zw-cell .zw-hua.ov')].map((x) => x.textContent[0]))].sort().join(''), info: document.querySelector('#xxt-v41-ziwei .zw-vinfo').textContent })); };
+    const xx = await lv('xx');
+    assert(xx.rel === 12 && /小限命宫在/.test(xx.info), `小限视图不对：${JSON.stringify(xx)}`);
+    const ly = await lv('ly');
+    assert(ly.rel === 12 && /流月命宫在/.test(ly.info) && /九月/.test(ly.info) && /月/.test(ly.tags), `流月视图不对：${JSON.stringify(ly)}`);
+    await p.click('#xxt-v41-ziwei [data-zact=ly][data-step="1"]'); await sleep(200);
+    assert(await p.evaluate(() => app._zwMonth === 10 && app._zwView === 'ly'), '下一月按钮没生效');
+    const lr = await lv('lr');
+    assert(/流日命宫在/.test(lr.info) && /日/.test(lr.tags), `流日视图不对：${JSON.stringify(lr)}`);
+    await p.evaluate(() => { app._zwMonth = 12; app._zwDay = 30; app._zwHour = 11; }); await p.click('#xxt-v41-ziwei [data-zact=view][data-v=ls]'); await sleep(150);
+    await p.click('#xxt-v41-ziwei [data-zact=ls][data-step="1"]'); await sleep(200);
+    const roll = await p.evaluate(() => [app._zwYear, app._zwMonth, app._zwDay, app._zwHour].join('-'));
+    assert(roll === '2027-1-1-0', `流时跨日跨年进位不对（腊月三十亥时的下一个时辰应是次年正月初一子时）：${roll}`);
+    const ls = await lv('ls');
+    assert(/流时命宫在/.test(ls.info) && /时/.test(ls.tags), `流时视图不对：${JSON.stringify(ls)}`);
+    await p.click('#xxt-v41-ziwei [data-zact=view][data-v=ln]'); await sleep(150);
     // 详情里也显示叠加的四化
     await p.click('#xxt-v41-ziwei .zw-cell[data-br="9"]'); await sleep(200);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-detail').querySelectorAll('.zw-hua.ov').length) >= 1, '宫位详情没有显示流年四化');
@@ -1939,7 +1958,7 @@ test('紫微斗数 · 合盘：三个标签切换；甲乙双方表单（可从�
     await p.click('#xxt-v41-ziwei [data-h=rel] [data-v=partner]'); await sleep(100);
     await p.click('#xxt-v41-ziwei [data-h=go]'); await sleep(500);
     const r2 = await p.evaluate(() => ({ secs: [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-sec')].map((x) => x.firstChild.textContent.trim()), rows: [...document.querySelectorAll('#xxt-v41-ziwei .zw-htable tbody th')].map((x) => x.textContent).join() }));
-    assert(r2.rows === '命宫,官禄,兄弟,仆役,福德' && !r2.secs.includes('夫妻宫传统断语') && !r2.secs.includes('夫妻宫 ↔ 命宫'), `合伙合盘不对：${JSON.stringify(r2)}`);
+    assert(r2.rows === '命宫,官禄,兄弟,交友,福德' && !r2.secs.includes('夫妻宫传统断语') && !r2.secs.includes('夫妻宫 ↔ 命宫'), `合伙合盘不对：${JSON.stringify(r2)}`);
     // AI：没填 Key 时就地填，填完自动生成
     await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=ai]'); await sleep(200);
     assert(calls.length === 0 && await p.$('#xxt-v41-ziwei [data-z=pane-hm] [data-z=aikey]'), '没填 Key 时应先让填 Key');

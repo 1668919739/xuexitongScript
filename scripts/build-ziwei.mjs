@@ -28,7 +28,10 @@ const iztroVer = JSON.parse(readFileSync(resolve(src, 'node_modules/iztro/packag
 const lunarVer = JSON.parse(readFileSync(resolve(src, 'node_modules/lunar-javascript/package.json'), 'utf8')).version;
 
 const entry = `
-import { generateChart } from './lib/ziwei/algorithm';
+import { generateChart, resolveEffectiveLunarDate } from './lib/ziwei/algorithm';
+import { BOSHI_SHEN, JIANG_QIAN_SHEN, SUI_QIAN_SHEN, boshiShenByStem, jiangQianShenByBranch, suiQianShenByBranch } from './lib/ziwei/shier-shen';
+import { getLiuYueSiHua, getLiuRiSiHua, getLiuShiSiHua } from './lib/ziwei/sihua';
+import { getDaXianIndexForYear, getChildhoodDaXianPalace, getChildhoodYears } from './lib/ziwei/yunxian-context';
 import { detectPatterns, getMingGongSummary } from './lib/ziwei/patterns';
 import { lunarToSolar, leapMonthOfLunarYear, lunarMonthDayCount } from './lib/ziwei/lunar-solar';
 import { shiftGregorianDate, isValidGregorianDate, calculateTrueSolarTime, resolveZiweiDayOffset } from './lib/ziwei/true-solar-time';
@@ -36,10 +39,12 @@ import { PROVINCES } from './lib/ziwei/cities';
 import { isChinaDST } from './lib/ziwei/dst-cn';
 import { shiftClock } from './lib/ziwei/clock-adjust';
 import { STAR_IN_FUQI_GU, SIHUA_IN_FUQI_GU, HEMING_METHODOLOGY, MARRIAGE_STARS_BRIEF } from './lib/ziwei/heming-knowledge';
-import { Solar } from 'lunar-javascript';
+import { Solar, Lunar } from 'lunar-javascript';
 import { STEMS, BRANCHES, STAR_DESCRIPTIONS, SI_HUA_TABLE } from './lib/ziwei/constants';
 // 公历 → 农历（小六壬用）：month 为本月序数，闰月另给 leap
 const solarToLunar = (y, m, d) => { const l = Solar.fromYmd(y, m, d).getLunar(); const mm = l.getMonth(); return { year: l.getYear(), month: Math.abs(mm), day: l.getDay(), leap: mm < 0 }; };
+// 农历日 → 日柱干支索引（流日四化、流日十二神用）
+const lunarDayGanZhi = (y, m, d, leap) => { const l = Lunar.fromYmd(y, leap ? -m : m, d); return { gan: '甲乙丙丁戊己庚辛壬癸'.indexOf(l.getDayGan()), zhi: '子丑寅卯辰巳午未申酉戌亥'.indexOf(l.getDayZhi()) }; };
 globalThis.XxtZiwei = {
   version: ${JSON.stringify(commit.slice(0, 7))},
   generateChart, detectPatterns, getMingGongSummary,
@@ -47,6 +52,8 @@ globalThis.XxtZiwei = {
   shiftGregorianDate, isValidGregorianDate, calculateTrueSolarTime, resolveZiweiDayOffset,
   PROVINCES, isChinaDST, shiftClock, STEMS, BRANCHES, STAR_DESCRIPTIONS, SI_HUA_TABLE,
   STAR_IN_FUQI_GU, SIHUA_IN_FUQI_GU, HEMING_METHODOLOGY, MARRIAGE_STARS_BRIEF, solarToLunar,
+  resolveEffectiveLunarDate, BOSHI_SHEN, JIANG_QIAN_SHEN, SUI_QIAN_SHEN, boshiShenByStem, jiangQianShenByBranch, suiQianShenByBranch,
+  getLiuYueSiHua, getLiuRiSiHua, getLiuShiSiHua, getDaXianIndexForYear, getChildhoodDaXianPalace, getChildhoodYears, lunarDayGanZhi,
 };
 `;
 

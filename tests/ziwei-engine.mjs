@@ -221,8 +221,11 @@ console.log('合盘（_zwHmFacts / _zwHmPrompt）');
     if (rel && mf && mp) {
         const o = vm.runInNewContext(`${rel.trim()}\n({ REL: ZIWEI_REL, ${mf[0].trim()} ${mp[0].trim()} })`);
         ok(o.REL.map((x) => x[1]).join('') === '感情合伙上下级朋友', '关系类型：感情 合伙 上下级 朋友（与原站一致）');
-        const A = { chart: Z.generateChart({ year: 1990, month: 5, day: 15, hour: 6, gender: 'male' }), name: '张三', unknown: false };
-        const B = { chart: Z.generateChart({ year: 1992, month: 8, day: 3, hour: 3, gender: 'female' }), name: '李四', unknown: false };
+        const nm = /\n(\s*)_zwNormChart\(chart, patterns\) \{[\s\S]*?\n\1\},/.exec(src);
+        const N = vm.runInNewContext(`({${nm[0].trim()}})`);
+        const A = { chart: N._zwNormChart(Z.generateChart({ year: 1990, month: 5, day: 15, hour: 6, gender: 'male' })), name: '张三', unknown: false };
+        const B = { chart: N._zwNormChart(Z.generateChart({ year: 1992, month: 8, day: 3, hour: 3, gender: 'female' })), name: '李四', unknown: false };
+        ok(A.chart.palaces.some((p) => p.name === '交友') && !A.chart.palaces.some((p) => p.name === '仆役'), '宫名「仆役」显示为「交友」（与原站一致）');
         const f = o._zwHmFacts(A, B, 'love', Z);
         // 四化互入：每颗星在对方盘上所在的宫，必须和对方盘一致
         const where = (c, n) => (c.palaces.find((p) => p.stars.some((x) => x.name === n)) || {}).name;
@@ -245,7 +248,7 @@ console.log('合盘（_zwHmFacts / _zwHmPrompt）');
         const f4 = o._zwHmFacts(fake(['天相'], []), fake(['巨门'], []), 'love', Z);
         ok(f4.compat.some((x) => x.pair === '天相 + 任何星'), '速判表：天相 + 任何星');
         const fp = o._zwHmFacts(A, B, 'partner', Z);
-        ok(fp.rows.map((r) => r.name).join() === '命宫,官禄,兄弟,仆役,福德' && !fp.sunMoon.length && !fp.fuqi.length, '合伙看命宫、官禄、兄弟、仆役、福德，不看夫妻宫断语');
+        ok(fp.rows.map((r) => r.name).join() === '命宫,官禄,兄弟,交友,福德' && !fp.sunMoon.length && !fp.fuqi.length, '合伙看命宫、官禄、兄弟、交友、福德，不看夫妻宫断语');
         const pr = o._zwHmPrompt(A, B, fp, Z.HEMING_METHODOLOGY);
         ok(/「合伙」/.test(pr.user) && /【甲方（张三）】/.test(pr.user) && /【乙方（李四）】/.test(pr.user) && /甲方生年四化落入乙方/.test(pr.user), '合盘提示词含双方命盘与对照结果');
         ok(/不要按婚恋来解读/.test(pr.system) && /不要原样引用其中的引文/.test(pr.system) && /生离死别/.test(pr.system) && !/### 十、/.test(pr.system), '提示词规则：非感情不按婚恋解读、不引用原话、不做绝对化断言，背景去掉名言汇总');
@@ -271,22 +274,98 @@ console.log('与原项目源码对拍（tests/fixtures/ziwei-upstream.json，由
         solar.push([r.hour, r.minute, r.branch, r.dayOffset, Z.resolveZiweiDayOffset(r, 'next-day')].join(','));
     }
     ok(solar.length === up.solar.length && solar.every((x, i) => x === up.solar[i]), `${solar.length} 组真太阳时换算与原项目一致`);
-    // 大限 / 流年叠加：浮窗的 _zwOverlay 与原项目 getDaXianSiHua / getLiuNianSiHua 一致
-    const mo = /\n(\s*)_zwOverlay\(c\) \{[\s\S]*?\n\1\},/.exec(src);
-    if (mo) {
-        const app = vm.runInNewContext(`({ ${mo[0].trim()} })`, { window: { XxtZiwei: Z } });
+    // 大限 / 流年四化：浮窗的 _zwYunxian 与原项目 getDaXianSiHua / getLiuNianSiHua 一致
+    const my = /\n(\s*)_zwYunxian\(c, s, Z\) \{[\s\S]*?\n\1\},/.exec(src);
+    if (my) {
+        const app = vm.runInNewContext(`({ ${my[0].trim()} })`);
         const ST = '甲乙丙丁戊己庚辛壬癸';
-        const fmt = (o) => { const by = {}; for (const [n, h] of Object.entries(o.map)) by[h] = n; return ST[o.stem] + ['禄', '权', '科', '忌'].map((h) => by[h]).join(''); };
+        const fmt = (l) => { const by = {}; for (const [n, h] of Object.entries(l.map)) by[h] = n; return ST[l.stem] + ['禄', '权', '科', '忌'].map((h) => by[h]).join(''); };
         let dBad = 0;
         up.daxian.forEach((want, i) => {
             const ch = Z.generateChart(up.cases[i]);
-            const got = ch.daXians.map((_, k) => { app._zwView = 'dx'; app._zwDx = k; return fmt(app._zwOverlay(ch)); }).join('|');
+            const got = ch.daXians.map((_, k) => fmt(app._zwYunxian(ch, { view: 'dx', dx: k, year: 2026 }, Z).layers[0])).join('|');
             if (got !== want) dBad++;
         });
+        const ch0 = Z.generateChart(up.cases[0]);
         let lBad = 0;
-        up.liunian.forEach((want, i) => { app._zwView = 'ln'; app._zwYear = 1900 + i; if (fmt(app._zwOverlay({})) !== want) lBad++; });
+        up.liunian.forEach((want, i) => { const y = app._zwYunxian(ch0, { view: 'ln', year: 1900 + i }, Z); if (fmt(y.layers.find((l) => l.tag === '年')) !== want) lBad++; });
         ok(dBad === 0 && lBad === 0, `大限四化（${up.daxian.length} 张盘 × 12 限）与流年四化（1900–2100）与原项目运限函数一致`);
-    } else ok(false, '抽到 _zwOverlay');
+    } else ok(false, '抽到 _zwYunxian');
+}
+
+console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 ouranic.cn 登录后读取）');
+{
+    const site = JSON.parse(readFileSync(resolve(root, 'tests/fixtures/ziwei-site.json'), 'utf8'));
+    const grab = (re) => { const m = re.exec(src); if (!m) throw new Error('缺少 ' + re); return m[0].trim(); };
+    const app = vm.runInNewContext(`({ ${grab(/\n(\s*)_zwYunxian\(c, s, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwRelabel\(ming, branch\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwShen\(c, anchor, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwNormChart\(chart, patterns\) \{[\s\S]*?\n\1\},/)} })`);
+    const BR = '子丑寅卯辰巳午未申酉戌亥', ST = '甲乙丙丁戊己庚辛壬癸';
+    for (const c of site.charts) {
+        const ch = app._zwNormChart(Z.generateChart(c.birth));
+        const shen = app._zwShen(ch, ch.lunarInfo.yearBranch, Z);
+        let bad = [];
+        for (const [br, cell] of Object.entries(c.cells)) {
+            const b = BR.indexOf(br), p = ch.palaces.find((x) => x.branch === b);
+            if (shen[b].join() !== cell.shen.join()) bad.push(`${br} 十二神 ${shen[b].join('')}≠${cell.shen.join('')}`);
+            if (p.name !== cell.name) bad.push(`${br} 宫名 ${p.name}≠${cell.name}`);
+            if (ST[p.stem] + br !== cell.gz || p.daXianAge.join('-') !== cell.age) bad.push(`${br} 干支/大限`);
+        }
+        ok(!bad.length, `原站 ${c.form.y}-${c.form.m}-${c.form.d} ${c.form.clock}${c.form.place ? ' ' + c.form.place : ''}：12 宫宫名、干支、大限、博士/将前/岁前十二神一致${bad.length ? ' ' + bad.slice(0, 3).join('；') : ''}`);
+    }
+    const v = site.views, ch = app._zwNormChart(Z.generateChart(site.charts[0].birth));
+    for (const view of ['dx', 'ln', 'xx', 'ly', 'lr', 'ls']) {
+        const dxIdx = ch.daXians.findIndex((d) => 2026 - ch.lunarInfo.lunarYear + 1 >= d.startAge && 2026 - ch.lunarInfo.lunarYear + 1 <= d.endAge);
+        const y = app._zwYunxian(ch, { view, dx: dxIdx, ...v.sel }, Z);
+        const names = Object.entries(v.names[view]).every(([br, n]) => app._zwRelabel(y.ming, BR.indexOf(br)) === n);
+        const shen = app._zwShen(ch, y.shenAnchor, Z);
+        const shenOk = Object.entries(v.shen[view]).every(([br, ns]) => shen[BR.indexOf(br)].join() === ns.join());
+        ok(BR[y.ming] === v.ming[view] && names && shenOk, `运限「${{ dx: '大限', ln: '流年', xx: '小限', ly: '流月', lr: '流日', ls: '流时' }[view]}」：命宫在${BR[y.ming]}（原站${v.ming[view]}），12 宫宫名重排${names ? '一致' : '不一致'}，十二神${shenOk ? '一致' : '不一致'}`);
+        if (view === 'xx') {
+            const ages = Object.entries(v.xxAges).every(([br, as]) => as.every((a) => ((y.xxStart + y.xxDir * (a - 1)) % 12 + 12) % 12 === BR.indexOf(br)));
+            ok(ages, '小限岁数分布与原站一致');
+        }
+        if (view === 'ly') ok(y.layers.map((l) => l.tag + ST[l.stem]).join() === `限${v.lyHua['限']},年${v.lyHua['年']},月${v.lyHua['月']}`, `流月四化分层：${y.layers.map((l) => l.tag + ST[l.stem]).join(' ')}（原站 限丁 年丙 月戊）`);
+    }
+
+    // 第 5 张盘：7 个视图的完整盘面（含各层四化标记）
+    {
+        const v2 = site.views2, b5 = site.charts[4].birth;
+        const app2 = vm.runInNewContext(`({ ${grab(/\n(\s*)_zwYunxian\(c, s, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwRelabel\(ming, branch\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwShen\(c, anchor, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwNormChart\(chart, patterns\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwHuaWindow\(layers\) \{[\s\S]*?\n\1\},/)} })`);
+        const c5 = app2._zwNormChart(Z.generateChart(b5));
+        const natal = {}; for (const p of c5.palaces) for (const x of p.stars) if (x.siHua) natal[x.name] = x.siHua;
+        const reC = /(\d+)–(\d+)[▸●]?([甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥])(命宫|兄弟|夫妻|子女|财帛|疾厄|迁移|交友|官禄|田宅|福德|父母)(·命)?(·身)?/g;
+        const VN = { dx: '大限', ln: '流年', xx: '小限', ly: '流月', lr: '流日', ls: '流时' };
+        for (const view of ['ming', 'dx', 'ln', 'xx', 'ly', 'lr', 'ls']) {
+            const yx = app2._zwYunxian(c5, { view, dx: c5.currentDaXianIndex, ...v2.sel }, Z);
+            const win = app2._zwHuaWindow(yx.layers);
+            const shen = app2._zwShen(c5, yx.shenAnchor, Z);
+            const t = v2.text[view];
+            let last = 0, m, starN = 0; const bad = [];
+            reC.lastIndex = 0;
+            while ((m = reC.exec(t))) {
+                let body = t.slice(last, m.index).replace(/[●▸]$/, ''); last = reC.lastIndex;   // ● 为原站「当前大限」标记
+                const br = BR.indexOf(m[3][1]);
+                // 宫名重排：「流年兄弟宫」这样的前缀
+                if (view !== 'ming') {
+                    const pre = new RegExp('^' + VN[view] + '(命宫|兄弟宫|夫妻宫|子女宫|财帛宫|疾厄宫|迁移宫|交友宫|官禄宫|田宅宫|福德宫|父母宫)').exec(body);
+                    if (!pre || pre[1].replace(/宫$/, '') !== app2._zwRelabel(yx.ming, br).replace(/宫$/, '')) bad.push(`${m[3]} 宫名 ${pre && pre[1]}≠${app2._zwRelabel(yx.ming, br)}`);
+                    if (pre) body = body.slice(pre[0].length);
+                }
+                // 十二神：宫格末尾三个
+                if (!body.endsWith(shen[br].join(''))) bad.push(`${m[3]} 十二神≠${shen[br].join('')}`);
+                // 四化标记
+                const p = c5.palaces.find((q) => q.branch === br);
+                for (const x of p.stars) {
+                    const i = body.indexOf(x.name); if (i < 0) continue;
+                    let j = i + x.name.length + (x.brightnessRaw || '').length, seq = '';
+                    while (body[j] && '禄权科忌'.includes(body[j]) && !(body[j] === '禄' && body[j + 1] === '存')) seq += body[j++];
+                    const want = (win.natal && natal[x.name] ? natal[x.name] : '') + win.layers.map((l) => l.map[x.name] || '').join('');
+                    starN++;
+                    if (seq !== want) bad.push(`${x.name} 四化 原站${seq || '无'}≠${want || '无'}`);
+                }
+            }
+            ok(!bad.length, `原站 1995-9-9「${view === 'ming' ? '本命' : VN[view]}」视图：宫名重排、十二神、${starN} 颗星的四化标记（只显示最近三层）一致${bad.length ? ' ' + bad.slice(0, 3).join('；') : ''}`);
+        }
+    }
 }
 
 if (failed) { console.log(`\n[ziwei-engine] ${failed} 项失败`); process.exit(1); }

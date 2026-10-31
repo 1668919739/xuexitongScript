@@ -39,6 +39,7 @@
             '紫微斗数改用原站同款配色：白底、米色输入框、墨金强调色、深棕药丸形主按钮、墨金虚线时辰圆标、等宽字体的时间数字、宋体标题和标题下的四段填写进度；四化标记改为原站样式（彩色文字配浅底细边，禄绿、权蓝、科金、忌红）；不再跟着浮窗的彩色主题变色，浮窗为深色主题时换成原站的深色配色（藏青底、金色强调）',
             '紫微斗数新增「合盘」（顶部标签：命盘 / 合盘 / 小六壬）：关系可选感情、合伙、上下级、朋友；甲方、乙方各一套和命盘相同的表单，可从最近命盘直接选人。两张盘在本机排好后对照：命格兼容速判、夫妻宫与对方命宫是否对应（天作之合）、生年四化落入对方哪一宫、关键宫位对照（感情看命宫、夫妻、福德；合伙看官禄、兄弟、仆役等）、太阳太阴、夫妻宫传统断语、双方当前大限；对照依据原项目开源的合盘知识库。「开始 AI 深度解读」用合盘方法论作背景调用你的 DeepSeek，不引用原话、不做绝对化断言，生成过的保存在本机；可一键查看任一方的命盘',
             '紫微斗数新增「小六壬」：按原站的起课规则（月从大安起数农历月，日从月宫起数农历日，时从日宫起数时辰，子时为一；23 点以后仍按当天农历日；闰月按本月数），实时显示此刻的农历月日时，点「起课」后六宫依次点亮、月 / 日 / 时三块翻牌落宫，给出吉凶、概括、应期和建议；可写下想问的事，提示一事一课、一天不超过三次（各宫吉凶与含义对齐原站公开的六宫说明，文字为本脚本自写）',
+            '紫微斗数按原站补齐盘面与运限：宫名「仆役」改叫「交友」；每宫加上博士、将前、岁前十二神；运限从「本命 / 大限 / 流年」扩展为「本命 / 大限 / 流年 / 小限 / 流月 / 流日 / 流时」，流月、流日、流时可前后翻看（越界自动进位到上一级），默认是此刻；每个视图标出该层命宫和各宫在该层的宫名，四化逐层叠加（盘上每颗星只标最近三层，与原站相同），将前、岁前十二神随运限地支重排。规则全部用原项目开源代码（十二神、流月流日流时四化、童限），并用原站读到的 5 张盘和 7 个运限视图逐宫、逐星对拍一致',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
             '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
@@ -210,18 +211,18 @@
     const SCRIPT_CDN_URL = 'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.js';
     // 紫微斗数引擎：单独打包（scripts/build-ziwei.mjs），第一次打开「紫微斗数」时才下载，不打开就不加载。
     // 文件名带上游 ziwei-doushu 的提交号和内容哈希，由打包脚本自动改写，不要手改
-    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-443b886b.min.js';
+    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-cdf8f5ac.min.js';
     const ZIWEI_ENGINE_URLS = ['cdn', 'fastly', 'testingcf'].map((h) => `https://${h}.jsdelivr.net/gh/1668919739/xuexitongScript@master/${ZIWEI_ENGINE_FILE}`);
     const ZIWEI_FORM_KEY = 'xxt_v41_ziwei_form';
     const ZIWEI_HIST_KEY = 'xxt_v41_ziwei_hist';   // 最近命盘：只保存在本机，最多 10 张
     const ZIWEI_HM_KEY = 'xxt_v41_ziwei_hm';       // 合盘：上次填的甲乙双方和关系
     const ZIWEI_LR_KEY = 'xxt_v41_ziwei_lr';       // 小六壬：今天起了几课
-    // 合盘关系（与原站一致：感情、合伙、上下级、朋友）：key、名称、重点宫位（按原项目合盘方法论：感情看命宫+夫妻+福德；合作看官禄、兄弟/仆役、福德）
+    // 合盘关系（与原站一致：感情、合伙、上下级、朋友）：key、名称、重点宫位（按原项目合盘方法论：感情看命宫+夫妻+福德；合作看官禄、兄弟/交友（仆役）、福德）
     const ZIWEI_REL = [
         ['love', '感情', ['命宫', '夫妻', '福德']],
-        ['partner', '合伙', ['命宫', '官禄', '兄弟', '仆役', '福德']],
-        ['boss', '上下级', ['命宫', '官禄', '仆役', '父母']],
-        ['friend', '朋友', ['命宫', '仆役', '福德']],
+        ['partner', '合伙', ['命宫', '官禄', '兄弟', '交友', '福德']],
+        ['boss', '上下级', ['命宫', '官禄', '交友', '父母']],
+        ['friend', '朋友', ['命宫', '交友', '福德']],
     ];
     // 小六壬六宫：名称、吉凶、概括、应期、建议。吉凶与各宫含义对齐原站公开的六宫说明（大安偏稳约一周、留连停滞宜改期、
     // 速喜很快见结果宜马上验证的事、赤口重在人为因素、小吉有转机约两周、空亡落空宜断念），文字为本脚本自写
@@ -5670,6 +5671,7 @@
                     let patterns = [], summary = null;
                     try { patterns = Z.detectPatterns(chart) || []; } catch (e) { /* 格局识别失败不影响出盘 */ }
                     try { summary = Z.getMingGongSummary(chart); } catch (e) { /* ignore */ }
+                    this._zwNormChart(chart, patterns);
                     this._zw = { chart, patterns, summary, note: r.note, input: f, unknown: !!r.unknown, name: f.name || '' };
                     this._zwHistAdd(f, r.birth.hour, r.unknown);
                     this._zwSel = chart.mingGongBranch;
@@ -5677,7 +5679,7 @@
                     this._zwTopic = '';
                     this._zwView = 'ming';
                     this._zwDx = chart.currentDaXianIndex >= 0 ? chart.currentDaXianIndex : 0;
-                    this._zwYear = new Date().getFullYear();
+                    Object.assign(this, (({ year, month, day, hour }) => ({ _zwYear: year, _zwMonth: month, _zwDay: day, _zwHour: hour }))(this._zwYxNow(Z)));
                     log(`紫微斗数：${chart.lunarInfo.fourPillars ? chart.lunarInfo.fourPillars.join(' ') : ''} ${chart.wuxingJuName}`, '#2196F3');
                 } catch (e) {
                     this._zwError = '排盘失败：' + (e && e.message ? e.message : e);
@@ -6143,8 +6145,8 @@
                 const rA = this._ziweiResolveInput(fA, Z), rB = this._ziweiResolveInput(fB, Z);
                 if (!rA.ok || !rB.ok) { this._hmError = !rA.ok ? '甲方：' + rA.error : '乙方：' + rB.error; this._zwRenderHm(); return; }
                 try {
-                    const A = { chart: Z.generateChart(rA.birth), f: fA, unknown: !!rA.unknown, name: fA.name, note: rA.note };
-                    const B = { chart: Z.generateChart(rB.birth), f: fB, unknown: !!rB.unknown, name: fB.name, note: rB.note };
+                    const A = { chart: this._zwNormChart(Z.generateChart(rA.birth)), f: fA, unknown: !!rA.unknown, name: fA.name, note: rA.note };
+                    const B = { chart: this._zwNormChart(Z.generateChart(rB.birth)), f: fB, unknown: !!rB.unknown, name: fB.name, note: rB.note };
                     const facts = this._zwHmFacts(A, B, this._hmRel || 'love', Z);
                     this._hm = { A, B, facts, rel: facts.rel };
                     this._zwHistAdd(fA, rA.birth.hour, rA.unknown);
@@ -6498,6 +6500,15 @@
                     '#xxt-v41-ziwei .zw-views .zw-step{padding:2px 6px;font-size:14px;line-height:1}' +
                     '#xxt-v41-ziwei .zw-views .zw-step:disabled{opacity:.3;cursor:default}' +
                     '#xxt-v41-ziwei .zw-vinfo{margin-bottom:8px;font-size:11px;line-height:1.6;color:var(--x-muted,#6B7280)}' +
+                    '#xxt-v41-ziwei .zw-shen{display:flex;align-items:center;gap:4px;margin-top:auto;padding-top:3px;font-size:10px;line-height:1.3;color:var(--x-faint);letter-spacing:.5px}' +
+                    '#xxt-v41-ziwei .zw-shen>span:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-ziwei .zw-shen+.zw-foot{margin-top:0;padding-top:1px}' +
+                    '#xxt-v41-ziwei .zw-foot>*{white-space:nowrap}' +
+                    '#xxt-v41-ziwei .zw-rel{flex:none;font-size:10px;letter-spacing:0;padding:0 3px;border-radius:3px;color:var(--x-accent-text);background:var(--x-accent-soft)}' +
+                    '#xxt-v41-ziwei .zw-rel.ming{color:var(--x-on-accent);background:var(--x-accent)}' +
+                    '#xxt-v41-ziwei .zw-views.sub{margin-top:-2px}' +
+                    '#xxt-v41-ziwei .zw-vls{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:2px}' +
+                    '#xxt-v41-ziwei .zw-vl em{font-style:normal;display:inline-block;margin-right:3px;padding:0 4px;border-radius:3px;border:1px dashed var(--x-accent);color:var(--x-accent-text);font-size:10px;line-height:13px}' +
                     '#xxt-v41-ziwei .zw-minor{font-size:11px;line-height:1.35;color:var(--x-muted,#6B7280);word-break:break-all}' +
                     '#xxt-v41-ziwei .zw-minor .lk{color:var(--x-accent-strong)}#xxt-v41-ziwei .zw-minor .sh{color:var(--zw-ji)}' +
                     '#xxt-v41-ziwei .zw-foot{margin-top:auto;display:flex;align-items:flex-end;gap:4px;padding-top:3px;font-size:10px;color:var(--x-faint,#9CA3AF)}' +
@@ -6689,11 +6700,11 @@
                         else if (act === 'back') this._zwBack();
                         else if (act === 'retry') { this._zwError = ''; this._loadZiwei().catch(() => {}); }
                         else if (act === 'view') { this._zwView = t.getAttribute('data-v'); this._renderZiwei(); }
-                        else if (act === 'dx' || act === 'ln') {
+                        else if (['dx', 'ln', 'ly', 'lr', 'ls'].includes(act)) {
                             const step = Number(t.getAttribute('data-step'));
                             const n = this._zw ? this._zw.chart.daXians.length : 12;
                             if (act === 'dx') this._zwDx = Math.min(n - 1, Math.max(0, (this._zwDx || 0) + step));
-                            else this._zwYear = Math.min(2100, Math.max(1900, (this._zwYear || new Date().getFullYear()) + step));
+                            else this._zwYxStep(act, step, window.XxtZiwei);
                             this._zwView = act;
                             this._renderZiwei();
                         }
@@ -6852,47 +6863,149 @@
                 if ((this._zwTab || 'ming') === 'hm') { if (this._hmAiWant && this._hm) this._zwHmAi(false); else this._zwRenderHm(); return; }
                 if (this._zwTopic) this._zwAiRun(this._zwTopic); else this._renderZiwei();
             },
-            // 当前运限视图的四化叠加：{ tag: '限'|'年', map: 星名→禄权科忌, palace: 大限宫/流年命宫的地支, stem, ... }；本命视图返回 null
-            _zwOverlay(c) {
-                const Z = window.XxtZiwei, T = Z && Z.SI_HUA_TABLE;
-                if (!T || !this._zwView || this._zwView === 'ming') return null;
-                const mk = (stem) => { const r = T[stem]; return r ? { [r[0]]: '禄', [r[1]]: '权', [r[2]]: '科', [r[3]]: '忌' } : {}; };
-                if (this._zwView === 'dx') {
-                    const dx = c.daXians[this._zwDx || 0];
-                    const p = dx && c.palaces.find((x) => x.branch === dx.palaceBranch);
-                    if (!p) return null;
-                    return { tag: '限', map: mk(p.stem), palace: p.branch, stem: p.stem, dx };
+            // ---- 运限（与原站一致：本命 / 大限 / 流年 / 小限 / 流月 / 流日 / 流时）----
+            // 规则按原站盘面逐项核对（tests/fixtures/ziwei-site.json）：
+            //   四化分层叠加：大限＝大限宫干；流年＝年干；流月＝五虎遁月干；流日＝日柱干；流时＝五鼠遁时干（原项目 sihua.ts）
+            //     大限视图叠「限」，流年 / 小限叠「限 年」，流月叠「限 年 月」，流日再加「日」，流时再加「时」；
+            //     流年以下的「限」取该流年虚岁所在的大限（童限按原项目 getChildhoodDaXianPalace）
+            //   各层命宫：大限＝大限宫；流年＝年支宫；小限＝按生年支三合起（寅午戌辰、申子辰戌、巳酉丑未、亥卯未丑），男顺女逆；
+            //     流月＝斗君（年支宫起正月，逆数到生月，顺数到生时）顺数到所选月；流日＝流月命宫顺数到所选日；流时＝流日命宫顺数到所选时
+            //   十二神：博士从生年禄存起不随运限；将前 / 岁前以该层地支起（本命＝年支，大限＝大限宫支，流年 / 小限＝年支，流月＝月支，流日＝日支，流时＝时支）
+            // 纯函数：tests/ziwei-engine.mjs 用原站读到的数据对拍
+            _zwYunxian(c, s, Z) {
+                const view = s.view || 'ming';
+                const mk = (stem) => { const r = Z.SI_HUA_TABLE[stem]; return r ? { [r[0]]: '禄', [r[1]]: '权', [r[2]]: '科', [r[3]]: '忌' } : {}; };
+                const mod = (n) => ((n % 12) + 12) % 12;
+                const yearStem = ((s.year - 4) % 10 + 10) % 10, yearBranch = mod(s.year - 4);
+                const out = { view, layers: [], ming: null, shenAnchor: c.lunarInfo.yearBranch, dxIndex: -1, dxPalace: null, age: s.year - c.lunarInfo.lunarYear + 1 };
+                if (view === 'ming') return out;
+                // 大限（「限」层）
+                let dxp = null;
+                if (view === 'dx') {
+                    const d = c.daXians[s.dx];
+                    dxp = d ? c.palaces.find((p) => p.branch === d.palaceBranch) : null;
+                    out.dxIndex = d ? s.dx : -1;
+                } else {
+                    const i = Z.getDaXianIndexForYear(c, s.year);
+                    out.dxIndex = i;
+                    if (i >= 0) dxp = c.palaces.find((p) => p.branch === c.daXians[i].palaceBranch);
+                    else if (out.age >= 1 && out.age < (c.daXians[0] ? c.daXians[0].startAge : 1)) { dxp = Z.getChildhoodDaXianPalace(c, s.year); out.childhood = true; }
                 }
-                const y = this._zwYear || new Date().getFullYear();
-                const stem = ((y - 4) % 10 + 10) % 10, branch = ((y - 4) % 12 + 12) % 12;
-                return { tag: '年', map: mk(stem), palace: branch, stem, year: y };
+                out.dxPalace = dxp;
+                if (dxp) out.layers.push({ tag: '限', name: '大限', stem: dxp.stem, map: mk(dxp.stem) });
+                if (view === 'dx') { out.ming = dxp ? dxp.branch : null; out.shenAnchor = dxp ? dxp.branch : out.shenAnchor; return out; }
+                out.layers.push({ tag: '年', name: '流年', stem: yearStem, map: mk(yearStem) });
+                if (view === 'ln') { out.ming = yearBranch; out.shenAnchor = yearBranch; return out; }
+                if (view === 'xx') {
+                    const start = [10, 7, 4, 1][c.lunarInfo.yearBranch % 4];   // 申子辰→戌、巳酉丑→未、寅午戌→辰、亥卯未→丑
+                    const dir = c.birthInfo.gender === 'female' ? -1 : 1;
+                    out.xxStart = start; out.xxDir = dir;
+                    out.ming = out.age >= 1 ? mod(start + dir * (out.age - 1)) : null;
+                    out.shenAnchor = yearBranch;
+                    return out;
+                }
+                const ly = Z.getLiuYueSiHua(yearStem, s.month);
+                out.layers.push({ tag: '月', name: '流月', stem: ly.stemIndex, map: mk(ly.stemIndex) });
+                const eff = Z.resolveEffectiveLunarDate(c.birthInfo.year, c.birthInfo.month, c.birthInfo.day, 'split');
+                const dou = mod(yearBranch - (eff.lunarMonth - 1) + c.birthInfo.hour);
+                const lyMing = mod(dou + s.month - 1);
+                out.dou = dou;
+                if (view === 'ly') { out.ming = lyMing; out.shenAnchor = mod(s.month + 1); return out; }
+                const gz = Z.lunarDayGanZhi(s.year, s.month, s.day, false);
+                out.layers.push({ tag: '日', name: '流日', stem: gz.gan, map: mk(gz.gan) });
+                const lrMing = mod(lyMing + s.day - 1);
+                if (view === 'lr') { out.ming = lrMing; out.shenAnchor = gz.zhi; return out; }
+                const ls = Z.getLiuShiSiHua(gz.gan, s.hour);
+                out.layers.push({ tag: '时', name: '流时', stem: ls.stemIndex, map: mk(ls.stemIndex) });
+                out.ming = mod(lrMing + s.hour);
+                out.shenAnchor = s.hour;
+                return out;
             },
-            _zwViewBar(c, ov) {
+            // 盘上每颗星的四化只显示最近三层（本命、限、年、月、日、时里取最后三层），与原站一致：
+            // 例如流月显示「限 年 月」、流日显示「年 月 日」，本命四化在流月及以下不再显示（tests/fixtures/ziwei-site.json 404 颗星逐一核对）
+            _zwHuaWindow(layers) {
+                const all = [{ natal: true }, ...layers].slice(-3);
+                return { natal: !!all[0].natal, layers: all.filter((l) => !l.natal) };
+            },
+            // 某一宫在运限盘里的宫名（命宫起逆行：命、兄、夫、子、财、疾、迁、交、官、田、福、父）
+            _zwRelabel(ming, branch) {
+                const N = ['命宫', '兄弟', '夫妻', '子女', '财帛', '疾厄', '迁移', '交友', '官禄', '田宅', '福德', '父母'];
+                return N[(((ming - branch) % 12) + 12) % 12];
+            },
+            // 十二神：返回 { 地支: [博士, 将前, 岁前] }
+            _zwShen(c, anchor, Z) {
+                const b = Z.boshiShenByStem(c.lunarInfo.yearStem, c.birthInfo.gender), j = Z.jiangQianShenByBranch(anchor), s = Z.suiQianShenByBranch(anchor);
+                const out = {};
+                for (let br = 0; br < 12; br++) out[br] = [Z.BOSHI_SHEN[b[br]], Z.JIANG_QIAN_SHEN[j[br]], Z.SUI_QIAN_SHEN[s[br]]];
+                return out;
+            },
+            // 运限选择的默认值：此刻的农历年月日与时辰（与原站一样默认「现在」）
+            _zwYxNow(Z) {
+                const d = new Date();
+                const L = Z.solarToLunar(d.getFullYear(), d.getMonth() + 1, d.getDate());
+                const h = d.getHours();
+                return { year: L.year, month: L.month, day: L.day, hour: h === 23 || h === 0 ? 0 : Math.floor((h + 1) / 2) };
+            },
+            // 运限步进：月 / 日 / 时越界时进位到上一级
+            _zwYxStep(act, step, Z) {
+                const days = (y, m) => Z.lunarMonthDayCount(y, m, false) || 30;
+                let y = this._zwYear, m = this._zwMonth, d = this._zwDay, h = this._zwHour;
+                const addDay = (n) => {
+                    d += n;
+                    if (d > days(y, m)) { d = 1; m++; if (m > 12) { m = 1; y++; } }
+                    else if (d < 1) { m--; if (m < 1) { m = 12; y--; } d = days(y, m); }
+                };
+                if (act === 'ln') y += step;
+                else if (act === 'ly') { m += step; if (m > 12) { m = 1; y++; } if (m < 1) { m = 12; y--; } }
+                else if (act === 'lr') addDay(step);
+                else if (act === 'ls') { h += step; if (h > 11) { h = 0; addDay(1); } else if (h < 0) { h = 11; addDay(-1); } }
+                y = Math.min(2100, Math.max(1900, y));
+                d = Math.min(d, days(y, m));
+                this._zwYear = y; this._zwMonth = m; this._zwDay = d; this._zwHour = h;
+            },
+            _zwViewBar(c, yx) {
                 const esc = (t) => this._esc(t);
                 const BR = '子丑寅卯辰巳午未申酉戌亥', ST = '甲乙丙丁戊己庚辛壬癸';
+                const MS = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+                const DS = (n) => n === 10 ? '初十' : n === 20 ? '二十' : n === 30 ? '三十' : ['初', '十', '廿'][Math.floor(n / 10)] + '一二三四五六七八九'[n % 10 - 1];
                 const view = this._zwView || 'ming';
                 const dx = c.daXians[this._zwDx || 0];
-                const y = this._zwYear || new Date().getFullYear();
                 const tab = (v, label) => `<button type="button" data-zact="view" data-v="${v}" class="${view === v ? 'on' : ''}" aria-pressed="${view === v}">${label}</button>`;
                 const step = (act, n, dis, lab) => `<button type="button" class="zw-step" data-zact="${act}" data-step="${n}"${dis ? ' disabled' : ''} aria-label="${lab}">${n < 0 ? '‹' : '›'}</button>`;
+                const grp = (v, act, label, prevLab, nextLab, disP, disN) => `<span class="zw-vgrp${view === v ? ' on' : ''}">${step(act, -1, disP, prevLab)}${tab(v, label)}${step(act, 1, disN, nextLab)}</span>`;
+                const deep = ['ln', 'xx', 'ly', 'lr', 'ls'].includes(view);
                 const bar = '<div class="zw-views" role="group" aria-label="运限">' + tab('ming', '本命') +
-                    `<span class="zw-vgrp${view === 'dx' ? ' on' : ''}">${step('dx', -1, (this._zwDx || 0) <= 0, '上一个大限')}${tab('dx', dx ? `大限 ${dx.startAge}–${dx.endAge}` : '大限')}${step('dx', 1, (this._zwDx || 0) >= c.daXians.length - 1, '下一个大限')}</span>` +
-                    `<span class="zw-vgrp${view === 'ln' ? ' on' : ''}">${step('ln', -1, y <= 1900, '上一年')}${tab('ln', `流年 ${y}`)}${step('ln', 1, y >= 2100, '下一年')}</span></div>`;
-                if (!ov) return bar + '<div class="zw-vinfo">本命盘：显示生年四化。切到大限或流年，会把那一段的四化用虚线标在盘上。</div>';
-                const by = { 禄: '', 权: '', 科: '', 忌: '' };
-                for (const [n, h] of Object.entries(ov.map)) by[h] = n;
+                    grp('dx', 'dx', dx ? `大限 ${dx.startAge}–${dx.endAge}` : '大限', '上一个大限', '下一个大限', (this._zwDx || 0) <= 0, (this._zwDx || 0) >= c.daXians.length - 1) +
+                    grp('ln', 'ln', `流年 ${this._zwYear}`, '上一年', '下一年', this._zwYear <= 1900, this._zwYear >= 2100) +
+                    tab('xx', '小限') + '</div>' +
+                    (deep ? '<div class="zw-views sub" role="group" aria-label="流月流日流时">' +
+                        grp('ly', 'ly', `流月 ${MS[this._zwMonth - 1]}月`, '上一月', '下一月') +
+                        grp('lr', 'lr', `流日 ${DS(this._zwDay)}`, '前一天', '后一天') +
+                        grp('ls', 'ls', `流时 ${BR[this._zwHour]}时`, '前一时辰', '后一时辰') + '</div>' : '');
+                if (view === 'ming') return bar + '<div class="zw-vinfo">本命盘：生年四化。切到大限、流年、小限、流月、流日、流时，会把各层四化用虚线叠在盘上，并标出该层命宫和各宫在该层的宫名。</div>';
                 const pn = (br) => { const p = c.palaces.find((x) => x.branch === br); return p ? p.name : ''; };
-                const where = (n) => { const p = c.palaces.find((x) => x.stars.some((s) => s.name === n)); return p ? `（${p.name}）` : ''; };
-                const huaTxt = ['禄', '权', '科', '忌'].map((h) => `${esc(by[h])}化${h}${esc(where(by[h]))}`).join(' · ');
-                let info;
-                if (ov.tag === '限') {
-                    info = `大限 ${ov.dx.startAge}–${ov.dx.endAge} 岁 · 大限命宫在${BR[ov.palace]}（本命${esc(pn(ov.palace))}）· 宫干${ST[ov.stem]}：${huaTxt}` + (this._zwDx === c.currentDaXianIndex ? ' · 当前大限' : '');
-                } else {
-                    const age = ov.year - c.lunarInfo.lunarYear + 1;
-                    const inDx = c.daXians.find((d) => age >= d.startAge && age <= d.endAge);
-                    info = `${ov.year} ${ST[ov.stem]}${BR[ov.palace]}年 · 虚岁 ${age > 0 ? age : '-'}${inDx ? `（行 ${inDx.startAge}–${inDx.endAge} 大限）` : ''} · 流年命宫在${BR[ov.palace]}（本命${esc(pn(ov.palace))}）· 年干${ST[ov.stem]}：${huaTxt}`;
+                const by = (map) => { const o = {}; for (const [n, h] of Object.entries(map)) o[h] = n; return ['禄', '权', '科', '忌'].map((h) => `${o[h]}${h}`).join(' '); };
+                const layers = yx.layers.map((l) => `<span class="zw-vl"><em>${l.tag}</em>${ST[l.stem]}：${esc(by(l.map))}</span>`).join('');
+                const NAME = { dx: '大限', ln: '流年', xx: '小限', ly: '流月', lr: '流日', ls: '流时' }[view];
+                let head = '';
+                if (view === 'dx') head = dx ? `大限 ${dx.startAge}–${dx.endAge} 岁${this._zwDx === c.currentDaXianIndex ? '（当前）' : ''}` : '';
+                else {
+                    head = `${this._zwYear} ${ST[((this._zwYear - 4) % 10 + 10) % 10]}${BR[((this._zwYear - 4) % 12 + 12) % 12]}年 · 虚岁 ${yx.age > 0 ? yx.age : '-'}` +
+                        (yx.dxIndex >= 0 ? `（${c.daXians[yx.dxIndex].startAge}–${c.daXians[yx.dxIndex].endAge} 大限）` : yx.childhood ? '（童限）' : '');
+                    if (view === 'ly' || view === 'lr' || view === 'ls') head += ` · ${MS[this._zwMonth - 1]}月`;
+                    if (view === 'lr' || view === 'ls') head += DS(this._zwDay);
+                    if (view === 'ls') head += ` ${BR[this._zwHour]}时`;
                 }
-                return bar + `<div class="zw-vinfo">${info}</div>`;
+                const ming = yx.ming == null ? `${NAME}未起` : `${NAME}命宫在${BR[yx.ming]}（本命${esc(pn(yx.ming))}）`;
+                return bar + `<div class="zw-vinfo">${esc(head)} · ${ming}<div class="zw-vls">${layers}</div>${yx.layers.length >= 3 ? '<div>盘上每颗星只标最近三层四化（与原站一致）</div>' : ''}</div>`;
+            },
+            // 宫名与原站一致：排盘库里的「仆役」显示为「交友」
+            _zwNormChart(chart, patterns) {
+                const fix = (n) => n === '仆役' ? '交友' : n;
+                for (const p of chart.palaces) { p.name = fix(p.name); if (p.borrowedFromName) p.borrowedFromName = fix(p.borrowedFromName); }
+                for (const d of chart.daXians || []) d.palaceName = fix(d.palaceName);
+                for (const pt of patterns || []) if (Array.isArray(pt.palaces)) pt.palaces = pt.palaces.map(fix);
+                return chart;
             },
             _zwChartHtml() {
                 const z = this._zw;
@@ -6904,10 +7017,14 @@
                 const byBr = new Map(c.palaces.map((p) => [p.branch, p]));
                 const sel = Number.isInteger(this._zwSel) ? this._zwSel : c.mingGongBranch;
                 const tri = new Set([(sel + 4) % 12, (sel + 8) % 12, (sel + 6) % 12]);
-                // 运限叠加（与原项目一致）：大限取该大限宫的宫干起四化，流年取当年年干起四化；虚线标出，前缀「限」「年」
-                const ov = this._zwOverlay(c);
-                const hua = (s) => (s.siHua ? `<span class="zw-hua h-${esc(s.siHua)}">${esc(s.siHua)}</span>` : '') +
-                    (ov && ov.map[s.name] ? `<span class="zw-hua ov h-${esc(ov.map[s.name])}">${ov.tag}${esc(ov.map[s.name])}</span>` : '');
+                // 运限：各层四化用虚线叠加，前缀「限 / 年 / 月 / 日 / 时」；十二神按该层地支起
+                const Z = window.XxtZiwei;
+                const yx = this._zwYunxian(c, { view: this._zwView || 'ming', dx: this._zwDx || 0, year: this._zwYear, month: this._zwMonth, day: this._zwDay, hour: this._zwHour }, Z);
+                const shen = this._zwShen(c, yx.shenAnchor, Z);
+                const win = this._zwHuaWindow(yx.layers);
+                const hua = (s) => (win.natal && s.siHua ? `<span class="zw-hua h-${esc(s.siHua)}">${esc(s.siHua)}</span>` : '') +
+                    win.layers.map((l) => l.map[s.name] ? `<span class="zw-hua ov h-${esc(l.map[s.name])}">${l.tag}${esc(l.map[s.name])}</span>` : '').join('');
+                const LP = { dx: '限', ln: '年', xx: '小', ly: '月', lr: '日', ls: '时' }[yx.view] || '';
                 const cell = (br) => {
                     const p = byBr.get(br);
                     if (!p) return '<div class="zw-cell"></div>';
@@ -6919,11 +7036,14 @@
                     const minorHtml = others.map((s) => `<span class="${s.type === 'lucky' ? 'lk' : s.type === 'sha' ? 'sh' : ''}">${esc(s.name)}${hua(s)}</span>`).join(' ');
                     const dx = p.daXianAge ? `<span class="dx${p.isCurrentDaXian ? ' cur' : ''}">${p.daXianAge[0]}–${p.daXianAge[1]}</span>` : '';
                     const cls = 'zw-cell' + (br === sel ? ' sel' : tri.has(br) ? ' tri' : '');
-                    const tags = (p.isShenGong ? '身' : '') + (ov && ov.palace === br ? (p.isShenGong ? ' ' : '') + ov.tag + '命' : '');
-                    return `<div class="${cls}${ov && ov.palace === br ? ' ovp' : ''}${tags ? ' tagged' : ''}" data-br="${br}" role="button" tabindex="0" aria-pressed="${br === sel}" aria-label="${esc(p.name)} ${ST[p.stem] || ''}${BR[br]}">` +
+                    const isYxMing = yx.ming === br;
+                    const tags = (p.isShenGong ? '身' : '');
+                    const rel = yx.ming != null ? `<span class="zw-rel${isYxMing ? ' ming' : ''}">${LP}${esc(this._zwRelabel(yx.ming, br).replace('宫', ''))}</span>` : '';
+                    return `<div class="${cls}${isYxMing ? ' ovp' : ''}${tags ? ' tagged' : ''}" data-br="${br}" role="button" tabindex="0" aria-pressed="${br === sel}" aria-label="${esc(p.name)} ${ST[p.stem] || ''}${BR[br]}">` +
                         (tags ? `<span class="zw-tag">${tags}</span>` : '') +
                         `<div class="zw-major${majors.length ? '' : ' empty'}">${majorHtml}</div>` +
                         `<div class="zw-minor">${minorHtml}</div>` +
+                        `<div class="zw-shen"><span>${shen[br].map(esc).join(' ')}</span>${rel}</div>` +
                         `<div class="zw-foot">${dx}<span>${ST[p.stem] || ''}${BR[br]}</span><b class="${p.isMingGong ? 'ming' : ''}">${esc(p.name)}</b></div></div>`;
                 };
                 // 传统盘面：巳午未申 / 辰□□酉 / 卯□□戌 / 寅丑子亥
@@ -6934,6 +7054,7 @@
                     `<b>${z.name ? esc(z.name) + ' · ' : ''}${esc(c.yinYangGender || '')} · ${esc(c.wuxingJuName)}</b>` +
                     `<div class="pl">${esc((L.fourPillars || []).join(' '))}</div>` +
                     `<span>公历 ${B.year}-${B.month}-${B.day} · 农历 ${esc(lunarText)} ${z.unknown ? '时辰不详（按子时）' : BR[B.hour] + '时'}</span>` +
+                    (() => { try { const e = Z.resolveEffectiveLunarDate(B.year, B.month, B.day, 'split'); return e.rawLunarMonth < 0 ? `<small>闰月 · 按${CN_M[e.lunarMonth - 1]}月排盘</small>` : ''; } catch (er) { return ''; } })() +
                     `<span>命主 ${esc(c.mingZhu || '-')} · 身主 ${esc(c.shenZhu || '-')}</span>` +
                     (curDx ? `<span>今年虚岁 ${c.currentAge} · 大限 ${curDx.startAge}–${curDx.endAge}（${esc(curDx.palaceName)}）</span>` : '') +
                     (z.summary && z.summary.stars && z.summary.stars.length ? `<small>命宫 ${esc(z.summary.stars.join('、'))}：${esc((z.summary.keywords || []).join('、'))}</small>` : '') +
@@ -6956,6 +7077,9 @@
                     `<b>${esc(sp.name)}</b> · ${ST[sp.stem] || ''}${BR[sp.branch]}宫` + (sp.daXianAge ? ` · 大限 ${sp.daXianAge[0]}–${sp.daXianAge[1]} 岁` : '') +
                     (sp.isEmpty && sp.borrowedFromName ? `<div class="zw-dl">空宫，借对宫${esc(sp.borrowedFromName)}的 ${esc((sp.borrowedStars || []).join('、'))}</div>` : '') +
                     groups +
+                    `<div class="zw-dl">十二神：博士 ${esc(shen[sel][0])} · 将前 ${esc(shen[sel][1])} · 岁前 ${esc(shen[sel][2])}${yx.view !== 'ming' ? '（将前、岁前随所选运限）' : ''}</div>` +
+                    (yx.ming != null ? `<div class="zw-dl">在${({ dx: '大限', ln: '流年', xx: '小限', ly: '流月', lr: '流日', ls: '流时' })[yx.view]}盘中是「${esc(this._zwRelabel(yx.ming, sel))}」</div>` : '') +
+                    (yx.view === 'xx' && yx.xxStart != null ? `<div class="zw-dl">小限行经此宫的虚岁：${Array.from({ length: 6 }, (_, k) => ((((sel - yx.xxStart) * yx.xxDir) % 12) + 12) % 12 + 1 + k * 12).join('、')}</div>` : '') +
                     `<div class="zw-dl">三方四正：${[sel, (sel + 4) % 12, (sel + 8) % 12, (sel + 6) % 12].map((b) => esc(byBr.get(b) ? byBr.get(b).name : '')).join(' · ')}（盘上浅色标出）</div>` +
                     '</div>' : '';
                 const LV = { excellent: '上格', good: '吉', neutral: '平', caution: '注意' };
@@ -6965,7 +7089,7 @@
                     : '<div class="zw-msg">本盘没有识别出典型格局</div>';
                 return `<div class="zw-bar"><button type="button" class="zw-back" data-zact="back" aria-label="返回输入页">‹ 返回</button><span class="zw-who">${z.name ? esc(z.name) + ' · ' : ''}${B.gender === 'female' ? '女' : '男'} · ${z.input.cal === 'lunar' ? '农历输入' : '公历输入'}${z.note ? ' · ' + esc(z.note) : ''}</span>` +
                     `<button type="button" class="zw-link" data-zact="edit">${this._zwFormOpen ? '收起' : '修改出生信息'}</button></div>` +
-                    this._zwViewBar(c, ov) +
+                    this._zwViewBar(c, yx) +
                     `<div class="zw-grid">${grid}</div>` +
                     '<div class="zw-sec">宫位详情 <span style="font-weight:400;color:var(--x-faint,#9CA3AF)">（点盘上的宫位切换）</span></div>' + detail +
                     '<div data-z="ai"></div>' +
@@ -7007,7 +7131,7 @@
                     ? `<div class="zw-msg err">${this._esc(this._zwError)}${this._zwLoad === 'failed' ? '<button type="button" data-zact="retry">重试</button>' : ''}</div>`
                     : (this._zwLoad === 'failed' && !loaded ? '<div class="zw-msg err">排盘引擎下载失败，请检查网络<button type="button" data-zact="retry">重试</button></div>' : '');
                 if (q('msg').innerHTML !== msg) q('msg').innerHTML = msg;
-                const key = this._zw ? `${this._zw.chart.birthInfo.year}-${this._zw.chart.birthInfo.month}-${this._zw.chart.birthInfo.day}-${this._zw.chart.birthInfo.hour}-${this._zw.chart.birthInfo.gender}|${this._zwSel}|${this._zwFormOpen}|${this._zwView}|${this._zwDx}|${this._zwYear}` : '';
+                const key = this._zw ? `${this._zw.chart.birthInfo.year}-${this._zw.chart.birthInfo.month}-${this._zw.chart.birthInfo.day}-${this._zw.chart.birthInfo.hour}-${this._zw.chart.birthInfo.gender}|${this._zwSel}|${this._zwFormOpen}|${this._zwView}|${this._zwDx}|${this._zwYear}|${this._zwMonth}|${this._zwDay}|${this._zwHour}` : '';
                 let fresh = false;
                 if (this._zwKey !== key) { this._zwKey = key; q('result').innerHTML = this._zwChartHtml(); fresh = true; }
                 const aiBox = q('ai');
