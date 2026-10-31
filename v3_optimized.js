@@ -20,6 +20,7 @@
             '紫微斗数改用原站同款配色：白底、米色输入框、墨金强调色、深棕药丸形主按钮、墨金虚线时辰圆标、等宽字体的时间数字、宋体标题和标题下的四段填写进度；四化标记改为原站样式（彩色文字配浅底细边，禄绿、权蓝、科金、忌红）；不再跟着浮窗的彩色主题变色，浮窗为深色主题时换成原站的深色配色（藏青底、金色强调）',
             '紫微斗数新增「合盘」（顶部标签：命盘 / 合盘 / 小六壬）：关系可选感情、合伙、上下级、朋友；甲方、乙方各一套和命盘相同的表单，可从最近命盘直接选人。两张盘在本机排好后对照：命格兼容速判、夫妻宫与对方命宫是否对应（天作之合）、生年四化落入对方哪一宫、关键宫位对照（感情看命宫、夫妻、福德；合伙看官禄、兄弟、仆役等）、太阳太阴、夫妻宫传统断语、双方当前大限；对照依据原项目开源的合盘知识库。「开始 AI 深度解读」用合盘方法论作背景调用你的 DeepSeek，不引用原话、不做绝对化断言，生成过的保存在本机；可一键查看任一方的命盘',
             '紫微斗数新增「小六壬」：按原站的起课规则（月从大安起数农历月，日从月宫起数农历日，时从日宫起数时辰，子时为一；23 点以后仍按当天农历日；闰月按本月数），实时显示此刻的农历月日时，点「起课」后六宫依次点亮、月 / 日 / 时三块翻牌落宫，给出吉凶、概括、应期和建议；可写下想问的事，提示一事一课、一天不超过三次（各宫吉凶与含义对齐原站公开的六宫说明，文字为本脚本自写）',
+            '紫微斗数运限盘补上流曜：「流昌 / 流曲」按所选运限那一层的天干安，「小昌 / 小曲」按当年小限宫的宫干安，规则用原项目开源的流昌流曲表，并和原站 7 个运限视图逐宫核对一致；宫格里的十二神改为按名字换行，不再被省略号截断',
             '紫微斗数按原站补齐盘面与运限：宫名「仆役」改叫「交友」；每宫加上博士、将前、岁前十二神；运限从「本命 / 大限 / 流年」扩展为「本命 / 大限 / 流年 / 小限 / 流月 / 流日 / 流时」，流月、流日、流时可前后翻看（越界自动进位到上一级），默认是此刻；每个视图标出该层命宫和各宫在该层的宫名，四化逐层叠加（盘上每颗星只标最近三层，与原站相同），将前、岁前十二神随运限地支重排。规则全部用原项目开源代码（十二神、流月流日流时四化、童限），并用原站读到的 5 张盘和 7 个运限视图逐宫、逐星对拍一致',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
@@ -6482,7 +6483,10 @@
                     '#xxt-v41-ziwei .zw-views .zw-step:disabled{opacity:.3;cursor:default}' +
                     '#xxt-v41-ziwei .zw-vinfo{margin-bottom:8px;font-size:11px;line-height:1.6;color:var(--x-muted,#6B7280)}' +
                     '#xxt-v41-ziwei .zw-shen{display:flex;align-items:center;gap:4px;margin-top:auto;padding-top:3px;font-size:10px;line-height:1.3;color:var(--x-faint);letter-spacing:.5px}' +
-                    '#xxt-v41-ziwei .zw-shen>span:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+                    '#xxt-v41-ziwei .zw-shen>span:first-child{flex:1;min-width:0;display:flex;flex-wrap:wrap;column-gap:3px}' +
+                    '#xxt-v41-ziwei .zw-shen em{font-style:normal;white-space:nowrap}' +
+                    '#xxt-v41-ziwei .zw-shen>.zw-rel{align-self:flex-end}' +
+                    '#xxt-v41-ziwei .zw-minor .ly{color:var(--x-accent-text);border-bottom:1px dashed currentColor}' +
                     '#xxt-v41-ziwei .zw-shen+.zw-foot{margin-top:0;padding-top:1px}' +
                     '#xxt-v41-ziwei .zw-foot>*{white-space:nowrap}' +
                     '#xxt-v41-ziwei .zw-rel{flex:none;font-size:10px;letter-spacing:0;padding:0 3px;border-radius:3px;color:var(--x-accent-text);background:var(--x-accent-soft)}' +
@@ -6902,6 +6906,24 @@
                 out.shenAnchor = s.hour;
                 return out;
             },
+            // 流曜：运限文昌、文曲，按天干安（与生年干文昌、文曲同表，原项目 SCHOOL_AX.LIUCHANG / LIUQU）。与原站一致：
+            //  「流昌 / 流曲」取所选运限最末一层的天干（大限取大限宫干，流年取年干，小限视图同流年，流月 / 流日 / 流时取该层干）；
+            //  「小昌 / 小曲」取所选年份小限宫的宫干，本命以外的视图都显示（tests/fixtures/ziwei-site.json 7 个视图核对）
+            _zwLiuYao(c, yx, year) {
+                if (yx.view === 'ming') return [];
+                const CHANG = [5, 6, 8, 9, 8, 9, 11, 0, 2, 3], QU = [9, 8, 6, 5, 6, 5, 3, 2, 0, 11];
+                const mod = (n) => ((n % 12) + 12) % 12;
+                const out = [];
+                const last = yx.layers[yx.layers.length - 1];
+                if (last) out.push({ name: '流昌', branch: CHANG[last.stem], stem: last.stem }, { name: '流曲', branch: QU[last.stem], stem: last.stem });
+                const age = year - c.lunarInfo.lunarYear + 1;
+                if (age >= 1) {
+                    const start = [10, 7, 4, 1][c.lunarInfo.yearBranch % 4], dir = c.birthInfo.gender === 'female' ? -1 : 1;
+                    const p = c.palaces.find((q) => q.branch === mod(start + dir * (age - 1)));
+                    if (p) out.push({ name: '小昌', branch: CHANG[p.stem], stem: p.stem }, { name: '小曲', branch: QU[p.stem], stem: p.stem });
+                }
+                return out;
+            },
             // 盘上每颗星的四化只显示最近三层（本命、限、年、月、日、时里取最后三层），与原站一致：
             // 例如流月显示「限 年 月」、流日显示「年 月 日」，本命四化在流月及以下不再显示（tests/fixtures/ziwei-site.json 404 颗星逐一核对）
             _zwHuaWindow(layers) {
@@ -7003,6 +7025,7 @@
                 const yx = this._zwYunxian(c, { view: this._zwView || 'ming', dx: this._zwDx || 0, year: this._zwYear, month: this._zwMonth, day: this._zwDay, hour: this._zwHour }, Z);
                 const shen = this._zwShen(c, yx.shenAnchor, Z);
                 const win = this._zwHuaWindow(yx.layers);
+                const liuYao = this._zwLiuYao(c, yx, this._zwYear);
                 const hua = (s) => (win.natal && s.siHua ? `<span class="zw-hua h-${esc(s.siHua)}">${esc(s.siHua)}</span>` : '') +
                     win.layers.map((l) => l.map[s.name] ? `<span class="zw-hua ov h-${esc(l.map[s.name])}">${l.tag}${esc(l.map[s.name])}</span>` : '').join('');
                 const LP = { dx: '限', ln: '年', xx: '小', ly: '月', lr: '日', ls: '时' }[yx.view] || '';
@@ -7014,7 +7037,8 @@
                     const majorHtml = majors.length
                         ? majors.map((s) => `${esc(s.name)}${s.brightnessRaw ? `<i>${esc(s.brightnessRaw)}</i>` : ''}${hua(s)}`).join(' ')
                         : (p.borrowedStars && p.borrowedStars.length ? `借${esc(p.borrowedStars.join(''))}` : '空宫');
-                    const minorHtml = others.map((s) => `<span class="${s.type === 'lucky' ? 'lk' : s.type === 'sha' ? 'sh' : ''}">${esc(s.name)}${hua(s)}</span>`).join(' ');
+                    const minorHtml = others.map((s) => `<span class="${s.type === 'lucky' ? 'lk' : s.type === 'sha' ? 'sh' : ''}">${esc(s.name)}${hua(s)}</span>`).join(' ') +
+                        liuYao.filter((y) => y.branch === br).map((y) => ` <span class="ly">${y.name}</span>`).join('');
                     const dx = p.daXianAge ? `<span class="dx${p.isCurrentDaXian ? ' cur' : ''}">${p.daXianAge[0]}–${p.daXianAge[1]}</span>` : '';
                     const cls = 'zw-cell' + (br === sel ? ' sel' : tri.has(br) ? ' tri' : '');
                     const isYxMing = yx.ming === br;
@@ -7024,7 +7048,7 @@
                         (tags ? `<span class="zw-tag">${tags}</span>` : '') +
                         `<div class="zw-major${majors.length ? '' : ' empty'}">${majorHtml}</div>` +
                         `<div class="zw-minor">${minorHtml}</div>` +
-                        `<div class="zw-shen"><span>${shen[br].map(esc).join(' ')}</span>${rel}</div>` +
+                        `<div class="zw-shen"><span>${shen[br].map((n) => `<em>${esc(n)}</em>`).join('')}</span>${rel}</div>` +
                         `<div class="zw-foot">${dx}<span>${ST[p.stem] || ''}${BR[br]}</span><b class="${p.isMingGong ? 'ming' : ''}">${esc(p.name)}</b></div></div>`;
                 };
                 // 传统盘面：巳午未申 / 辰□□酉 / 卯□□戌 / 寅丑子亥
@@ -7058,6 +7082,7 @@
                     `<b>${esc(sp.name)}</b> · ${ST[sp.stem] || ''}${BR[sp.branch]}宫` + (sp.daXianAge ? ` · 大限 ${sp.daXianAge[0]}–${sp.daXianAge[1]} 岁` : '') +
                     (sp.isEmpty && sp.borrowedFromName ? `<div class="zw-dl">空宫，借对宫${esc(sp.borrowedFromName)}的 ${esc((sp.borrowedStars || []).join('、'))}</div>` : '') +
                     groups +
+                    (() => { const ys = liuYao.filter((y) => y.branch === sel); return ys.length ? `<div class="zw-dl">流曜</div><div class="zw-dt">${ys.map((y) => `<span>${y.name}<i>${y.name[0] === '小' ? '小限宫干' : ({ 限: '大限', 年: '流年', 月: '流月', 日: '流日', 时: '流时' })[yx.layers[yx.layers.length - 1].tag]}${ST[y.stem]}</i></span>`).join('')}</div>` : ''; })() +
                     `<div class="zw-dl">十二神：博士 ${esc(shen[sel][0])} · 将前 ${esc(shen[sel][1])} · 岁前 ${esc(shen[sel][2])}${yx.view !== 'ming' ? '（将前、岁前随所选运限）' : ''}</div>` +
                     (yx.ming != null ? `<div class="zw-dl">在${({ dx: '大限', ln: '流年', xx: '小限', ly: '流月', lr: '流日', ls: '流时' })[yx.view]}盘中是「${esc(this._zwRelabel(yx.ming, sel))}」</div>` : '') +
                     (yx.view === 'xx' && yx.xxStart != null ? `<div class="zw-dl">小限行经此宫的虚岁：${Array.from({ length: 6 }, (_, k) => ((((sel - yx.xxStart) * yx.xxDir) % 12) + 12) % 12 + 1 + k * 12).join('、')}</div>` : '') +

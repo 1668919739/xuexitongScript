@@ -322,6 +322,7 @@ console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 o
         if (view === 'xx') {
             const ages = Object.entries(v.xxAges).every(([br, as]) => as.every((a) => ((y.xxStart + y.xxDir * (a - 1)) % 12 + 12) % 12 === BR.indexOf(br)));
             ok(ages, '小限岁数分布与原站一致');
+            ok(v.ming.xx !== v.ming.ln && shenOk, `小限视图的将前 / 岁前十二神按流年支起：此盘小限在${v.ming.xx}、流年在${v.ming.ln}，两种起法结果不同，原站与流年支一致`);
         }
         if (view === 'ly') ok(y.layers.map((l) => l.tag + ST[l.stem]).join() === `限${v.lyHua['限']},年${v.lyHua['年']},月${v.lyHua['月']}`, `流月四化分层：${y.layers.map((l) => l.tag + ST[l.stem]).join(' ')}（原站 限丁 年丙 月戊）`);
     }
@@ -329,7 +330,7 @@ console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 o
     // 第 5 张盘：7 个视图的完整盘面（含各层四化标记）
     {
         const v2 = site.views2, b5 = site.charts[4].birth;
-        const app2 = vm.runInNewContext(`({ ${grab(/\n(\s*)_zwYunxian\(c, s, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwRelabel\(ming, branch\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwShen\(c, anchor, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwNormChart\(chart, patterns\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwHuaWindow\(layers\) \{[\s\S]*?\n\1\},/)} })`);
+        const app2 = vm.runInNewContext(`({ ${grab(/\n(\s*)_zwYunxian\(c, s, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwRelabel\(ming, branch\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwShen\(c, anchor, Z\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwNormChart\(chart, patterns\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwHuaWindow\(layers\) \{[\s\S]*?\n\1\},/)} ${grab(/\n(\s*)_zwLiuYao\(c, yx, year\) \{[\s\S]*?\n\1\},/)} })`);
         const c5 = app2._zwNormChart(Z.generateChart(b5));
         const natal = {}; for (const p of c5.palaces) for (const x of p.stars) if (x.siHua) natal[x.name] = x.siHua;
         const reC = /(\d+)–(\d+)[▸●]?([甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥])(命宫|兄弟|夫妻|子女|财帛|疾厄|迁移|交友|官禄|田宅|福德|父母)(·命)?(·身)?/g;
@@ -338,8 +339,9 @@ console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 o
             const yx = app2._zwYunxian(c5, { view, dx: c5.currentDaXianIndex, ...v2.sel }, Z);
             const win = app2._zwHuaWindow(yx.layers);
             const shen = app2._zwShen(c5, yx.shenAnchor, Z);
+            const ly = app2._zwLiuYao(c5, yx, v2.sel.year);
             const t = v2.text[view];
-            let last = 0, m, starN = 0; const bad = [];
+            let last = 0, m, starN = 0, yaoN = 0; const bad = [];
             reC.lastIndex = 0;
             while ((m = reC.exec(t))) {
                 let body = t.slice(last, m.index).replace(/[●▸]$/, ''); last = reC.lastIndex;   // ● 为原站「当前大限」标记
@@ -352,6 +354,10 @@ console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 o
                 }
                 // 十二神：宫格末尾三个
                 if (!body.endsWith(shen[br].join(''))) bad.push(`${m[3]} 十二神≠${shen[br].join('')}`);
+                // 流曜：流昌 / 流曲 / 小昌 / 小曲
+                const siteYao = (body.match(/[流小][昌曲]/g) || []).sort().join(), myYao = ly.filter((y) => y.branch === br).map((y) => y.name).sort().join();
+                yaoN += myYao ? myYao.split(',').length : 0;
+                if (siteYao !== myYao) bad.push(`${m[3]} 流曜 原站${siteYao || '无'}≠${myYao || '无'}`);
                 // 四化标记
                 const p = c5.palaces.find((q) => q.branch === br);
                 for (const x of p.stars) {
@@ -363,7 +369,7 @@ console.log('与原站对拍（tests/fixtures/ziwei-site.json，2026-10-31 在 o
                     if (seq !== want) bad.push(`${x.name} 四化 原站${seq || '无'}≠${want || '无'}`);
                 }
             }
-            ok(!bad.length, `原站 1995-9-9「${view === 'ming' ? '本命' : VN[view]}」视图：宫名重排、十二神、${starN} 颗星的四化标记（只显示最近三层）一致${bad.length ? ' ' + bad.slice(0, 3).join('；') : ''}`);
+            ok(!bad.length, `原站 1995-9-9「${view === 'ming' ? '本命' : VN[view]}」视图：宫名重排、十二神、${starN} 颗星的四化标记（只显示最近三层）、${yaoN} 个流曜一致${bad.length ? ' ' + bad.slice(0, 3).join('；') : ''}`);
         }
     }
 }
