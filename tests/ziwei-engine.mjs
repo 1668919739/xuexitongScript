@@ -119,14 +119,42 @@ if (m) {
     ok(!c9.ok, '钟点不合法报错');
     const c10 = r({ ...base, year: 1990, month: 5, day: 15, ch: 12, cm: 0, prov: '火星', city: '基地' });
     ok(!c10.ok && /出生地/.test(c10.error), '出生地不在表里报错');
+    const u1 = r({ ...base, year: 1990, month: 5, day: 15, ch: 13, cm: 10, unknown: true, prov: '四川省', city: '成都', dst: true });
+    ok(u1.ok && u1.unknown && u1.birth.hour === 0 && s(u1.birth) === '1990-5-15' && !u1.dstDay && /以子时/.test(u1.note), '不知道出生时间：与原站一致按当天子时起盘，不换日期、不扣夏令时');
     const c11 = r({ ...base, cal: 'lunar', year: 2023, month: 2, day: 1, leap: true, ch: 8, cm: 0, prov: '上海市', city: '上海' });
     ok(c11.ok && s(c11.birth) === '2023-3-22' && /上海真太阳时/.test(c11.note), '农历闰月 + 钟点 + 出生地');
+}
+
+console.log('旧表单迁移（_zwMigrateForm）');
+{
+    const mm = /\n(\s*)_zwMigrateForm\(o\) \{[\s\S]*?\n\1\},/.exec(src);
+    ok(!!mm, '从 v3_optimized.js 抽到 _zwMigrateForm');
+    if (mm) {
+        const o = vm.runInNewContext(`({${mm[0].trim()}})`);
+        const mig = (x) => o._zwMigrateForm(Object.assign({}, x));
+        const t = (x) => `${x.tmode}|${x.ch}:${x.cm}|${'hour' in x}`;
+        ok(t(mig({ hour: 6 })) === 'clock|12:0|false', '旧记录午时 → 12:00');
+        ok(t(mig({ tmode: 'branch', hour: 12 })) === 'clock|23:30|false', '旧记录晚子时 → 23:30');
+        ok(t(mig({ tmode: 'branch', hour: 0 })) === 'clock|0:30|false', '旧记录早子时 → 00:30');
+        ok(t(mig({ tmode: 'branch', hour: 11 })) === 'clock|22:0|false', '旧记录亥时 → 22:00');
+        ok(t(mig({ tmode: 'clock', ch: 8, cm: 5 })) === 'clock|8:5|false', '新记录保持不变');
+        // 迁移后的钟点仍落在原时辰里
+        const src2 = (/\n(\s*)_ziweiResolveInput\(f, Z\) \{[\s\S]*?\n\1\},/.exec(src) || [])[0];
+        const R = vm.runInNewContext(`({${src2.trim()}})`);
+        let same = true;
+        for (let h = 0; h <= 12; h++) {
+            const a = R._ziweiResolveInput({ cal: 'solar', year: 2000, month: 6, day: 10, tmode: 'branch', hour: h, gender: 'male' }, Z);
+            const b = R._ziweiResolveInput({ cal: 'solar', year: 2000, month: 6, day: 10, ...mig({ tmode: 'branch', hour: h }), gender: 'male' }, Z);
+            if (a.birth.hour !== b.birth.hour || s(a.birth) !== s(b.birth)) same = false;
+        }
+        ok(same, '13 个旧时辰选项迁移成钟点后，排盘时辰和日期都不变');
+    }
 }
 
 console.log('星曜含义与 AI 解读提示词（_zwPrompt）');
 ok(MAJOR.every((n) => Z.STAR_DESCRIPTIONS && Z.STAR_DESCRIPTIONS[n] && Z.STAR_DESCRIPTIONS[n].keywords), '引擎导出 14 主星的基本含义');
 const topicsSrc = (/\n    const ZIWEI_TOPICS = \[[\s\S]*?\n    \];/.exec(src) || [])[0];
-const pm = /\n(\s*)_zwPrompt\(chart, patterns, topicKey, desc\) \{[\s\S]*?\n\1\},/.exec(src);
+const pm = /\n(\s*)_zwPrompt\(chart, patterns, topicKey, desc, opts\) \{[\s\S]*?\n\1\},/.exec(src);
 ok(!!topicsSrc && !!pm, '从 v3_optimized.js 抽到 ZIWEI_TOPICS 与 _zwPrompt');
 if (topicsSrc && pm) {
     const obj = vm.runInNewContext(`${topicsSrc.trim()}\n({ topics: ZIWEI_TOPICS, ${pm[0].trim()} })`);
@@ -147,6 +175,7 @@ if (topicsSrc && pm) {
     ok(user.includes('天梁：荫护·医药·长辈') || /天梁：[^\n]+；[^\n]+；五行/.test(user), '盘上主星的基本含义写进提示词');
     ok(/- 命宫（丁亥，身宫，大限 5–14 岁）：主星 天梁\(陷\)/.test(user), `命宫行格式正确`);
     ok(/官禄（[^）]*）：主星 无（空宫，借对宫/.test(user), '空宫写明借对宫的星');
+    ok(!/时辰不详/.test(user) && /出生时辰不详，按子时起盘/.test(obj._zwPrompt(chart, pats, 'career', Z.STAR_DESCRIPTIONS, { unknownTime: true }).user), '时辰不详时提示词提醒 AI 命宫/身宫/大限可能不准');
     let threw = false; try { obj._zwPrompt(chart, pats, 'nope', {}); } catch (e) { threw = true; }
     ok(threw, '未知主题报错');
 }

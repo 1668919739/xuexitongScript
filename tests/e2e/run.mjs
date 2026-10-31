@@ -1582,11 +1582,11 @@ test('紫微斗数：功能栏打开后才下载引擎，农历/晚子时换算�
     assert(engineReqs.length === 1, `引擎应只下载一次：${engineReqs.length}`);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-side [data-s=ziwei]').classList.contains('on')), '功能栏按钮没有高亮');
     // 公历 1990-05-15 午时 男
-    await p.fill('#xxt-v41-ziwei [data-z=year]', '1990');
+    await p.selectOption('#xxt-v41-ziwei [data-z=year]', '1990');
     await p.selectOption('#xxt-v41-ziwei [data-z=month]', '5');
     await p.selectOption('#xxt-v41-ziwei [data-z=day]', '15');
-    await p.click('#xxt-v41-ziwei [data-z=tmode] [data-v=branch]');
-    await p.selectOption('#xxt-v41-ziwei [data-z=hour]', '6');
+    await p.selectOption('#xxt-v41-ziwei [data-z=ch]', '12');
+    await p.selectOption('#xxt-v41-ziwei [data-z=cm]', '0');
     await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
     const r1 = await p.evaluate(() => {
         const d = document.getElementById('xxt-v41-ziwei');
@@ -1611,11 +1611,12 @@ test('紫微斗数：功能栏打开后才下载引擎，农历/晚子时换算�
     // 农历闰月 + 晚子时：2023 年闰二月初一 23:30 → 公历 2023-03-23 子时
     await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
     await p.click('#xxt-v41-ziwei [data-z=cal] [data-v=lunar]');
-    await p.fill('#xxt-v41-ziwei [data-z=year]', '2023');
+    await p.selectOption('#xxt-v41-ziwei [data-z=year]', '2023');
     await p.selectOption('#xxt-v41-ziwei [data-z=month]', '2');
     await p.selectOption('#xxt-v41-ziwei [data-z=day]', '1');
     await p.check('#xxt-v41-ziwei [data-z=leap]');
-    await p.selectOption('#xxt-v41-ziwei [data-z=hour]', '12');
+    await p.selectOption('#xxt-v41-ziwei [data-z=ch]', '23');
+    await p.selectOption('#xxt-v41-ziwei [data-z=cm]', '30');
     await p.click('#xxt-v41-ziwei [data-z=gender] [data-v=female]');
     await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
     const r3 = await p.evaluate(() => ({ bi: app._zw.chart.birthInfo, bar: document.querySelector('#xxt-v41-ziwei .zw-who').textContent }));
@@ -1629,7 +1630,7 @@ test('紫微斗数：功能栏打开后才下载引擎，农历/晚子时换算�
     assert(/没有闰三月.*闰二月/.test(err), `闰月错误提示不对：${err}`);
     // 输入记在本机，刷新后还在
     const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt_v41_ziwei_form')));
-    assert(saved.cal === 'lunar' && saved.tmode === 'branch' && saved.year === 2023 && saved.month === 3 && saved.leap === true, `表单没有保存：${JSON.stringify(saved)}`);
+    assert(saved.cal === 'lunar' && saved.ch === 23 && saved.cm === 30 && saved.year === 2023 && saved.month === 3 && saved.leap === true, `表单没有保存：${JSON.stringify(saved)}`);
     // 打开唱片机会收起紫微斗数，反之亦然
     await p.click('#xxt-v41-side [data-s=music]'); await sleep(300);
     const m1 = await p.evaluate(() => ({ zw: document.querySelector('#xxt-v41-ziwei').classList.contains('open'), mu: document.querySelector('#xxt-v41-music').classList.contains('open') }));
@@ -1729,7 +1730,7 @@ test('紫微斗数 · 星曜含义与 AI 解读：没填 Key 时就地填写，�
     assert(/「感情」/.test(calls[calls.length - 1].user), '重试的主题不对');
     // 换一张盘：主题选择清空，不会把上一张盘的解读当成这张的
     await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
-    await p.fill('#xxt-v41-ziwei [data-z=year]', '1991');
+    await p.selectOption('#xxt-v41-ziwei [data-z=year]', '1991');
     await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
     const ai2 = await p.evaluate(() => ({ out: !!document.querySelector('#xxt-v41-ziwei .zw-ai-out'), on: document.querySelectorAll('#xxt-v41-ziwei .zw-chip.on').length, done: document.querySelectorAll('#xxt-v41-ziwei .zw-chip.done').length }));
     assert(!ai2.out && ai2.on === 0 && ai2.done === 0, `换盘后还显示旧解读：${JSON.stringify(ai2)}`);
@@ -1746,34 +1747,35 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
     await p.waitForFunction(() => window.XxtZiwei && document.querySelectorAll('#xxt-v41-ziwei [data-z=prov] option').length > 30);
     const title = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-head b').textContent);
     assert(title === '紫微斗数', `面板标题不对：${title}`);
-    // 默认是「几点几分」：钟点和出生地可见，时辰下拉隐藏
-    const vis = await p.evaluate(() => ({ clock: document.querySelector('#xxt-v41-ziwei [data-z=clockrow]').offsetParent !== null, hour: document.querySelector('#xxt-v41-ziwei [data-z=hourrow]').offsetParent !== null }));
-    assert(vis.clock && !vis.hour, `默认输入方式不对：${JSON.stringify(vis)}`);
+    // 表单顺序与原站一致
+    const labels = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei .zw-form1 .zw-lab')].map((x) => x.textContent));
+    assert(labels.join('|') === '姓名（可选）|出生日期（公历）|出生时间（北京时间）|出生地点（用于真太阳时校正）|性别', `表单顺序不对：${labels.join('|')}`);
+    assert(!(await p.$('#xxt-v41-ziwei [data-z=hour]')) && !(await p.$('#xxt-v41-ziwei [data-z=tmode]')), '不应再有「选时辰」');
     // 乌鲁木齐 2000-03-01 12:00 → 真太阳时 09:37 → 巳时，实时显示
-    await p.fill('#xxt-v41-ziwei [data-z=year]', '2000');
+    await p.selectOption('#xxt-v41-ziwei [data-z=year]', '2000');
     await p.selectOption('#xxt-v41-ziwei [data-z=month]', '3');
     await p.selectOption('#xxt-v41-ziwei [data-z=day]', '1');
     await p.selectOption('#xxt-v41-ziwei [data-z=ch]', '12');
     await p.selectOption('#xxt-v41-ziwei [data-z=cm]', '0');
     await p.selectOption('#xxt-v41-ziwei [data-z=prov]', '新疆维吾尔自治区');
     await p.selectOption('#xxt-v41-ziwei [data-z=city]', '乌鲁木齐'); await sleep(150);
-    const tip1 = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=timetip]').textContent);
-    assert(/乌鲁木齐真太阳时 09:37.*巳时/.test(tip1), `真太阳时预览不对：${tip1}`);
+    const tip1 = await p.evaluate(() => ({ line: document.querySelector('#xxt-v41-ziwei [data-z=tline]').textContent, sub: document.querySelector('#xxt-v41-ziwei [data-z=tsub]').textContent, badge: document.querySelector('#xxt-v41-ziwei [data-z=badge]').textContent }));
+    assert(tip1.line === '真太阳时 → 09:37 · 巳时（09:00-11:00）' && tip1.badge === '巳' && /乌鲁木齐/.test(tip1.sub), `真太阳时预览不对：${JSON.stringify(tip1)}`);
     await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
     const bi1 = await p.evaluate(() => app._zw.chart.birthInfo);
     assert(bi1.hour === 5 && bi1.day === 1, `乌鲁木齐 12:00 应排巳时：${JSON.stringify(bi1)}`);
     // 夏令时：1990-05-15 13:10 默认不扣（未时），出现提示；勾选后扣 1 小时（午时）
     await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
-    await p.fill('#xxt-v41-ziwei [data-z=year]', '1990');
+    await p.selectOption('#xxt-v41-ziwei [data-z=year]', '1990');
     await p.selectOption('#xxt-v41-ziwei [data-z=month]', '5');
     await p.selectOption('#xxt-v41-ziwei [data-z=day]', '15');
     await p.selectOption('#xxt-v41-ziwei [data-z=ch]', '13');
     await p.selectOption('#xxt-v41-ziwei [data-z=cm]', '10');
     await p.selectOption('#xxt-v41-ziwei [data-z=prov]', ''); await sleep(150);
-    const dst1 = await p.evaluate(() => ({ shown: !document.querySelector('#xxt-v41-ziwei [data-z=dsttip]').classList.contains('off'), text: document.querySelector('#xxt-v41-ziwei [data-z=dsttip]').textContent, checked: document.querySelector('#xxt-v41-ziwei [data-z=dst]').checked, tip: document.querySelector('#xxt-v41-ziwei [data-z=timetip]').textContent }));
+    const dst1 = await p.evaluate(() => ({ shown: !document.querySelector('#xxt-v41-ziwei [data-z=dsttip]').classList.contains('off'), text: document.querySelector('#xxt-v41-ziwei [data-z=dsttip]').textContent, checked: document.querySelector('#xxt-v41-ziwei [data-z=dst]').checked, tip: document.querySelector('#xxt-v41-ziwei [data-z=tline]').textContent }));
     assert(dst1.shown && /夏令时/.test(dst1.text) && !dst1.checked && /未时/.test(dst1.tip), `夏令时提示不对：${JSON.stringify(dst1)}`);
     await p.check('#xxt-v41-ziwei [data-z=dst]'); await sleep(150);
-    const tip2 = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=timetip]').textContent);
+    const tip2 = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=tline]').textContent + '|' + document.querySelector('#xxt-v41-ziwei [data-z=tsub]').textContent);
     assert(/13:10 → 12:10/.test(tip2) && /午时/.test(tip2), `勾选后没有扣 1 小时：${tip2}`);
     await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
     assert(await p.evaluate(() => app._zw.chart.birthInfo.hour) === 6, '勾选夏令时后应排午时');
@@ -1808,6 +1810,69 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
     // 详情里也显示叠加的四化
     await p.click('#xxt-v41-ziwei .zw-cell[data-br="9"]'); await sleep(200);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-detail').querySelectorAll('.zw-hua.ov').length) >= 1, '宫位详情没有显示流年四化');
+    await ctx.close();
+});
+
+test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起盘）、最近命盘（本机保存、点开、删除、清空），旧的选时辰记录自动换成钟点', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    // 旧版本按「选时辰」保存的记录：午时
+    await p.evaluate(() => localStorage.setItem('xxt_v41_ziwei_form', JSON.stringify({ cal: 'solar', year: 1990, month: 5, day: 15, leap: false, hour: 6, gender: 'male' })));
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei && document.querySelectorAll('#xxt-v41-ziwei [data-z=prov] option').length > 30);
+    const mig = await p.evaluate(() => ({ ch: document.querySelector('#xxt-v41-ziwei [data-z=ch]').value, cm: document.querySelector('#xxt-v41-ziwei [data-z=cm]').value, line: document.querySelector('#xxt-v41-ziwei [data-z=tline]').textContent, hist: document.querySelector('#xxt-v41-ziwei [data-z=hist]').textContent }));
+    assert(mig.ch === '12' && mig.cm === '0' && /午时/.test(mig.line) && mig.hist === '', `旧记录迁移不对：${JSON.stringify(mig)}`);
+    // 第 1 张：张三，不知道出生时间
+    await p.fill('#xxt-v41-ziwei [data-z=name]', '张三');
+    await p.check('#xxt-v41-ziwei [data-z=unknown]'); await sleep(100);
+    const unk = await p.evaluate(() => ({ off: document.querySelector('#xxt-v41-ziwei [data-z=tbox]').classList.contains('off'), dis: document.querySelector('#xxt-v41-ziwei [data-z=ch]').disabled, line: document.querySelector('#xxt-v41-ziwei [data-z=tline]').textContent, badge: document.querySelector('#xxt-v41-ziwei [data-z=badge]').textContent }));
+    assert(unk.off && unk.dis && /以子时/.test(unk.line) && unk.badge === '子', `不知道出生时间的状态不对：${JSON.stringify(unk)}`);
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    const c1 = await p.evaluate(() => ({ bi: app._zw.chart.birthInfo, center: document.querySelector('#xxt-v41-ziwei .zw-center').textContent, who: document.querySelector('#xxt-v41-ziwei .zw-who').textContent }));
+    assert(c1.bi.hour === 0 && c1.bi.day === 15 && /张三/.test(c1.center) && /时辰不详（按子时）/.test(c1.center) && /张三/.test(c1.who) && /可能不准/.test(c1.who), `第 1 张盘不对：${JSON.stringify(c1)}`);
+    // 第 2 张：李四，成都 13:10
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    await p.fill('#xxt-v41-ziwei [data-z=name]', '李四');
+    await p.uncheck('#xxt-v41-ziwei [data-z=unknown]');
+    await p.selectOption('#xxt-v41-ziwei [data-z=ch]', '13');
+    await p.selectOption('#xxt-v41-ziwei [data-z=cm]', '10');
+    await p.selectOption('#xxt-v41-ziwei [data-z=prov]', '四川省');
+    await p.selectOption('#xxt-v41-ziwei [data-z=city]', '成都');
+    await p.click('#xxt-v41-ziwei [data-z=gender] [data-v=female]');
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    // 打开表单可以看到最近命盘（新的在前）
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    const h1 = await p.evaluate(() => ({ head: document.querySelector('#xxt-v41-ziwei .zw-hhead').textContent, items: [...document.querySelectorAll('#xxt-v41-ziwei .zw-hitem')].map((x) => x.textContent.replace(/[×›]/g, '')) }));
+    assert(/最近命盘2/.test(h1.head.replace(/\s/g, '')) && /只保存在本机/.test(h1.head), `最近命盘标题不对：${h1.head}`);
+    assert(h1.items.length === 2 && /^李四 · 1990年5月15日 · 午时成都 · 女 · 刚刚$/.test(h1.items[0]) && /^张三 · 1990年5月15日 · 时辰不详未填出生地 · 男 · 刚刚$/.test(h1.items[1]), `条目不对：${JSON.stringify(h1.items)}`);
+    // 同一份信息再排一次不重复
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-ziwei .zw-hitem').length) === 2, '同一份信息重复记录了');
+    // 点张三：表单填回并直接出盘
+    await p.click('#xxt-v41-ziwei .zw-hitem[data-i="1"] .zw-hmain'); await sleep(500);
+    const c2 = await p.evaluate(() => ({ name: app._zw.name, unknown: app._zw.unknown, hour: app._zw.chart.birthInfo.hour, form: document.querySelector('#xxt-v41-ziwei [data-z=formwrap]').style.display }));
+    assert(c2.name === '张三' && c2.unknown && c2.hour === 0 && c2.form === 'none', `点最近命盘没有打开对应的盘：${JSON.stringify(c2)}`);
+    // 刷新后还在（本机保存）
+    await p.reload(); await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei);
+    await sleep(200);
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-ziwei .zw-hitem').length) === 2, '刷新后最近命盘丢了');
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=name]').value) === '张三', '刷新后没有记住上次填的姓名');
+    // 删除一条
+    await p.hover('#xxt-v41-ziwei .zw-hitem[data-i="0"]');
+    await p.click('#xxt-v41-ziwei .zw-hitem[data-i="0"] .zw-hdel'); await sleep(200);
+    assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-ziwei .zw-hitem').length) === 1 && !(await p.evaluate(() => !!app._zw)), '删除条目不对（删除不应打开盘）');
+    // 清空全部：点两次
+    await p.click('#xxt-v41-ziwei [data-zact=histclear]'); await sleep(150);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-zact=histclear]').textContent) === '再点一次确认清空', '清空没有二次确认');
+    await p.click('#xxt-v41-ziwei [data-zact=histclear]'); await sleep(150);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=hist]').textContent === '' && localStorage.getItem('xxt_v41_ziwei_hist') === null), '清空全部不对');
     await ctx.close();
 });
 
