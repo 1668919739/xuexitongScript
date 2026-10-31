@@ -1,5 +1,5 @@
 // 把 Renhuai123/ziwei-doushu 的排盘引擎打包成浏览器可用的单文件 ziwei/ziwei-<上游提交号>-<内容哈希>.min.js。
-// 浮窗里第一次打开「紫微排盘」时才从 jsDelivr 加载它，主脚本不变大。
+// 浮窗里第一次打开「紫微斗数」时才从 jsDelivr 加载它，主脚本不变大。
 // 文件名带上游提交号和内容哈希：内容变了文件名就变，jsDelivr @master 的缓存不会让用户拿到旧引擎，也不用 purge。
 // 打包完会自动把 v3_optimized.js 里的 ZIWEI_ENGINE_FILE 改成新文件名，并删掉旧的引擎文件。
 //
@@ -31,17 +31,21 @@ const entry = `
 import { generateChart } from './lib/ziwei/algorithm';
 import { detectPatterns, getMingGongSummary } from './lib/ziwei/patterns';
 import { lunarToSolar, leapMonthOfLunarYear, lunarMonthDayCount } from './lib/ziwei/lunar-solar';
-import { shiftGregorianDate, isValidGregorianDate } from './lib/ziwei/true-solar-time';
-import { STEMS, BRANCHES, STAR_DESCRIPTIONS } from './lib/ziwei/constants';
+import { shiftGregorianDate, isValidGregorianDate, calculateTrueSolarTime, resolveZiweiDayOffset } from './lib/ziwei/true-solar-time';
+import { PROVINCES } from './lib/ziwei/cities';
+import { isChinaDST } from './lib/ziwei/dst-cn';
+import { shiftClock } from './lib/ziwei/clock-adjust';
+import { STEMS, BRANCHES, STAR_DESCRIPTIONS, SI_HUA_TABLE } from './lib/ziwei/constants';
 globalThis.XxtZiwei = {
   version: ${JSON.stringify(commit.slice(0, 7))},
   generateChart, detectPatterns, getMingGongSummary,
   lunarToSolar, leapMonthOfLunarYear, lunarMonthDayCount,
-  shiftGregorianDate, isValidGregorianDate, STEMS, BRANCHES, STAR_DESCRIPTIONS,
+  shiftGregorianDate, isValidGregorianDate, calculateTrueSolarTime, resolveZiweiDayOffset,
+  PROVINCES, isChinaDST, shiftClock, STEMS, BRANCHES, STAR_DESCRIPTIONS, SI_HUA_TABLE,
 };
 `;
 
-const banner = `/*! 学习通助手 · 紫微排盘引擎（构建自 ziwei-doushu@${commit.slice(0, 7)}）
+const banner = `/*! 学习通助手 · 紫微斗数引擎（构建自 ziwei-doushu@${commit.slice(0, 7)}）
  * ziwei-doushu  https://github.com/Renhuai123/ziwei-doushu  MIT License  Copyright (c) 2026 紫微研究
  * iztro ${iztroVer}  https://github.com/SylarLong/iztro  MIT License  Copyright (c) 2023 All Contributors
  * lunar-javascript ${lunarVer}  https://github.com/6tail/lunar-javascript  MIT License  Copyright (c) 2018 6tail

@@ -31,9 +31,10 @@
     // 没有 v 的条目会单独显示为「作者吐槽」，不参与“新版本”判断
     const CHANGELOG = [
         { v: '4.6.14', date: '2026-10-31', items: [
-            '新增「紫微排盘」：右侧功能栏里的独立功能，和唱片机共用浮窗旁边的位置（打开一个就收起另一个）。支持公历 / 农历（含闰月）输入，23:00 后出生按晚子时归到次日；出 12 宫传统盘面（主星庙旺、生年四化、六吉六煞、大限岁数、身宫），点宫位看详情并标出三方四正，下面列出识别到的格局和古籍出处',
-            '排盘引擎来自开源项目 ziwei-doushu（MIT，基于倪海厦《天纪》体系，核心 iztro），单独打包成约 570KB 的文件，第一次打开紫微排盘时才下载，不用这个功能就不会多下载；全部在本机浏览器计算，出生信息只保存在本机',
-            '紫微排盘新增「AI 解读」：命格、性格、感情、事业、财运、健康六个主题，点哪个才生成哪个，用 DeepSeek（Key 与答题辅助共用，没填时可以在紫微面板里直接填）；只按本盘数据解读，不编造古籍原话，标明是 AI 生成、仅供参考；生成过的保存在本机，再看不重复扣费，可重新生成。宫位详情里加上主星的基本含义（关键词、吉凶、五行），空宫也显示借来的主星',
+            '新增「紫微斗数」：右侧功能栏里的独立功能，和唱片机共用浮窗旁边的位置（打开一个就收起另一个）。支持公历 / 农历（含闰月）输入，23:00 后出生按晚子时归到次日；出 12 宫传统盘面（主星庙旺、生年四化、六吉六煞、大限岁数、身宫），点宫位看详情并标出三方四正，下面列出识别到的格局和古籍出处',
+            '排盘引擎来自开源项目 ziwei-doushu（MIT，基于倪海厦《天纪》体系，核心 iztro），单独打包成约 570KB 的文件，第一次打开紫微斗数时才下载，不用这个功能就不会多下载；全部在本机浏览器计算，出生信息只保存在本机',
+            '紫微斗数新增「AI 解读」：命格、性格、感情、事业、财运、健康六个主题，点哪个才生成哪个，用 DeepSeek（Key 与答题辅助共用，没填时可以在紫微面板里直接填）；只按本盘数据解读，不编造古籍原话，标明是 AI 生成、仅供参考；生成过的保存在本机，再看不重复扣费，可重新生成。宫位详情里加上主星的基本含义（关键词、吉凶、五行），空宫也显示借来的主星',
+            '紫微斗数补上真太阳时和运限：出生时间默认填「几点几分 + 出生地」（全国省市区经度），按真太阳时（经度修正 + 均时差）定时辰，填写时实时显示会按哪个时辰排盘；出生日在中国大陆夏令时期间（1935–1991 年间的历年夏令时）会提示，勾选才扣 1 小时，不自动改；仍可改回直接选时辰。盘面上方可切换「本命 / 大限 / 流年」，大限按大限宫干、流年按年干把四化用虚线标在盘上，并标出大限命宫、流年命宫，大限和流年都能前后翻看',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
             '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
@@ -203,9 +204,9 @@
     // 静默更新时获取新版代码：GitHub 原始文件最及时（需核对版本号），jsDelivr 作为备用
     const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/v3_optimized.js';
     const SCRIPT_CDN_URL = 'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.js';
-    // 紫微排盘引擎：单独打包（scripts/build-ziwei.mjs），第一次打开「紫微排盘」时才下载，不打开就不加载。
+    // 紫微斗数引擎：单独打包（scripts/build-ziwei.mjs），第一次打开「紫微斗数」时才下载，不打开就不加载。
     // 文件名带上游 ziwei-doushu 的提交号和内容哈希，由打包脚本自动改写，不要手改
-    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-7007b886.min.js';
+    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-320a4a63.min.js';
     const ZIWEI_ENGINE_URLS = ['cdn', 'fastly', 'testingcf'].map((h) => `https://${h}.jsdelivr.net/gh/1668919739/xuexitongScript@master/${ZIWEI_ENGINE_FILE}`);
     const ZIWEI_FORM_KEY = 'xxt_v41_ziwei_form';
     const ZIWEI_AI_KEY = 'xxt_v41_ziwei_ai';   // AI 解读缓存：同一张盘同一主题只调用一次 DeepSeek，保留最近 5 张盘
@@ -369,7 +370,7 @@
         }
         throw new Error(`${last ? last.message : 'DeepSeek 没有返回答案'}，换用其他请求方式重试后仍不行，没有选择或提交题目`);
     }
-    // 紫微排盘的 AI 解读：要的是一段文字，不是 JSON。先低强度思考，长度用光或参数不被接受时改为直答
+    // 紫微斗数的 AI 解读：要的是一段文字，不是 JSON。先低强度思考，长度用光或参数不被接受时改为直答
     async function deepseekText(system, user, key, ctrl) {
         const attempts = [
             { thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 8000 },
@@ -5336,7 +5337,7 @@
                     if (on) d.style.setProperty('--xm-on', on);
                 } catch (e) { /* ignore */ }
             },
-            // 浮窗旁边弹出的面板（唱片机、紫微排盘）放在哪：右边放得下放右边，否则左边，都不行就贴屏幕右边；
+            // 浮窗旁边弹出的面板（唱片机、紫微斗数）放在哪：右边放得下放右边，否则左边，都不行就贴屏幕右边；
             // 侧边功能栏展开时让开它，并紧挨着侧边栏（或浮窗顶部）展开
             _floatSpot(w, h) {
                 const r = this._panel.getBoundingClientRect();
@@ -5419,7 +5420,7 @@
             },
 
 
-            // ================= 紫微排盘（浮窗侧边栏） =================
+            // ================= 紫微斗数（浮窗侧边栏） =================
             // 排盘引擎来自开源项目 ziwei-doushu（MIT，基于 iztro），单独打包成 ziwei/ziwei-*.min.js，
             // 第一次打开时才从 jsDelivr 下载，之后浏览器会缓存。排盘全部在本机完成，出生信息只保存在本机浏览器。
             // 和唱片机共用浮窗旁边的位置：打开一个就收起另一个。
@@ -5456,19 +5457,29 @@
                 return this._ziweiP;
             },
             _zwSaved() {
-                try { const o = JSON.parse(localStorage.getItem(ZIWEI_FORM_KEY) || 'null'); if (o && typeof o === 'object') return o; } catch (e) { /* ignore */ }
-                return { cal: 'solar', year: 2000, month: 1, day: 1, leap: false, hour: 6, gender: 'male' };
+                const def = { cal: 'solar', tmode: 'clock', year: 2000, month: 1, day: 1, leap: false, hour: 6, ch: 12, cm: 0, prov: '', city: '', dst: false, gender: 'male' };
+                try {
+                    const o = JSON.parse(localStorage.getItem(ZIWEI_FORM_KEY) || 'null');
+                    // 4.6.14 早期只有「选时辰」：旧记录没有 tmode 时沿用选时辰
+                    if (o && typeof o === 'object') return Object.assign({}, def, { tmode: 'branch' }, o);
+                } catch (e) { /* ignore */ }
+                return def;
             },
             // 表单 → 引擎的出生信息（纯函数，tests/ziwei-engine.mjs 抽出来单测）
-            // hour：0=早子时(00:00-00:59) 1=丑 … 11=亥 12=晚子时(23:00-23:59)；晚子时按次日子时排盘
+            // 两种时间输入：
+            //   tmode='clock'：几点几分 + 出生地（可不填）。按原项目口径换算真太阳时 = 钟表时间 + 经度修正 + 均时差，再定时辰；
+            //                  晚子时（23:00 后）归次日。出生日在中国大陆夏令时期间时只提示，用户勾选 dst 才扣 1 小时（原项目同样不自动扣）
+            //   tmode='branch'：直接选时辰，hour 0=早子时 1=丑 … 11=亥 12=晚子时（归次日）
             _ziweiResolveInput(f, Z) {
                 const CN_M = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
-                const year = Number(f.year), month = Number(f.month), day = Number(f.day), hour = Number(f.hour);
+                const BR = '子丑寅卯辰巳午未申酉戌亥';
+                const pad = (n) => String(n).padStart(2, '0');
+                const ymd = (d) => `${d.year}-${d.month}-${d.day}`;
+                const year = Number(f.year), month = Number(f.month), day = Number(f.day);
                 const gender = f.gender === 'female' ? 'female' : 'male';
                 if (!Number.isInteger(year) || year < 1900 || year > 2100) return { ok: false, error: '出生年份请填 1900–2100 之间' };
                 if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) return { ok: false, error: '请选择出生月、日' };
-                if (!Number.isInteger(hour) || hour < 0 || hour > 12) return { ok: false, error: '请选择出生时辰' };
-                let date, note = '';
+                let date; const notes = [];
                 if (f.cal === 'lunar') {
                     const leap = !!f.leap;
                     date = Z.lunarToSolar(year, month, day, leap);
@@ -5479,27 +5490,63 @@
                         }
                         return { ok: false, error: `农历 ${year} 年${CN_M[month - 1]}月没有这一天` };
                     }
-                    note = `农历换算为公历 ${date.year}-${date.month}-${date.day}`;
+                    notes.push(`农历换算为公历 ${ymd(date)}`);
                 } else {
                     if (!Z.isValidGregorianDate(year, month, day)) return { ok: false, error: `公历 ${year} 年 ${month} 月没有 ${day} 日` };
                     date = { year, month, day };
                 }
+                const dstDay = !!Z.isChinaDST(date.year, date.month, date.day);
+                if (f.tmode === 'clock') {
+                    let ch = Number(f.ch), cm = Number(f.cm);
+                    if (!Number.isInteger(ch) || ch < 0 || ch > 23 || !Number.isInteger(cm) || cm < 0 || cm > 59) return { ok: false, error: '请填写出生的几点几分' };
+                    if (dstDay && f.dst) {
+                        const t = Z.shiftClock({ clockHour: String(ch), clockMinute: String(cm) }, -60);
+                        if (!t) return { ok: false, error: '扣 1 小时后会跨到前一天，请直接把出生日期和时间改成标准时间再排盘' };
+                        notes.push(`按夏令时扣 1 小时：${pad(ch)}:${pad(cm)} → ${pad(t.clockHour)}:${pad(t.clockMinute)}`);
+                        ch = Number(t.clockHour); cm = Number(t.clockMinute);
+                    }
+                    let lon, place = '';
+                    if (f.prov && f.city) {
+                        const pv = (Z.PROVINCES || []).find((x) => x.name === f.prov);
+                        const ct = pv && pv.cities.find((x) => x.name === f.city);
+                        if (!ct) return { ok: false, error: '出生地不在列表里，请重新选择' };
+                        lon = ct.longitude;
+                        const muni = /^(北京|上海|天津|重庆)市$/.exec(f.prov);
+                        place = muni && f.city !== muni[1] ? muni[1] + f.city : f.city;
+                    }
+                    const solar = Z.calculateTrueSolarTime({ year: date.year, month: date.month, day: date.day, clockHour: ch, clockMinute: cm, longitude: lon });
+                    const off = Z.resolveZiweiDayOffset(solar, 'next-day');
+                    const sign = (v) => { const r = Math.round(v); return (r > 0 ? '+' : '') + r; };
+                    if (solar.corrected) notes.push(`${place}真太阳时 ${pad(solar.hour)}:${pad(solar.minute)}（经度 ${sign(solar.longitudeCorrectionMinutes)} 分，均时差 ${sign(solar.equationOfTimeMinutes)} 分）→ ${BR[solar.branch]}时`);
+                    else notes.push(`未填出生地，按北京时间 ${pad(ch)}:${pad(cm)} 定为${BR[solar.branch]}时`);
+                    if (off) {
+                        date = Z.shiftGregorianDate(date, off);
+                        notes.push(off > 0 ? `晚子时归到次日（公历 ${ymd(date)}）排盘` : `真太阳时退到前一天（公历 ${ymd(date)}）`);
+                    }
+                    return { ok: true, birth: { year: date.year, month: date.month, day: date.day, hour: solar.branch, gender }, note: notes.join('；'), dstDay };
+                }
+                const hour = Number(f.hour);
+                if (!Number.isInteger(hour) || hour < 0 || hour > 12) return { ok: false, error: '请选择出生时辰' };
                 let br = hour;
                 if (hour === 12) {
                     date = Z.shiftGregorianDate(date, 1);
                     br = 0;
-                    note = (note ? note + '；' : '') + `23:00 后出生按晚子时归到次日（公历 ${date.year}-${date.month}-${date.day}）子时排盘`;
+                    notes.push(`23:00 后出生按晚子时归到次日（公历 ${ymd(date)}）子时排盘`);
                 }
-                return { ok: true, birth: { year: date.year, month: date.month, day: date.day, hour: br, gender }, note };
+                return { ok: true, birth: { year: date.year, month: date.month, day: date.day, hour: br, gender }, note: notes.join('；'), dstDay };
             },
             _zwReadForm() {
                 const d = this._ziweiEl;
                 const v = (k) => d.querySelector(`[data-z="${k}"]`);
+                const seg = (k, def) => { const b = d.querySelector(`[data-z="${k}"] .on`); return b ? b.getAttribute('data-v') : def; };
                 return {
-                    cal: d.querySelector('[data-z="cal"] .on') ? d.querySelector('[data-z="cal"] .on').getAttribute('data-v') : 'solar',
+                    cal: seg('cal', 'solar'), tmode: seg('tmode', 'clock'),
                     year: Number(v('year').value), month: Number(v('month').value), day: Number(v('day').value),
                     leap: !!v('leap').checked, hour: Number(v('hour').value),
-                    gender: d.querySelector('[data-z="gender"] .on') ? d.querySelector('[data-z="gender"] .on').getAttribute('data-v') : 'male',
+                    ch: Number(v('ch').value), cm: Number(v('cm').value),
+                    prov: v('prov').value || '', city: v('prov').value ? v('city').value || '' : '',
+                    dst: !!this._zwDstChecked,
+                    gender: seg('gender', 'male'),
                 };
             },
             async _zwSubmit() {
@@ -5519,13 +5566,16 @@
                     this._zwSel = chart.mingGongBranch;
                     this._zwFormOpen = false;
                     this._zwTopic = '';
-                    log(`紫微排盘：${chart.lunarInfo.fourPillars ? chart.lunarInfo.fourPillars.join(' ') : ''} ${chart.wuxingJuName}`, '#2196F3');
+                    this._zwView = 'ming';
+                    this._zwDx = chart.currentDaXianIndex >= 0 ? chart.currentDaXianIndex : 0;
+                    this._zwYear = new Date().getFullYear();
+                    log(`紫微斗数：${chart.lunarInfo.fourPillars ? chart.lunarInfo.fourPillars.join(' ') : ''} ${chart.wuxingJuName}`, '#2196F3');
                 } catch (e) {
                     this._zwError = '排盘失败：' + (e && e.message ? e.message : e);
                 }
                 this._renderZiwei();
             },
-            // ---- 紫微排盘 · AI 解读 ----
+            // ---- 紫微斗数 · AI 解读 ----
             // 把命盘整理成文字交给 DeepSeek（Key 与答题辅助共用），按主题点了才生成，结果按“盘 + 主题”缓存在本机。
             // 提示词只给盘上的数据，要求不编造古籍 / 倪师原话；页面上写明这是 AI 生成、不是校对过的断语。
             // 纯函数：tests/ziwei-engine.mjs 抽出来单测
@@ -5632,10 +5682,10 @@
                     const text = await deepseekText(system, user, key, ctrl);
                     this._zwAiMem[k] = text;
                     this._zwAiStore([id, topic, text]);
-                    log(`紫微排盘：AI 解读「${label}」已生成`, '#2196F3');
+                    log(`紫微斗数：AI 解读「${label}」已生成`, '#2196F3');
                 } catch (e) {
                     this._zwAiErr[k] = e && e.message ? e.message : String(e);
-                    log(`紫微排盘：AI 解读「${label}」失败 ${this._zwAiErr[k]}`, '#FF9800', 'warn');
+                    log(`紫微斗数：AI 解读「${label}」失败 ${this._zwAiErr[k]}`, '#FF9800', 'warn');
                 } finally {
                     delete this._zwAiBusy[k];
                     this._zwAiVer = (this._zwAiVer || 0) + 1;
@@ -5682,7 +5732,7 @@
                 const d = document.createElement('div');
                 d.id = 'xxt-v41-ziwei';
                 d.setAttribute('role', 'dialog');
-                d.setAttribute('aria-label', '紫微排盘');
+                d.setAttribute('aria-label', '紫微斗数');
                 const sel = (k, opts) => `<select data-z="${k}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
                 const HOURS = [[0, '早子时 00–01'], [1, '丑时 01–03'], [2, '寅时 03–05'], [3, '卯时 05–07'], [4, '辰时 07–09'], [5, '巳时 09–11'], [6, '午时 11–13'],
                     [7, '未时 13–15'], [8, '申时 15–17'], [9, '酉时 17–19'], [10, '戌时 19–21'], [11, '亥时 21–23'], [12, '晚子时 23–24']];
@@ -5712,6 +5762,12 @@
                     '#xxt-v41-ziwei .zw-seg button{padding:4px 12px;border-radius:6px;color:var(--x-muted,#6B7280)}' +
                     '#xxt-v41-ziwei .zw-seg button.on{background:var(--x-bg,#fff);color:var(--x-accent-text,#1D4ED8);box-shadow:0 1px 2px rgba(15,23,42,.1);font-weight:600}' +
                     '#xxt-v41-ziwei .zw-leap{display:inline-flex;align-items:center;gap:4px;color:var(--x-text2,#374151)}' +
+                    '#xxt-v41-ziwei .zw-tip{grid-column:1/-1;font-size:11px;line-height:1.6;color:var(--x-muted,#6B7280)}' +
+                    '#xxt-v41-ziwei .zw-tip:empty{display:none}' +
+                    '#xxt-v41-ziwei .zw-tip.warn{padding:6px 8px;border-radius:8px;background:#FFF7E6;color:#8A5A00}' +
+                    '#xxt-v41-ziwei .zw-tip.warn.off{display:none}' +
+                    '#xxt-v41-ziwei[data-theme="dark"] .zw-tip.warn{background:#3A2E12;color:#FCD34D}' +
+                    '#xxt-v41-ziwei .zw-tip.warn label{display:inline-flex;align-items:center;gap:4px;margin-left:4px;font-weight:600;cursor:pointer}' +
                     '#xxt-v41-ziwei .zw-go{grid-column:1/-1;height:34px;border-radius:9px;background:var(--x-accent,#3B82F6);color:var(--x-on-accent,#fff);font-weight:600}' +
                     '#xxt-v41-ziwei .zw-go:disabled{opacity:.6;cursor:default}' +
                     '#xxt-v41-ziwei .zw-msg{margin-top:8px;padding:8px 10px;border-radius:9px;font-size:12px;background:var(--x-soft,#F6F8FB);color:var(--x-text2,#374151)}' +
@@ -5731,6 +5787,20 @@
                     '#xxt-v41-ziwei .zw-major i,#xxt-v41-ziwei .zw-dt i,#xxt-v41-ziwei .zw-star i{font-style:normal;font-size:10px;font-weight:400;color:var(--x-faint,#9CA3AF);margin-left:1px}' +
                     '#xxt-v41-ziwei .zw-hua{display:inline-block;font-size:10px;font-weight:600;line-height:14px;padding:0 3px;margin-left:2px;border-radius:4px;color:#fff;vertical-align:1px}' +
                     '#xxt-v41-ziwei .h-禄{background:#16A34A}#xxt-v41-ziwei .h-权{background:#9333EA}#xxt-v41-ziwei .h-科{background:#2563EB}#xxt-v41-ziwei .h-忌{background:#DC2626}' +
+                    '#xxt-v41-ziwei .zw-hua.ov{background:transparent!important;border:1px dashed currentColor;line-height:12px;font-weight:600}' +
+                    '#xxt-v41-ziwei .zw-hua.ov.h-禄{color:#16A34A}#xxt-v41-ziwei .zw-hua.ov.h-权{color:#9333EA}#xxt-v41-ziwei .zw-hua.ov.h-科{color:#2563EB}#xxt-v41-ziwei .zw-hua.ov.h-忌{color:#DC2626}' +
+                    '#xxt-v41-ziwei[data-theme="dark"] .zw-hua.ov.h-禄{color:#4ADE80}#xxt-v41-ziwei[data-theme="dark"] .zw-hua.ov.h-权{color:#C084FC}#xxt-v41-ziwei[data-theme="dark"] .zw-hua.ov.h-科{color:#60A5FA}#xxt-v41-ziwei[data-theme="dark"] .zw-hua.ov.h-忌{color:#F87171}' +
+                    '#xxt-v41-ziwei .zw-cell.tagged .zw-major{padding-right:30px}' +
+                    '#xxt-v41-ziwei .zw-cell.ovp{box-shadow:inset 0 0 0 1.5px var(--x-accent-ring,#93C5FD)}' +
+                    '#xxt-v41-ziwei .zw-cell.ovp.sel{box-shadow:inset 0 0 0 1.5px var(--x-accent,#3B82F6)}' +
+                    '#xxt-v41-ziwei .zw-views{display:flex;gap:4px;padding:3px;margin-bottom:6px;border-radius:9px;background:var(--x-soft2,#F1F3F6)}' +
+                    '#xxt-v41-ziwei .zw-views button{padding:4px 8px;border-radius:7px;color:var(--x-muted,#6B7280);white-space:nowrap}' +
+                    '#xxt-v41-ziwei .zw-views>button{flex:0 0 auto}' +
+                    '#xxt-v41-ziwei .zw-views button.on{background:var(--x-bg,#fff);color:var(--x-accent-text,#1D4ED8);font-weight:600;box-shadow:0 1px 2px rgba(15,23,42,.1)}' +
+                    '#xxt-v41-ziwei .zw-vgrp{flex:1;display:flex;align-items:center;justify-content:center;gap:2px}' +
+                    '#xxt-v41-ziwei .zw-views .zw-step{padding:2px 6px;font-size:14px;line-height:1}' +
+                    '#xxt-v41-ziwei .zw-views .zw-step:disabled{opacity:.3;cursor:default}' +
+                    '#xxt-v41-ziwei .zw-vinfo{margin-bottom:8px;font-size:11px;line-height:1.6;color:var(--x-muted,#6B7280)}' +
                     '#xxt-v41-ziwei .zw-minor{font-size:11px;line-height:1.35;color:var(--x-muted,#6B7280);word-break:break-all}' +
                     '#xxt-v41-ziwei .zw-minor .lk{color:var(--x-accent-text,#1D4ED8)}#xxt-v41-ziwei .zw-minor .sh{color:#C2410C}' +
                     '#xxt-v41-ziwei .zw-foot{margin-top:auto;display:flex;align-items:flex-end;gap:4px;padding-top:3px;font-size:10px;color:var(--x-faint,#9CA3AF)}' +
@@ -5783,14 +5853,21 @@
                     '#xxt-v41-ziwei[data-theme="dark"] .zw-minor .sh{color:#FDBA74}' +
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-ziwei{transition:none}#xxt-v41-ziwei .zw-spin{animation:none}}' +
                     '</style>' +
-                    '<div class="zw-head"><b>紫微排盘</b><span data-z="status"></span><button type="button" class="zw-x" data-z="close" aria-label="关闭紫微排盘">×</button></div>' +
+                    '<div class="zw-head"><b>紫微斗数</b><span data-z="status"></span><button type="button" class="zw-x" data-z="close" aria-label="关闭紫微斗数">×</button></div>' +
                     '<div class="zw-body" data-z="body">' +
                       '<div data-z="formwrap"><div class="zw-form">' +
                         '<label>历法</label><div class="zw-row"><span class="zw-seg" data-z="cal"><button type="button" data-v="solar">公历</button><button type="button" data-v="lunar">农历</button></span></div>' +
                         '<label>出生日期</label><div class="zw-row"><input type="number" data-z="year" min="1900" max="2100" aria-label="出生年份">年' +
                           sel('month', []) + sel('day', []) +
                           '<label class="zw-leap" data-z="leapwrap"><input type="checkbox" data-z="leap">闰月</label></div>' +
-                        '<label>出生时辰</label><div class="zw-row">' + sel('hour', HOURS) + '</div>' +
+                        '<label>出生时间</label><div class="zw-row"><span class="zw-seg" data-z="tmode"><button type="button" data-v="clock">几点几分</button><button type="button" data-v="branch">选时辰</button></span></div>' +
+                        '<label data-z="clocklab">钟表时间</label><div class="zw-row" data-z="clockrow">' +
+                          sel('ch', Array.from({ length: 24 }, (_, i) => [i, String(i).padStart(2, '0') + ' 时'])) +
+                          sel('cm', Array.from({ length: 60 }, (_, i) => [i, String(i).padStart(2, '0') + ' 分'])) + '</div>' +
+                        '<label data-z="placelab">出生地</label><div class="zw-row" data-z="placerow"><select data-z="prov" aria-label="出生省份"><option value="">不填（按北京时间）</option></select><select data-z="city" aria-label="出生城市"></select></div>' +
+                        '<label data-z="hourlab">时辰</label><div class="zw-row" data-z="hourrow">' + sel('hour', HOURS) + '</div>' +
+                        '<div class="zw-tip warn" data-z="dsttip"></div>' +
+                        '<div class="zw-tip" data-z="timetip"></div>' +
                         '<label>性别</label><div class="zw-row"><span class="zw-seg" data-z="gender"><button type="button" data-v="male">男</button><button type="button" data-v="female">女</button></span></div>' +
                         '<button type="button" class="zw-go" data-z="go">排盘</button>' +
                       '</div></div>' +
@@ -5814,12 +5891,21 @@
                     q('leapwrap').style.display = lunar ? '' : 'none';
                 };
                 setSeg('cal', saved.cal === 'lunar' ? 'lunar' : 'solar');
+                setSeg('tmode', saved.tmode === 'branch' ? 'branch' : 'clock');
                 setSeg('gender', saved.gender === 'female' ? 'female' : 'male');
                 q('year').value = saved.year;
                 q('hour').value = String(saved.hour);
+                q('ch').value = String(saved.ch);
+                q('cm').value = String(saved.cm);
                 q('leap').checked = !!saved.leap;
+                this._zwDstChecked = !!saved.dst;
                 fillMonthDay();
-                q('cal').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { setSeg('cal', b.getAttribute('data-v')); fillMonthDay(); } });
+                q('cal').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { setSeg('cal', b.getAttribute('data-v')); fillMonthDay(); this._zwTimeTip(); } });
+                q('tmode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { setSeg('tmode', b.getAttribute('data-v')); this._zwTimeTip(); } });
+                q('prov').addEventListener('change', () => { this._zwFillCities(''); this._zwTimeTip(); });
+                for (const k of ['year', 'month', 'day', 'leap', 'hour', 'ch', 'cm', 'city']) q(k).addEventListener(k === 'year' ? 'input' : 'change', () => this._zwTimeTip());
+                d.addEventListener('change', (e) => { if (e.target && e.target.getAttribute('data-z') === 'dst') { this._zwDstChecked = e.target.checked; this._zwTimeTip(); } });
+                this._zwSavedPlace = { prov: saved.prov || '', city: saved.city || '' };
                 q('gender').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setSeg('gender', b.getAttribute('data-v')); });
                 q('go').addEventListener('click', () => this._zwSubmit());
                 q('year').addEventListener('keydown', (e) => { if (e.key === 'Enter') this._zwSubmit(); });
@@ -5830,6 +5916,15 @@
                         const act = t.getAttribute('data-zact');
                         if (act === 'edit') { this._zwFormOpen = !this._zwFormOpen; this._renderZiwei(); }
                         else if (act === 'retry') { this._zwError = ''; this._loadZiwei().catch(() => {}); }
+                        else if (act === 'view') { this._zwView = t.getAttribute('data-v'); this._renderZiwei(); }
+                        else if (act === 'dx' || act === 'ln') {
+                            const step = Number(t.getAttribute('data-step'));
+                            const n = this._zw ? this._zw.chart.daXians.length : 12;
+                            if (act === 'dx') this._zwDx = Math.min(n - 1, Math.max(0, (this._zwDx || 0) + step));
+                            else this._zwYear = Math.min(2100, Math.max(1900, (this._zwYear || new Date().getFullYear()) + step));
+                            this._zwView = act;
+                            this._renderZiwei();
+                        }
                         else if (act === 'ai') this._zwAiRun(t.getAttribute('data-topic'));
                         else if (act === 'airegen') this._zwAiRun(this._zwTopic, true);
                         else if (act === 'aikeysave') this._zwSaveKey();
@@ -5848,17 +5943,106 @@
                 for (const t of ['keydown', 'keyup', 'keypress']) d.addEventListener(t, (e) => e.stopPropagation());
                 document.body.appendChild(d);
                 this._ziweiEl = d;
+                this._zwFillPlaces();
+                this._zwTimeTip();
                 return d;
+            },
+            // 出生地下拉：引擎（含城市经度表）加载后才能填
+            _zwFillPlaces() {
+                const d = this._ziweiEl, Z = window.XxtZiwei;
+                if (!d || !Z || !Z.PROVINCES || this._zwPlacesFilled === d) return;
+                this._zwPlacesFilled = d;
+                const esc = (t) => this._esc(t);
+                const prov = d.querySelector('[data-z="prov"]');
+                prov.innerHTML = '<option value="">不填（按北京时间）</option>' + Z.PROVINCES.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+                const sp = this._zwSavedPlace || {};
+                if (sp.prov && Z.PROVINCES.some((p) => p.name === sp.prov)) prov.value = sp.prov;
+                this._zwFillCities(sp.city || '');
+            },
+            _zwFillCities(want) {
+                const d = this._ziweiEl, Z = window.XxtZiwei;
+                if (!d) return;
+                const prov = d.querySelector('[data-z="prov"]').value, city = d.querySelector('[data-z="city"]');
+                const pv = Z && Z.PROVINCES && Z.PROVINCES.find((p) => p.name === prov);
+                city.innerHTML = pv ? pv.cities.map((c) => `<option value="${this._esc(c.name)}">${this._esc(c.name)}（${c.longitude.toFixed(1)}°E）</option>`).join('') : '';
+                city.style.display = pv ? '' : 'none';
+                if (pv && want && pv.cities.some((c) => c.name === want)) city.value = want;
+            },
+            // 时间输入的实时说明：显示会按哪个时辰排盘（真太阳时换算结果）；出生日在夏令时期间时给出可勾选的提示（不自动扣）
+            _zwTimeTip() {
+                const d = this._ziweiEl;
+                if (!d) return;
+                const q = (k) => d.querySelector(`[data-z="${k}"]`);
+                const clock = !!q('tmode').querySelector('.on[data-v="clock"]');
+                for (const k of ['clocklab', 'clockrow', 'placelab', 'placerow']) q(k).style.display = clock ? '' : 'none';
+                for (const k of ['hourlab', 'hourrow']) q(k).style.display = clock ? 'none' : '';
+                const Z = window.XxtZiwei;
+                const dstBox = `<input type="checkbox" data-z="dst"${this._zwDstChecked ? ' checked' : ''}`;
+                if (!Z || !Z.calculateTrueSolarTime) {
+                    q('timetip').textContent = clock ? '选好出生地会按真太阳时校正时辰（排盘引擎加载后显示换算结果）' : '';
+                    q('dsttip').innerHTML = dstBox + ' hidden>'; q('dsttip').classList.add('off');
+                    return;
+                }
+                const f = this._zwReadForm();
+                f.dst = !!this._zwDstChecked;
+                const r = this._ziweiResolveInput(f, Z);
+                q('dsttip').classList.toggle('off', !r.dstDay);
+                q('dsttip').innerHTML = !r.dstDay ? dstBox + ' hidden>'
+                    : clock ? `出生日在中国大陆夏令时期间（当时钟表拨快 1 小时）。如果填的是当时的钟表时间，<label>${dstBox}>扣 1 小时</label>`
+                        : `出生日在中国大陆夏令时期间（当时钟表拨快 1 小时）。如果时辰是按当时钟表时间推的，可能要往前推一个时辰；改用「几点几分」可以勾选自动扣除。${dstBox} hidden>`;
+                q('timetip').textContent = r.ok ? (r.note ? '将按：' + r.note : '') : r.error;
             },
             _zwSaveKey() {
                 const inp = this._ziweiEl && this._ziweiEl.querySelector('[data-z="aikey"]');
                 const v = inp ? inp.value.trim() : '';
                 if (!v) return;
                 if (!setDeepseekKey(v)) { this._zwError = 'Key 保存失败：浏览器不允许本地存储'; this._renderZiwei(); return; }
-                log('紫微排盘：已保存 DeepSeek Key（和答题辅助共用）', '#2196F3');
+                log('紫微斗数：已保存 DeepSeek Key（和答题辅助共用）', '#2196F3');
                 this._panelKey = '';
                 this._renderPanel();
                 if (this._zwTopic) this._zwAiRun(this._zwTopic); else this._renderZiwei();
+            },
+            // 当前运限视图的四化叠加：{ tag: '限'|'年', map: 星名→禄权科忌, palace: 大限宫/流年命宫的地支, stem, ... }；本命视图返回 null
+            _zwOverlay(c) {
+                const Z = window.XxtZiwei, T = Z && Z.SI_HUA_TABLE;
+                if (!T || !this._zwView || this._zwView === 'ming') return null;
+                const mk = (stem) => { const r = T[stem]; return r ? { [r[0]]: '禄', [r[1]]: '权', [r[2]]: '科', [r[3]]: '忌' } : {}; };
+                if (this._zwView === 'dx') {
+                    const dx = c.daXians[this._zwDx || 0];
+                    const p = dx && c.palaces.find((x) => x.branch === dx.palaceBranch);
+                    if (!p) return null;
+                    return { tag: '限', map: mk(p.stem), palace: p.branch, stem: p.stem, dx };
+                }
+                const y = this._zwYear || new Date().getFullYear();
+                const stem = ((y - 4) % 10 + 10) % 10, branch = ((y - 4) % 12 + 12) % 12;
+                return { tag: '年', map: mk(stem), palace: branch, stem, year: y };
+            },
+            _zwViewBar(c, ov) {
+                const esc = (t) => this._esc(t);
+                const BR = '子丑寅卯辰巳午未申酉戌亥', ST = '甲乙丙丁戊己庚辛壬癸';
+                const view = this._zwView || 'ming';
+                const dx = c.daXians[this._zwDx || 0];
+                const y = this._zwYear || new Date().getFullYear();
+                const tab = (v, label) => `<button type="button" data-zact="view" data-v="${v}" class="${view === v ? 'on' : ''}" aria-pressed="${view === v}">${label}</button>`;
+                const step = (act, n, dis, lab) => `<button type="button" class="zw-step" data-zact="${act}" data-step="${n}"${dis ? ' disabled' : ''} aria-label="${lab}">${n < 0 ? '‹' : '›'}</button>`;
+                const bar = '<div class="zw-views" role="group" aria-label="运限">' + tab('ming', '本命') +
+                    `<span class="zw-vgrp${view === 'dx' ? ' on' : ''}">${step('dx', -1, (this._zwDx || 0) <= 0, '上一个大限')}${tab('dx', dx ? `大限 ${dx.startAge}–${dx.endAge}` : '大限')}${step('dx', 1, (this._zwDx || 0) >= c.daXians.length - 1, '下一个大限')}</span>` +
+                    `<span class="zw-vgrp${view === 'ln' ? ' on' : ''}">${step('ln', -1, y <= 1900, '上一年')}${tab('ln', `流年 ${y}`)}${step('ln', 1, y >= 2100, '下一年')}</span></div>`;
+                if (!ov) return bar + '<div class="zw-vinfo">本命盘：显示生年四化。切到大限或流年，会把那一段的四化用虚线标在盘上。</div>';
+                const by = { 禄: '', 权: '', 科: '', 忌: '' };
+                for (const [n, h] of Object.entries(ov.map)) by[h] = n;
+                const pn = (br) => { const p = c.palaces.find((x) => x.branch === br); return p ? p.name : ''; };
+                const where = (n) => { const p = c.palaces.find((x) => x.stars.some((s) => s.name === n)); return p ? `（${p.name}）` : ''; };
+                const huaTxt = ['禄', '权', '科', '忌'].map((h) => `${esc(by[h])}化${h}${esc(where(by[h]))}`).join(' · ');
+                let info;
+                if (ov.tag === '限') {
+                    info = `大限 ${ov.dx.startAge}–${ov.dx.endAge} 岁 · 大限命宫在${BR[ov.palace]}（本命${esc(pn(ov.palace))}）· 宫干${ST[ov.stem]}：${huaTxt}` + (this._zwDx === c.currentDaXianIndex ? ' · 当前大限' : '');
+                } else {
+                    const age = ov.year - c.lunarInfo.lunarYear + 1;
+                    const inDx = c.daXians.find((d) => age >= d.startAge && age <= d.endAge);
+                    info = `${ov.year} ${ST[ov.stem]}${BR[ov.palace]}年 · 虚岁 ${age > 0 ? age : '-'}${inDx ? `（行 ${inDx.startAge}–${inDx.endAge} 大限）` : ''} · 流年命宫在${BR[ov.palace]}（本命${esc(pn(ov.palace))}）· 年干${ST[ov.stem]}：${huaTxt}`;
+                }
+                return bar + `<div class="zw-vinfo">${info}</div>`;
             },
             _zwChartHtml() {
                 const z = this._zw;
@@ -5870,7 +6054,10 @@
                 const byBr = new Map(c.palaces.map((p) => [p.branch, p]));
                 const sel = Number.isInteger(this._zwSel) ? this._zwSel : c.mingGongBranch;
                 const tri = new Set([(sel + 4) % 12, (sel + 8) % 12, (sel + 6) % 12]);
-                const hua = (s) => s.siHua ? `<span class="zw-hua h-${esc(s.siHua)}">${esc(s.siHua)}</span>` : '';
+                // 运限叠加（与原项目一致）：大限取该大限宫的宫干起四化，流年取当年年干起四化；虚线标出，前缀「限」「年」
+                const ov = this._zwOverlay(c);
+                const hua = (s) => (s.siHua ? `<span class="zw-hua h-${esc(s.siHua)}">${esc(s.siHua)}</span>` : '') +
+                    (ov && ov.map[s.name] ? `<span class="zw-hua ov h-${esc(ov.map[s.name])}">${ov.tag}${esc(ov.map[s.name])}</span>` : '');
                 const cell = (br) => {
                     const p = byBr.get(br);
                     if (!p) return '<div class="zw-cell"></div>';
@@ -5882,8 +6069,9 @@
                     const minorHtml = others.map((s) => `<span class="${s.type === 'lucky' ? 'lk' : s.type === 'sha' ? 'sh' : ''}">${esc(s.name)}${hua(s)}</span>`).join(' ');
                     const dx = p.daXianAge ? `<span class="dx${p.isCurrentDaXian ? ' cur' : ''}">${p.daXianAge[0]}–${p.daXianAge[1]}</span>` : '';
                     const cls = 'zw-cell' + (br === sel ? ' sel' : tri.has(br) ? ' tri' : '');
-                    return `<div class="${cls}" data-br="${br}" role="button" tabindex="0" aria-pressed="${br === sel}" aria-label="${esc(p.name)} ${ST[p.stem] || ''}${BR[br]}">` +
-                        (p.isShenGong ? '<span class="zw-tag">身</span>' : '') +
+                    const tags = (p.isShenGong ? '身' : '') + (ov && ov.palace === br ? (p.isShenGong ? ' ' : '') + ov.tag + '命' : '');
+                    return `<div class="${cls}${ov && ov.palace === br ? ' ovp' : ''}${tags ? ' tagged' : ''}" data-br="${br}" role="button" tabindex="0" aria-pressed="${br === sel}" aria-label="${esc(p.name)} ${ST[p.stem] || ''}${BR[br]}">` +
+                        (tags ? `<span class="zw-tag">${tags}</span>` : '') +
                         `<div class="zw-major${majors.length ? '' : ' empty'}">${majorHtml}</div>` +
                         `<div class="zw-minor">${minorHtml}</div>` +
                         `<div class="zw-foot">${dx}<span>${ST[p.stem] || ''}${BR[br]}</span><b class="${p.isMingGong ? 'ming' : ''}">${esc(p.name)}</b></div></div>`;
@@ -5927,6 +6115,7 @@
                     : '<div class="zw-msg">本盘没有识别出典型格局</div>';
                 return `<div class="zw-bar"><span class="zw-who">${B.gender === 'female' ? '女' : '男'} · ${z.input.cal === 'lunar' ? '农历输入' : '公历输入'}${z.note ? ' · ' + esc(z.note) : ''}</span>` +
                     `<button type="button" class="zw-link" data-zact="edit">${this._zwFormOpen ? '收起' : '修改出生信息'}</button></div>` +
+                    this._zwViewBar(c, ov) +
                     `<div class="zw-grid">${grid}</div>` +
                     '<div class="zw-sec">宫位详情 <span style="font-weight:400;color:var(--x-faint,#9CA3AF)">（点盘上的宫位切换）</span></div>' + detail +
                     '<div data-z="ai"></div>' +
@@ -5941,6 +6130,7 @@
                 d.setAttribute('aria-hidden', String(!open));
                 if (open) d.removeAttribute('inert'); else d.setAttribute('inert', '');
                 const loaded = !!(window.XxtZiwei && window.XxtZiwei.generateChart);
+                if (loaded && this._zwTipLoaded !== d) { this._zwTipLoaded = d; this._zwFillPlaces(); this._zwTimeTip(); }
                 q('status').textContent = loaded ? `引擎 ${window.XxtZiwei.version || ''}` : this._zwLoad === 'loading' ? '正在下载排盘引擎…' : this._zwLoad === 'failed' ? '引擎未加载' : '';
                 q('go').disabled = this._zwLoad === 'loading' && !loaded;
                 q('go').textContent = this._zwLoad === 'loading' && !loaded ? '正在下载排盘引擎（约 570KB，只需一次）…' : this._zw ? '重新排盘' : '排盘';
@@ -5949,7 +6139,7 @@
                     ? `<div class="zw-msg err">${this._esc(this._zwError)}${this._zwLoad === 'failed' ? '<button type="button" data-zact="retry">重试</button>' : ''}</div>`
                     : (this._zwLoad === 'failed' && !loaded ? '<div class="zw-msg err">排盘引擎下载失败，请检查网络<button type="button" data-zact="retry">重试</button></div>' : '');
                 if (q('msg').innerHTML !== msg) q('msg').innerHTML = msg;
-                const key = this._zw ? `${this._zw.chart.birthInfo.year}-${this._zw.chart.birthInfo.month}-${this._zw.chart.birthInfo.day}-${this._zw.chart.birthInfo.hour}-${this._zw.chart.birthInfo.gender}|${this._zwSel}|${this._zwFormOpen}` : '';
+                const key = this._zw ? `${this._zw.chart.birthInfo.year}-${this._zw.chart.birthInfo.month}-${this._zw.chart.birthInfo.day}-${this._zw.chart.birthInfo.hour}-${this._zw.chart.birthInfo.gender}|${this._zwSel}|${this._zwFormOpen}|${this._zwView}|${this._zwDx}|${this._zwYear}` : '';
                 let fresh = false;
                 if (this._zwKey !== key) { this._zwKey = key; q('result').innerHTML = this._zwChartHtml(); fresh = true; }
                 const aiBox = q('ai');
@@ -5983,7 +6173,7 @@
             },
 
             // ================= 侧边功能栏（浮窗右侧边缘，点击拉出） =================
-            // 不常用的功能放在这里：唱片机、音频转换、紫微排盘、更新记录、留言板、反馈
+            // 不常用的功能放在这里：唱片机、音频转换、紫微斗数、更新记录、留言板、反馈
             _ensureSide() {
                 if (this._sideEl && this._sideEl.isConnected) return this._sideEl;
                 const d = document.createElement('div');
@@ -5992,7 +6182,7 @@
                 const items = [
                     ['music', '唱片机', ico('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 016.5 6.5"/>')],
                     ['conv', '音频转换', ico('<path d="M4 9v6M8 6v12M12 10v4M16 7v10M20 11v2"/>')],
-                    ['ziwei', '紫微排盘', ico('<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 9.2h17M3.5 14.8h17M9.2 3.5v17M14.8 3.5v17"/><path d="M12 10.3l.6 1.1 1.2.2-.9.8.2 1.2-1.1-.6-1.1.6.2-1.2-.9-.8 1.2-.2z" fill="currentColor" stroke="none"/>')],
+                    ['ziwei', '紫微斗数', ico('<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 9.2h17M3.5 14.8h17M9.2 3.5v17M14.8 3.5v17"/><path d="M12 10.3l.6 1.1 1.2.2-.9.8.2 1.2-1.1-.6-1.1.6.2-1.2-.9-.8 1.2-.2z" fill="currentColor" stroke="none"/>')],
                     ['history', '更新记录', ico('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>')],
                     ['board', '留言板', ico('<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>')],
                     ['feedback', '反馈问题', ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>')],

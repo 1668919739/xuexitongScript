@@ -1,4 +1,4 @@
-// 紫微排盘引擎（ziwei/ziwei.min.js）回归：
+// 紫微斗数引擎（ziwei/ziwei.min.js）回归：
 // 1. 主脚本引用的引擎文件存在，许可声明在包里；
 // 2. 结构不变量：12 宫齐全且逆排、14 主星各出现一次、生年四化恰好 4 颗、命宫标记与命宫地支一致；
 // 3. 与「未合并农历库」构建的快照逐宫比对（tests/fixtures/ziwei-snapshot.json），确认合并 lunar 库没有改变排盘结果；
@@ -25,7 +25,7 @@ ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(code, ctx);
 const Z = ctx.XxtZiwei;
-for (const k of ['generateChart', 'detectPatterns', 'getMingGongSummary', 'lunarToSolar', 'leapMonthOfLunarYear', 'shiftGregorianDate']) ok(typeof Z[k] === 'function', `导出 ${k}`);
+for (const k of ['generateChart', 'detectPatterns', 'getMingGongSummary', 'lunarToSolar', 'leapMonthOfLunarYear', 'shiftGregorianDate', 'calculateTrueSolarTime', 'resolveZiweiDayOffset', 'isChinaDST', 'shiftClock']) ok(typeof Z[k] === 'function', `导出 ${k}`);
 
 const BR = '子丑寅卯辰巳午未申酉戌亥';
 const PALACES = ['命宫', '兄弟', '夫妻', '子女', '财帛', '疾厄', '迁移', '仆役', '官禄', '田宅', '福德', '父母'];
@@ -64,6 +64,9 @@ for (const { input, expect } of snap.charts) {
     ok(diff.length === 0, `${input.year}-${input.month}-${input.day} ${BR[input.hour]}时 ${input.gender === 'male' ? '男' : '女'}` + (diff.length ? ` 不一致字段：${diff.join(',')}` : ''));
 }
 
+ok(Array.isArray(Z.PROVINCES) && Z.PROVINCES.length >= 30 && Z.PROVINCES.reduce((n, p) => n + p.cities.length, 0) > 400, '导出全国省市经度表');
+ok(Z.SI_HUA_TABLE && Object.keys(Z.SI_HUA_TABLE).length === 10 && Z.SI_HUA_TABLE[6].join() === '太阳,武曲,太阴,天同', '导出十天干四化表（庚：阳武阴同）');
+ok(Z.isChinaDST(1990, 5, 15) && !Z.isChinaDST(1990, 10, 1) && !Z.isChinaDST(1995, 5, 15), '夏令时判定');
 console.log('农历 / 换日辅助');
 const s = (o) => o && `${o.year}-${o.month}-${o.day}`;
 ok(s(Z.lunarToSolar(1990, 1, 1, false)) === '1990-1-27', '1990 年正月初一 = 1990-01-27');
@@ -91,6 +94,33 @@ if (m) {
     ok(!e.ok, '不存在的公历日期报错');
     const f = r({ cal: 'solar', year: 1800, month: 1, day: 1, hour: 3, gender: 'male' });
     ok(!f.ok, '超出 1900–2100 报错');
+
+    console.log('真太阳时 / 夏令时（tmode=clock）');
+    const base = { cal: 'solar', tmode: 'clock', gender: 'male' };
+    const c1 = r({ ...base, year: 1990, month: 5, day: 15, ch: 12, cm: 0 });
+    ok(c1.ok && c1.birth.hour === 6 && /按北京时间 12:00 定为午时/.test(c1.note), `不填出生地按北京时间：${c1.note}`);
+    const c2 = r({ ...base, year: 2000, month: 3, day: 1, ch: 12, cm: 0, prov: '新疆维吾尔自治区', city: '乌鲁木齐' });
+    ok(c2.ok && c2.birth.hour === 5 && /乌鲁木齐真太阳时 09:/.test(c2.note) && /经度 -130 分/.test(c2.note), `乌鲁木齐 12:00 → 巳时：${c2.note}`);
+    const ref = Z.calculateTrueSolarTime({ year: 2000, month: 3, day: 1, clockHour: 12, clockMinute: 0, longitude: 87.6 });
+    ok(c2.birth.hour === ref.branch, '与引擎 calculateTrueSolarTime 结果一致');
+    const c3 = r({ ...base, year: 2023, month: 12, day: 31, ch: 23, cm: 30 });
+    ok(c3.ok && s(c3.birth) === '2024-1-1' && c3.birth.hour === 0 && /晚子时归到次日/.test(c3.note), `北京时间 23:30 归次日子时：${c3.note}`);
+    const c4 = r({ ...base, year: 2000, month: 3, day: 2, ch: 0, cm: 30, prov: '新疆维吾尔自治区', city: '乌鲁木齐' });
+    ok(c4.ok && s(c4.birth) === '2000-3-1' && c4.birth.hour === 11 && /退到前一天/.test(c4.note), `乌鲁木齐 00:30 真太阳时退到前一天亥时：${c4.note}`);
+    const c5 = r({ ...base, year: 1990, month: 5, day: 15, ch: 13, cm: 10 });
+    ok(c5.ok && c5.dstDay && c5.birth.hour === 7, '1990-05-15 在夏令时期间：不勾选时不扣，13:10 仍是未时');
+    const c6 = r({ ...base, year: 1990, month: 5, day: 15, ch: 13, cm: 10, dst: true });
+    ok(c6.ok && c6.birth.hour === 6 && /扣 1 小时：13:10 → 12:10/.test(c6.note), `勾选后扣 1 小时变午时：${c6.note}`);
+    const c7 = r({ ...base, year: 1995, month: 5, day: 15, ch: 13, cm: 10, dst: true });
+    ok(c7.ok && !c7.dstDay && c7.birth.hour === 7 && !/扣 1 小时/.test(c7.note), '不在夏令时期间时，勾选也不扣');
+    const c8 = r({ ...base, year: 1990, month: 5, day: 15, ch: 0, cm: 30, dst: true });
+    ok(!c8.ok && /跨到前一天/.test(c8.error), '扣 1 小时跨日时报错，让用户自己改日期');
+    const c9 = r({ ...base, year: 1990, month: 5, day: 15, ch: 25, cm: 0 });
+    ok(!c9.ok, '钟点不合法报错');
+    const c10 = r({ ...base, year: 1990, month: 5, day: 15, ch: 12, cm: 0, prov: '火星', city: '基地' });
+    ok(!c10.ok && /出生地/.test(c10.error), '出生地不在表里报错');
+    const c11 = r({ ...base, cal: 'lunar', year: 2023, month: 2, day: 1, leap: true, ch: 8, cm: 0, prov: '上海市', city: '上海' });
+    ok(c11.ok && s(c11.birth) === '2023-3-22' && /上海真太阳时/.test(c11.note), '农历闰月 + 钟点 + 出生地');
 }
 
 console.log('星曜含义与 AI 解读提示词（_zwPrompt）');

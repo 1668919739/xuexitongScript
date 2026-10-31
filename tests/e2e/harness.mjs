@@ -41,7 +41,7 @@ export async function newContext(browser, { routes = {}, latest = VERSION, remot
     const H = { 'access-control-allow-origin': '*' };
     const code = remoteCode ?? withVersion(latest);
     await ctx.route('https://code.jquery.com/**', (r) => r.fulfill({ body: JQUERY, contentType: 'text/javascript' }));
-    // 紫微排盘引擎：ziwei='ok' 返回本地打包好的引擎文件；'fail' 模拟所有 CDN 都下载失败
+    // 紫微斗数引擎：ziwei='ok' 返回本地打包好的引擎文件；'fail' 模拟所有 CDN 都下载失败
     const serveZiwei = (r) => {
         if (ziwei === 'fail') return r.abort();
         const u = new URL(r.request().url());
