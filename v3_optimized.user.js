@@ -35,7 +35,7 @@
             '排盘引擎来自开源项目 ziwei-doushu（MIT，基于倪海厦《天纪》体系，核心 iztro），单独打包成约 570KB 的文件，第一次打开紫微斗数时才下载，不用这个功能就不会多下载；全部在本机浏览器计算，出生信息只保存在本机',
             '紫微斗数新增「AI 解读」：命格、性格、感情、事业、财运、健康六个主题，点哪个才生成哪个，用 DeepSeek（Key 与答题辅助共用，没填时可以在紫微面板里直接填）；只按本盘数据解读，不编造古籍原话，标明是 AI 生成、仅供参考；生成过的保存在本机，再看不重复扣费，可重新生成。宫位详情里加上主星的基本含义（关键词、吉凶、五行），空宫也显示借来的主星',
             '紫微斗数补上真太阳时和运限：出生时间默认填「几点几分 + 出生地」（全国省市区经度），按真太阳时（经度修正 + 均时差）定时辰，填写时实时显示会按哪个时辰排盘；出生日在中国大陆夏令时期间（1935–1991 年间的历年夏令时）会提示，勾选才扣 1 小时，不自动改；仍可改回直接选时辰。盘面上方可切换「本命 / 大限 / 流年」，大限按大限宫干、流年按年干把四化用虚线标在盘上，并标出大限命宫、流年命宫，大限和流年都能前后翻看',
-            '紫微斗数的输入表单按原站 ouranic.cn 重排：姓名（可选）→ 出生日期（公历 / 农历）→ 出生时间（北京时间，下面实时显示「北京时间 / 真太阳时 → 几点几分 · 某时（时段）」）→「不知道出生时间，以子时（23:00–01:00）起盘」→ 出生地点（用于真太阳时校正）→ 性别 →「立即起盘 · 查看命盘解析」；去掉原站没有的「选时辰」，以前按时辰保存的记录自动换成该时辰里的钟点，排出来的盘不变。新增「最近命盘」：本机保存最近 10 张，显示姓名、日期、时辰、出生地、性别和多久以前，点一下直接打开，可单条删除或清空全部（点两次确认）',
+            '紫微斗数的输入表单按原站 ouranic.cn 重排：姓名（可选）→ 出生日期（公历 / 农历）→ 出生时间（北京时间，下面实时显示「北京时间 / 真太阳时 → 几点几分 · 某时（时段）」）→「不知道出生时间，以子时（23:00–01:00）起盘」→ 出生地点（用于真太阳时校正）→ 性别 →「立即起盘 · 查看命盘解析」；去掉原站没有的「选时辰」，以前按时辰保存的记录自动换成该时辰里的钟点，排出来的盘不变。新增「最近命盘」：本机保存最近 10 张，显示姓名、日期、时辰、出生地、性别和多久以前，点一下直接打开，可单条删除或清空全部（点两次确认）；命盘页左上角有「‹ 返回」，回到输入页和最近命盘，往下滚也一直看得到',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
             '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
@@ -5894,7 +5894,9 @@
                     '#xxt-v41-ziwei .zw-msg{margin-top:8px;padding:8px 10px;border-radius:9px;font-size:12px;background:var(--x-soft,#F6F8FB);color:var(--x-text2,#374151)}' +
                     '#xxt-v41-ziwei .zw-msg.err{background:#FDECEC;color:#B42318}' +
                     '#xxt-v41-ziwei .zw-msg button{margin-left:6px;color:var(--x-accent-text,#1D4ED8);text-decoration:underline}' +
-                    '#xxt-v41-ziwei .zw-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}' +
+                    '#xxt-v41-ziwei .zw-bar{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;margin:0 -14px 8px;padding:6px 14px;background:var(--x-bg,#fff);box-shadow:0 1px 0 var(--x-line,#E5E9F0)}' +
+                    '#xxt-v41-ziwei .zw-back{flex:none;padding:3px 10px 3px 6px;border-radius:7px;font-size:12px;color:var(--x-accent-text,#1D4ED8);background:var(--x-soft2,#F1F3F6)}' +
+                    '#xxt-v41-ziwei .zw-back:hover,#xxt-v41-ziwei .zw-back:focus-visible{background:var(--x-accent-soft,#E3ECFD);outline:none}' +
                     '#xxt-v41-ziwei .zw-bar .zw-who{flex:1;font-size:12px;color:var(--x-text2,#374151);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
                     '#xxt-v41-ziwei .zw-link{color:var(--x-accent-text,#1D4ED8);font-size:12px}' +
                     '#xxt-v41-ziwei .zw-grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(4,minmax(92px,auto));gap:2px;padding:2px;border-radius:10px;background:var(--x-line,#E5E9F0)}' +
@@ -6030,6 +6032,7 @@
                     if (t) {
                         const act = t.getAttribute('data-zact');
                         if (act === 'edit') { this._zwFormOpen = !this._zwFormOpen; this._renderZiwei(); }
+                        else if (act === 'back') this._zwBack();
                         else if (act === 'retry') { this._zwError = ''; this._loadZiwei().catch(() => {}); }
                         else if (act === 'view') { this._zwView = t.getAttribute('data-v'); this._renderZiwei(); }
                         else if (act === 'dx' || act === 'ln') {
@@ -6158,6 +6161,19 @@
                 q('tline').textContent = `${t.label} → ${pad(t.hh)}:${pad(t.mm)} · ${BR[br]}时（${RANGE[br]}）`;
                 q('tsub').textContent = r.note || '';
             },
+            // 命盘页「‹ 返回」：回到输入页（表单 + 最近命盘）；这张盘已经在最近命盘里，点一下就能再打开
+            _zwBack() {
+                this._zw = null;
+                this._zwFormOpen = false;
+                this._zwError = '';
+                this._zwHistConfirm = false;
+                this._zwHistKey = '';
+                this._renderZiwei();
+                const body = this._ziweiEl && this._ziweiEl.querySelector('[data-z="body"]');
+                if (body) body.scrollTop = 0;
+                const first = this._ziweiEl && this._ziweiEl.querySelector('[data-z="name"]');
+                if (first) { try { first.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+            },
             _zwSaveKey() {
                 const inp = this._ziweiEl && this._ziweiEl.querySelector('[data-z="aikey"]');
                 const v = inp ? inp.value.trim() : '';
@@ -6279,7 +6295,7 @@
                     ? z.patterns.map((p) => `<div class="zw-pat"><b>${esc(p.name)}</b><em class="lv-${esc(p.level)}">${LV[p.level] || esc(p.level)}</em>` +
                         `<p>${esc(p.description)}</p>` + (p.source ? `<small>出处：${esc(p.source)}${p.palaces && p.palaces.length ? ' · ' + esc(p.palaces.join('、')) : ''}</small>` : '') + '</div>').join('')
                     : '<div class="zw-msg">本盘没有识别出典型格局</div>';
-                return `<div class="zw-bar"><span class="zw-who">${z.name ? esc(z.name) + ' · ' : ''}${B.gender === 'female' ? '女' : '男'} · ${z.input.cal === 'lunar' ? '农历输入' : '公历输入'}${z.note ? ' · ' + esc(z.note) : ''}</span>` +
+                return `<div class="zw-bar"><button type="button" class="zw-back" data-zact="back" aria-label="返回输入页">‹ 返回</button><span class="zw-who">${z.name ? esc(z.name) + ' · ' : ''}${B.gender === 'female' ? '女' : '男'} · ${z.input.cal === 'lunar' ? '农历输入' : '公历输入'}${z.note ? ' · ' + esc(z.note) : ''}</span>` +
                     `<button type="button" class="zw-link" data-zact="edit">${this._zwFormOpen ? '收起' : '修改出生信息'}</button></div>` +
                     this._zwViewBar(c, ov) +
                     `<div class="zw-grid">${grid}</div>` +

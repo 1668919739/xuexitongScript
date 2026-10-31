@@ -1813,7 +1813,7 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
     await ctx.close();
 });
 
-test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起盘）、最近命盘（本机保存、点开、删除、清空），旧的选时辰记录自动换成钟点', async (b) => {
+test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起盘）、最近命盘（本机保存、点开、删除、清空），命盘页可返回，旧的选时辰记录自动换成钟点', async (b) => {
     const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
@@ -1856,6 +1856,20 @@ test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起�
     await p.click('#xxt-v41-ziwei .zw-hitem[data-i="1"] .zw-hmain'); await sleep(500);
     const c2 = await p.evaluate(() => ({ name: app._zw.name, unknown: app._zw.unknown, hour: app._zw.chart.birthInfo.hour, form: document.querySelector('#xxt-v41-ziwei [data-z=formwrap]').style.display }));
     assert(c2.name === '张三' && c2.unknown && c2.hour === 0 && c2.form === 'none', `点最近命盘没有打开对应的盘：${JSON.stringify(c2)}`);
+    // 命盘页有「‹ 返回」：滚到下面也看得到（顶部这一栏固定），点了回到输入页（表单 + 最近命盘）
+    await p.evaluate(() => { document.querySelector('#xxt-v41-ziwei [data-z=body]').scrollTop = 600; }); await sleep(150);
+    const backVis = await p.evaluate(() => {
+        const bt = document.querySelector('#xxt-v41-ziwei [data-zact=back]').getBoundingClientRect();
+        const bd = document.querySelector('#xxt-v41-ziwei [data-z=body]').getBoundingClientRect();
+        return bt.top >= bd.top - 1 && bt.bottom <= bd.bottom;
+    });
+    assert(backVis, '往下滚以后看不到返回按钮');
+    await p.click('#xxt-v41-ziwei [data-zact=back]'); await sleep(250);
+    const bk = await p.evaluate(() => ({ zw: !!app._zw, form: document.querySelector('#xxt-v41-ziwei [data-z=formwrap]').style.display, grid: !!document.querySelector('#xxt-v41-ziwei .zw-grid'), hist: document.querySelectorAll('#xxt-v41-ziwei .zw-hitem').length, top: document.querySelector('#xxt-v41-ziwei [data-z=body]').scrollTop, name: document.querySelector('#xxt-v41-ziwei [data-z=name]').value }));
+    assert(!bk.zw && bk.form === '' && !bk.grid && bk.hist === 2 && bk.top === 0 && bk.name === '张三', `返回后不对：${JSON.stringify(bk)}`);
+    assert(await p.evaluate(() => /^张三/.test(document.querySelector('#xxt-v41-ziwei .zw-hitem[data-i="0"]').textContent)), '刚打开过的张三应排到最近命盘第一条');
+    await p.click('#xxt-v41-ziwei .zw-hitem:has-text("李四") .zw-hmain'); await sleep(400);
+    assert(await p.evaluate(() => app._zw && app._zw.name === '李四' && !!document.querySelector('#xxt-v41-ziwei .zw-grid')), '返回后从最近命盘再打开失败');
     // 刷新后还在（本机保存）
     await p.reload(); await inject(p); await sleep(1500);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
@@ -1863,7 +1877,7 @@ test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起�
     await p.waitForFunction(() => window.XxtZiwei);
     await sleep(200);
     assert(await p.evaluate(() => document.querySelectorAll('#xxt-v41-ziwei .zw-hitem').length) === 2, '刷新后最近命盘丢了');
-    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=name]').value) === '张三', '刷新后没有记住上次填的姓名');
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=name]').value) === '李四', '刷新后没有记住上次填的姓名（最后打开的是李四）');
     // 删除一条
     await p.hover('#xxt-v41-ziwei .zw-hitem[data-i="0"]');
     await p.click('#xxt-v41-ziwei .zw-hitem[data-i="0"] .zw-hdel'); await sleep(200);
