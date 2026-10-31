@@ -254,5 +254,40 @@ console.log('合盘（_zwHmFacts / _zwHmPrompt）');
     }
 }
 
+console.log('与原项目源码对拍（tests/fixtures/ziwei-upstream.json，由 ziwei-doushu lib 源码直接运行生成）');
+{
+    const { createHash } = await import('node:crypto');
+    const up = JSON.parse(readFileSync(resolve(root, 'tests/fixtures/ziwei-upstream.json'), 'utf8'));
+    const norm = (ch, pat, sum) => { const c = JSON.parse(JSON.stringify(ch)); delete c.currentAge; delete c.currentDaXianIndex; for (const p of c.palaces) delete p.isCurrentDaXian; return JSON.stringify([c, pat, sum]); };
+    let bad = 0;
+    up.cases.forEach((c, i) => {
+        const ch = Z.generateChart(c);
+        if (createHash('sha1').update(norm(ch, Z.detectPatterns(ch), Z.getMingGongSummary(ch))).digest('hex') !== up.sha1[i]) { bad++; if (bad < 3) console.log('    不一致：', JSON.stringify(c)); }
+    });
+    ok(bad === 0, `${up.cases.length} 张盘（含闰月、立春、春节、年末边界）与原项目源码逐字段一致（含格局、命宫摘要）`);
+    const solar = [];
+    for (const lon of [73.5, 87.6, 104.1, 116.4, 120, 121.5, 126.6, 134.7]) for (const [mo, d] of [[1, 15], [2, 11], [5, 15], [7, 26], [11, 3], [12, 31]]) for (const h of [0, 1, 6, 12, 22, 23]) for (const mi of [0, 29, 59]) {
+        const r = Z.calculateTrueSolarTime({ year: 2000, month: mo, day: d, clockHour: h, clockMinute: mi, longitude: lon });
+        solar.push([r.hour, r.minute, r.branch, r.dayOffset, Z.resolveZiweiDayOffset(r, 'next-day')].join(','));
+    }
+    ok(solar.length === up.solar.length && solar.every((x, i) => x === up.solar[i]), `${solar.length} 组真太阳时换算与原项目一致`);
+    // 大限 / 流年叠加：浮窗的 _zwOverlay 与原项目 getDaXianSiHua / getLiuNianSiHua 一致
+    const mo = /\n(\s*)_zwOverlay\(c\) \{[\s\S]*?\n\1\},/.exec(src);
+    if (mo) {
+        const app = vm.runInNewContext(`({ ${mo[0].trim()} })`, { window: { XxtZiwei: Z } });
+        const ST = '甲乙丙丁戊己庚辛壬癸';
+        const fmt = (o) => { const by = {}; for (const [n, h] of Object.entries(o.map)) by[h] = n; return ST[o.stem] + ['禄', '权', '科', '忌'].map((h) => by[h]).join(''); };
+        let dBad = 0;
+        up.daxian.forEach((want, i) => {
+            const ch = Z.generateChart(up.cases[i]);
+            const got = ch.daXians.map((_, k) => { app._zwView = 'dx'; app._zwDx = k; return fmt(app._zwOverlay(ch)); }).join('|');
+            if (got !== want) dBad++;
+        });
+        let lBad = 0;
+        up.liunian.forEach((want, i) => { app._zwView = 'ln'; app._zwYear = 1900 + i; if (fmt(app._zwOverlay({})) !== want) lBad++; });
+        ok(dBad === 0 && lBad === 0, `大限四化（${up.daxian.length} 张盘 × 12 限）与流年四化（1900–2100）与原项目运限函数一致`);
+    } else ok(false, '抽到 _zwOverlay');
+}
+
 if (failed) { console.log(`\n[ziwei-engine] ${failed} 项失败`); process.exit(1); }
 console.log('\n[ziwei-engine] 全部通过');
