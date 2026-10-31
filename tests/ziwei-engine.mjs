@@ -93,5 +93,33 @@ if (m) {
     ok(!f.ok, '超出 1900–2100 报错');
 }
 
+console.log('星曜含义与 AI 解读提示词（_zwPrompt）');
+ok(MAJOR.every((n) => Z.STAR_DESCRIPTIONS && Z.STAR_DESCRIPTIONS[n] && Z.STAR_DESCRIPTIONS[n].keywords), '引擎导出 14 主星的基本含义');
+const topicsSrc = (/\n    const ZIWEI_TOPICS = \[[\s\S]*?\n    \];/.exec(src) || [])[0];
+const pm = /\n(\s*)_zwPrompt\(chart, patterns, topicKey, desc\) \{[\s\S]*?\n\1\},/.exec(src);
+ok(!!topicsSrc && !!pm, '从 v3_optimized.js 抽到 ZIWEI_TOPICS 与 _zwPrompt');
+if (topicsSrc && pm) {
+    const obj = vm.runInNewContext(`${topicsSrc.trim()}\n({ topics: ZIWEI_TOPICS, ${pm[0].trim()} })`);
+    const chart = Z.generateChart({ year: 1990, month: 5, day: 15, hour: 6, gender: 'male' });
+    const pats = Z.detectPatterns(chart);
+    ok(obj.topics.map((t) => t[1]).join('') === '命格性格感情事业财运健康', '六个主题：命格 性格 感情 事业 财运 健康');
+    for (const [key, label, focus] of obj.topics) {
+        const { system, user } = obj._zwPrompt(chart, pats, key, Z.STAR_DESCRIPTIONS);
+        const palacesOk = PALACES.every((n) => user.includes(`- ${n}（`));
+        ok(palacesOk && user.includes(`「${label}」`) && focus.every((f) => user.includes(f)), `「${label}」提示词含 12 宫、主题和重点宫位`);
+    }
+    const { system, user } = obj._zwPrompt(chart, pats, 'career', Z.STAR_DESCRIPTIONS);
+    ok(/不要编造古籍原文或倪海厦的原话/.test(system) && /不做医学诊断/.test(system) && /不预言寿命/.test(system), '系统提示词限制：不编造引文、不做医学诊断、不做绝对化预言');
+    ok(['化禄：太阳（在财帛）', '化权：武曲（在疾厄）', '化科：太阴（在财帛）', '化忌：天同（在迁移）'].every((x) => user.includes(x)), '生年四化按禄权科忌列出并标明所在宫');
+    const huaSec = user.split('【生年四化】')[1].split('【格局】')[0].trim().split('\n').map((x) => x.slice(3, 4)).join('');
+    ok(huaSec === '禄权科忌', `【生年四化】按禄权科忌排序：${huaSec}`);
+    ok(pats.every((p) => user.includes(p.name)) && user.includes('【出处：《紫微斗数全书》'), '格局与自带出处写进提示词');
+    ok(user.includes('天梁：荫护·医药·长辈') || /天梁：[^\n]+；[^\n]+；五行/.test(user), '盘上主星的基本含义写进提示词');
+    ok(/- 命宫（丁亥，身宫，大限 5–14 岁）：主星 天梁\(陷\)/.test(user), `命宫行格式正确`);
+    ok(/官禄（[^）]*）：主星 无（空宫，借对宫/.test(user), '空宫写明借对宫的星');
+    let threw = false; try { obj._zwPrompt(chart, pats, 'nope', {}); } catch (e) { threw = true; }
+    ok(threw, '未知主题报错');
+}
+
 if (failed) { console.log(`\n[ziwei-engine] ${failed} 项失败`); process.exit(1); }
 console.log('\n[ziwei-engine] 全部通过');

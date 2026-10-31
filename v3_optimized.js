@@ -14,6 +14,7 @@
         { v: '4.6.14', date: '2026-10-31', items: [
             '新增「紫微排盘」：右侧功能栏里的独立功能，和唱片机共用浮窗旁边的位置（打开一个就收起另一个）。支持公历 / 农历（含闰月）输入，23:00 后出生按晚子时归到次日；出 12 宫传统盘面（主星庙旺、生年四化、六吉六煞、大限岁数、身宫），点宫位看详情并标出三方四正，下面列出识别到的格局和古籍出处',
             '排盘引擎来自开源项目 ziwei-doushu（MIT，基于倪海厦《天纪》体系，核心 iztro），单独打包成约 570KB 的文件，第一次打开紫微排盘时才下载，不用这个功能就不会多下载；全部在本机浏览器计算，出生信息只保存在本机',
+            '紫微排盘新增「AI 解读」：命格、性格、感情、事业、财运、健康六个主题，点哪个才生成哪个，用 DeepSeek（Key 与答题辅助共用，没填时可以在紫微面板里直接填）；只按本盘数据解读，不编造古籍原话，标明是 AI 生成、仅供参考；生成过的保存在本机，再看不重复扣费，可重新生成。宫位详情里加上主星的基本含义（关键词、吉凶、五行），空宫也显示借来的主星',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
             '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
@@ -184,10 +185,20 @@
     const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/1668919739/xuexitongScript/master/v3_optimized.js';
     const SCRIPT_CDN_URL = 'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.js';
     // 紫微排盘引擎：单独打包（scripts/build-ziwei.mjs），第一次打开「紫微排盘」时才下载，不打开就不加载。
-    // 文件名带上游 ziwei-doushu 的提交号，由打包脚本自动改写，不要手改
-    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e.min.js';
+    // 文件名带上游 ziwei-doushu 的提交号和内容哈希，由打包脚本自动改写，不要手改
+    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-7007b886.min.js';
     const ZIWEI_ENGINE_URLS = ['cdn', 'fastly', 'testingcf'].map((h) => `https://${h}.jsdelivr.net/gh/1668919739/xuexitongScript@master/${ZIWEI_ENGINE_FILE}`);
     const ZIWEI_FORM_KEY = 'xxt_v41_ziwei_form';
+    const ZIWEI_AI_KEY = 'xxt_v41_ziwei_ai';   // AI 解读缓存：同一张盘同一主题只调用一次 DeepSeek，保留最近 5 张盘
+    // AI 解读的主题：key、按钮文字、重点宫位、要回答的内容
+    const ZIWEI_TOPICS = [
+        ['overview', '命格', ['命宫', '迁移', '财帛', '官禄'], '命格总体定性、命宫主星特质、三方四正的助力与牵制、身宫落点的含义'],
+        ['personality', '性格', ['命宫', '福德'], '性格优点、容易吃亏的地方、思维与情绪习惯、与人相处的方式'],
+        ['love', '感情', ['夫妻', '福德'], '感情观与择偶倾向、适合的相处模式、需要留意的问题'],
+        ['career', '事业', ['官禄', '命宫', '迁移'], '适合的行业与工作方式、事业发展的节奏、需要避开的坑'],
+        ['wealth', '财运', ['财帛', '田宅', '福德'], '求财方式（正财/偏财、稳健/开创）、理财与守财习惯、需要留意的风险'],
+        ['health', '健康', ['疾厄', '命宫'], '体质倾向与日常保养方向（不做医学诊断）'],
+    ];
     const newerThan = (a, b) => {
         const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
         for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -338,6 +349,42 @@
             }
         }
         throw new Error(`${last ? last.message : 'DeepSeek 没有返回答案'}，换用其他请求方式重试后仍不行，没有选择或提交题目`);
+    }
+    // 紫微排盘的 AI 解读：要的是一段文字，不是 JSON。先低强度思考，长度用光或参数不被接受时改为直答
+    async function deepseekText(system, user, key, ctrl) {
+        const attempts = [
+            { thinking: { type: 'enabled' }, reasoning_effort: 'low', max_tokens: 8000 },
+            { thinking: { type: 'disabled' }, max_tokens: 3000 },
+            { max_tokens: 3000 },
+        ];
+        let last = null;
+        for (const extra of attempts) {
+            let timedOut = false, res;
+            const timer = ctrl && setTimeout(() => { timedOut = true; ctrl.abort(); }, 120000);
+            try {
+                res = await fetch(DEEPSEEK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+                    body: JSON.stringify(Object.assign({ model: DEEPSEEK_MODEL, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, extra)),
+                    signal: ctrl ? ctrl.signal : undefined,
+                });
+            } catch (e) {
+                throw new Error(e && e.name === 'AbortError' ? (timedOut ? 'DeepSeek 120 秒内没有返回，请稍后重试' : '已取消') : '连不上 DeepSeek，请检查网络');
+            } finally { if (timer) clearTimeout(timer); }
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                const detail = (data && data.error && (data.error.message || data.error)) || '';
+                const hint = res.status === 401 ? '（Key 无效，请重新填写）' : res.status === 402 ? '（账户余额不足）' : res.status === 429 ? '（请求太频繁，稍后再试）' : '';
+                last = new Error(`DeepSeek 返回 HTTP ${res.status}${hint}${detail ? '：' + detail : ''}`);
+                if (res.status === 400) continue;   // 参数不被接受：换一组参数
+                throw last;
+            }
+            const choice = data && data.choices && data.choices[0];
+            const text = String((choice && choice.message && choice.message.content) || '').trim();
+            if (choice && choice.finish_reason === 'stop' && text) return text;
+            last = new Error(choice && choice.finish_reason === 'length' ? 'DeepSeek 输出达到长度上限' : 'DeepSeek 返回空内容');
+        }
+        throw new Error(`${last ? last.message : 'DeepSeek 没有返回内容'}，换用其他请求方式重试后仍不行`);
     }
     async function deepseekAnswers(questions, key, ctrl) {
         ctrl = ctrl || (typeof AbortController !== 'undefined' ? new AbortController() : null);
@@ -5452,11 +5499,164 @@
                     this._zw = { chart, patterns, summary, note: r.note, input: f };
                     this._zwSel = chart.mingGongBranch;
                     this._zwFormOpen = false;
+                    this._zwTopic = '';
                     log(`紫微排盘：${chart.lunarInfo.fourPillars ? chart.lunarInfo.fourPillars.join(' ') : ''} ${chart.wuxingJuName}`, '#2196F3');
                 } catch (e) {
                     this._zwError = '排盘失败：' + (e && e.message ? e.message : e);
                 }
                 this._renderZiwei();
+            },
+            // ---- 紫微排盘 · AI 解读 ----
+            // 把命盘整理成文字交给 DeepSeek（Key 与答题辅助共用），按主题点了才生成，结果按“盘 + 主题”缓存在本机。
+            // 提示词只给盘上的数据，要求不编造古籍 / 倪师原话；页面上写明这是 AI 生成、不是校对过的断语。
+            // 纯函数：tests/ziwei-engine.mjs 抽出来单测
+            _zwPrompt(chart, patterns, topicKey, desc) {
+                const BR = '子丑寅卯辰巳午未申酉戌亥', ST = '甲乙丙丁戊己庚辛壬癸';
+                const CN_M = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+                const t = ZIWEI_TOPICS.find((x) => x[0] === topicKey);
+                if (!t) throw new Error('未知主题：' + topicKey);
+                const [, label, focus, ask] = t;
+                const L = chart.lunarInfo, B = chart.birthInfo;
+                const star = (s) => s.name + (s.brightnessRaw ? `(${s.brightnessRaw})` : '') + (s.siHua ? `化${s.siHua}` : '');
+                const ordered = [...chart.palaces].sort((a, b) => ((a.branch - chart.mingGongBranch + 12) % 12) - ((b.branch - chart.mingGongBranch + 12) % 12));
+                const palaceLine = (p) => {
+                    const g = (type) => p.stars.filter((s) => s.type === type).map(star).join('、');
+                    const majors = g('major');
+                    return `- ${p.name}（${ST[p.stem] || ''}${BR[p.branch]}${p.isShenGong ? '，身宫' : ''}${p.daXianAge ? `，大限 ${p.daXianAge[0]}–${p.daXianAge[1]} 岁` : ''}）：` +
+                        `主星 ${majors || (p.borrowedStars && p.borrowedStars.length ? `无（空宫，借对宫${p.borrowedFromName || ''} ${p.borrowedStars.join('、')}）` : '无')}` +
+                        (g('lucky') ? `；吉星 ${g('lucky')}` : '') + (g('sha') ? `；煞星 ${g('sha')}` : '') + (g('minor') ? `；杂曜 ${g('minor')}` : '');
+                };
+                const hua = [];
+                for (const p of chart.palaces) for (const s of p.stars) if (s.siHua) hua.push(`化${s.siHua}：${s.name}（在${p.name}）`);
+                hua.sort((a, b) => '禄权科忌'.indexOf(a[1]) - '禄权科忌'.indexOf(b[1]));
+                const majorsIn = [...new Set(chart.palaces.flatMap((p) => p.stars.filter((s) => s.type === 'major').map((s) => s.name)))];
+                const descLines = majorsIn.filter((n) => desc && desc[n]).map((n) => `- ${n}：${desc[n].keywords}；${desc[n].nature}；五行${desc[n].element}`);
+                const curDx = chart.daXians && chart.daXians[chart.currentDaXianIndex];
+                const patLines = (patterns || []).map((p) => `- ${p.name}（${{ excellent: '上格', good: '吉', neutral: '平', caution: '需注意' }[p.level] || p.level}）：${p.description}${p.source ? `【出处：${p.source}】` : ''}`);
+                const system = [
+                    '你是紫微斗数讲解助手，按倪海厦《天纪》体系和《紫微斗数全书》的通行规则解读命盘。',
+                    '规则：',
+                    '1. 只依据用户给出的命盘数据，不要自行重新排盘，也不要假设数据里没有的星曜或四化。',
+                    '2. 不要编造古籍原文或倪海厦的原话，不要写带引号的引文；需要说出处时，只能使用数据里「格局」条目自带的出处。',
+                    '3. 不做绝对化断言，不预言寿命、灾祸、具体年份的吉凶；用「倾向」「容易」「宜」「需留意」这类说法，并给出可执行的建议。',
+                    '4. 健康主题只谈体质倾向和保养方向，不做医学诊断，有不适应就医。',
+                    '5. 用简体中文，600–900 字。每一段用【小标题】开头单独成行，正文是普通段落；不要用 Markdown 符号（#、*、表格）。',
+                    '6. 每个判断都要点出依据（哪一宫、哪颗星、亮度或四化、哪个格局）。',
+                ].join('\n');
+                const user = [
+                    `请解读这张命盘的「${label}」：${ask}。`,
+                    `重点看：${focus.join('、')}，并结合三方四正、生年四化与格局。`,
+                    '',
+                    '【基本信息】',
+                    `${B.gender === 'female' ? '女' : '男'}命，${chart.yinYangGender || ''}，${chart.wuxingJuName}；命主 ${chart.mingZhu || '-'}，身主 ${chart.shenZhu || '-'}`,
+                    `四柱：${(L.fourPillars || []).join(' ')}；农历 ${L.lunarYear} 年${L.isLeapMonth ? '闰' : ''}${CN_M[Math.abs(L.lunarMonth) - 1]}月${L.lunarDay}日 ${BR[B.hour]}时`,
+                    `命宫在${BR[chart.mingGongBranch]}，身宫在${BR[chart.shenGongBranch]}` + (curDx ? `；今年虚岁 ${chart.currentAge}，行 ${curDx.startAge}–${curDx.endAge} 岁大限（${curDx.palaceName}）` : ''),
+                    '',
+                    '【十二宫】',
+                    ...ordered.map(palaceLine),
+                    '',
+                    '【生年四化】',
+                    ...(hua.length ? hua.map((x) => '- ' + x) : ['- 无']),
+                    '',
+                    '【格局】（本地规则识别）',
+                    ...(patLines.length ? patLines : ['- 未识别出典型格局']),
+                    '',
+                    '【主星基本含义】',
+                    ...(descLines.length ? descLines : ['- 无']),
+                ].join('\n');
+                return { system, user };
+            },
+            _zwAiId() {
+                const b = this._zw && this._zw.chart.birthInfo;
+                return b ? `${b.year}-${b.month}-${b.day}-${b.hour}-${b.gender}` : '';
+            },
+            _zwAiStore(write) {
+                let all = {};
+                try { all = JSON.parse(localStorage.getItem(ZIWEI_AI_KEY) || '{}') || {}; } catch (e) { all = {}; }
+                if (!write) return all;
+                const [id, topic, text] = write;
+                const cur = all[id] || { ts: 0, t: {} };
+                cur.t[topic] = text; cur.ts = Date.now();
+                all[id] = cur;
+                const keep = Object.keys(all).sort((a, b) => (all[b].ts || 0) - (all[a].ts || 0)).slice(0, 5);
+                const out = {};
+                for (const k of keep) out[k] = all[k];
+                try { localStorage.setItem(ZIWEI_AI_KEY, JSON.stringify(out)); } catch (e) { /* 存不下就只留在内存里 */ }
+                return out;
+            },
+            _zwAiText(topic) {
+                const id = this._zwAiId();
+                const mem = this._zwAiMem && this._zwAiMem[id + '|' + topic];
+                if (mem) return mem;
+                const s = this._zwAiStore()[id];
+                return s && s.t && s.t[topic] || '';
+            },
+            async _zwAiRun(topic, force) {
+                if (!this._zw) return;
+                this._zwTopic = topic;
+                const id = this._zwAiId(), k = id + '|' + topic;
+                this._zwAiBusy = this._zwAiBusy || {};
+                this._zwAiErr = this._zwAiErr || {};
+                this._zwAiMem = this._zwAiMem || {};
+                if (this._zwAiBusy[k]) { this._renderZiwei(); return; }
+                if (!force && this._zwAiText(topic)) { this._renderZiwei(); return; }
+                const key = deepseekKey();
+                if (!key) { this._renderZiwei(); return; }
+                delete this._zwAiErr[k];
+                this._zwAiBusy[k] = true;
+                this._zwAiVer = (this._zwAiVer || 0) + 1;
+                this._renderZiwei();
+                const label = (ZIWEI_TOPICS.find((x) => x[0] === topic) || [])[1] || topic;
+                try {
+                    const { system, user } = this._zwPrompt(this._zw.chart, this._zw.patterns, topic, (window.XxtZiwei && window.XxtZiwei.STAR_DESCRIPTIONS) || {});
+                    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                    const text = await deepseekText(system, user, key, ctrl);
+                    this._zwAiMem[k] = text;
+                    this._zwAiStore([id, topic, text]);
+                    log(`紫微排盘：AI 解读「${label}」已生成`, '#2196F3');
+                } catch (e) {
+                    this._zwAiErr[k] = e && e.message ? e.message : String(e);
+                    log(`紫微排盘：AI 解读「${label}」失败 ${this._zwAiErr[k]}`, '#FF9800', 'warn');
+                } finally {
+                    delete this._zwAiBusy[k];
+                    this._zwAiVer = (this._zwAiVer || 0) + 1;
+                    this._renderZiwei();
+                }
+            },
+            _zwAiHtml() {
+                if (!this._zw) return '';
+                const esc = (t) => this._esc(t);
+                const id = this._zwAiId(), topic = this._zwTopic || '';
+                const k = id + '|' + topic;
+                const hasKey = !!deepseekKey();
+                const chips = ZIWEI_TOPICS.map(([key, label]) => {
+                    const done = !!this._zwAiText(key), busy = !!(this._zwAiBusy && this._zwAiBusy[id + '|' + key]);
+                    return `<button type="button" class="zw-chip${key === topic ? ' on' : ''}${done ? ' done' : ''}" data-zact="ai" data-topic="${key}" aria-pressed="${key === topic}">${label}${busy ? ' …' : done ? ' ✓' : ''}</button>`;
+                }).join('');
+                let body = '';
+                if (!hasKey) {
+                    body = '<div class="zw-ai-key"><div>AI 解读用你自己的 DeepSeek Key（和答题辅助共用，只保存在本机浏览器），按 DeepSeek 的价格计费。</div>' +
+                        '<div class="zw-row"><input type="password" data-z="aikey" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key">' +
+                        `<button type="button" class="zw-btn" data-zact="aikeysave">保存</button><a href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener">去申请 Key</a></div></div>`;
+                } else if (!topic) {
+                    body = '<div class="zw-ai-hint">点上面的主题生成解读；每个主题调用一次 DeepSeek，生成过的会保存在本机，再点不重复扣费。</div>';
+                } else if (this._zwAiBusy && this._zwAiBusy[k]) {
+                    body = '<div class="zw-ai-hint"><span class="zw-spin"></span>正在生成，一般需要 20–60 秒…</div>';
+                } else if (this._zwAiErr && this._zwAiErr[k]) {
+                    body = `<div class="zw-msg err">${esc(this._zwAiErr[k])}<button type="button" data-zact="airegen">重试</button></div>`;
+                } else {
+                    const text = this._zwAiText(topic);
+                    body = text
+                        ? '<div class="zw-ai-out">' + text.split(/\n+/).map((ln) => ln.trim()).filter(Boolean).map((ln) => {
+                            const m = /^[#*\s]*【([^】]{1,24})】\s*(.*)$/.exec(ln);
+                            const clean = (x) => esc(x.replace(/\*\*|^#+\s*/g, ''));
+                            return m ? `<h4>${clean(m[1])}</h4>${m[2] ? `<p>${clean(m[2])}</p>` : ''}` : `<p>${clean(ln)}</p>`;
+                        }).join('') + '</div><div class="zw-ai-tools"><button type="button" class="zw-link" data-zact="airegen">重新生成</button></div>'
+                        : '<div class="zw-ai-hint">点上面的主题生成解读。</div>';
+                }
+                return '<div class="zw-sec">AI 解读</div>' +
+                    '<div class="zw-ai"><div class="zw-ai-note">由 AI（DeepSeek）根据本盘数据生成，不是原网站校对过的断语，可能有误，仅供传统文化学习参考。</div>' +
+                    `<div class="zw-chips" role="group" aria-label="解读主题">${chips}</div>${body}</div>`;
             },
             _ensureZiwei() {
                 if (this._ziweiEl && this._ziweiEl.isConnected) return this._ziweiEl;
@@ -5509,7 +5709,7 @@
                     '#xxt-v41-ziwei .zw-cell:focus-visible{outline:2px solid var(--x-accent-ring,#93C5FD);outline-offset:-2px}' +
                     '#xxt-v41-ziwei .zw-major{font-size:13px;font-weight:600;color:var(--x-strong,#111827);line-height:1.35}' +
                     '#xxt-v41-ziwei .zw-major.empty{font-weight:400;font-size:11px;color:var(--x-faint,#9CA3AF)}' +
-                    '#xxt-v41-ziwei .zw-major i,#xxt-v41-ziwei .zw-dt i{font-style:normal;font-size:10px;font-weight:400;color:var(--x-faint,#9CA3AF);margin-left:1px}' +
+                    '#xxt-v41-ziwei .zw-major i,#xxt-v41-ziwei .zw-dt i,#xxt-v41-ziwei .zw-star i{font-style:normal;font-size:10px;font-weight:400;color:var(--x-faint,#9CA3AF);margin-left:1px}' +
                     '#xxt-v41-ziwei .zw-hua{display:inline-block;font-size:10px;font-weight:600;line-height:14px;padding:0 3px;margin-left:2px;border-radius:4px;color:#fff;vertical-align:1px}' +
                     '#xxt-v41-ziwei .h-禄{background:#16A34A}#xxt-v41-ziwei .h-权{background:#9333EA}#xxt-v41-ziwei .h-科{background:#2563EB}#xxt-v41-ziwei .h-忌{background:#DC2626}' +
                     '#xxt-v41-ziwei .zw-minor{font-size:11px;line-height:1.35;color:var(--x-muted,#6B7280);word-break:break-all}' +
@@ -5535,12 +5735,34 @@
                     '#xxt-v41-ziwei .lv-neutral{background:var(--x-soft2,#F1F3F6);color:var(--x-muted,#6B7280)}#xxt-v41-ziwei .lv-caution{background:#FDECEC;color:#B42318}' +
                     '#xxt-v41-ziwei .zw-pat p{margin:3px 0 0;font-size:12px;line-height:1.6;color:var(--x-text2,#374151)}' +
                     '#xxt-v41-ziwei .zw-pat small{display:block;margin-top:2px;font-size:11px;color:var(--x-faint,#9CA3AF)}' +
+                    '#xxt-v41-ziwei .zw-star{display:flex;gap:8px;align-items:baseline;margin-top:4px}' +
+                    '#xxt-v41-ziwei .zw-star>span:first-child{flex:none;min-width:64px;font-weight:600;color:var(--x-strong,#111827)}' +
+                    '#xxt-v41-ziwei .zw-star small{font-size:11px;color:var(--x-muted,#6B7280)}' +
+                    '#xxt-v41-ziwei .zw-ai{padding:10px 12px;border-radius:10px;background:var(--x-soft,#F6F8FB)}' +
+                    '#xxt-v41-ziwei .zw-ai-note{font-size:11px;color:var(--x-faint,#9CA3AF);margin-bottom:8px}' +
+                    '#xxt-v41-ziwei .zw-chips{display:flex;flex-wrap:wrap;gap:6px}' +
+                    '#xxt-v41-ziwei .zw-chip{padding:4px 12px;border-radius:999px;background:var(--x-bg,#fff);box-shadow:inset 0 0 0 1px var(--x-line,#E5E9F0);color:var(--x-text2,#374151)}' +
+                    '#xxt-v41-ziwei .zw-chip.done{color:var(--x-accent-text,#1D4ED8)}' +
+                    '#xxt-v41-ziwei .zw-chip.on{background:var(--x-accent,#3B82F6);color:var(--x-on-accent,#fff);box-shadow:none}' +
+                    '#xxt-v41-ziwei .zw-ai-hint{margin-top:10px;font-size:12px;color:var(--x-muted,#6B7280);display:flex;align-items:center;gap:6px}' +
+                    '#xxt-v41-ziwei .zw-spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--x-line,#E5E9F0);border-top-color:var(--x-accent,#3B82F6);animation:zw-rot .8s linear infinite}' +
+                    '@keyframes zw-rot{to{transform:rotate(360deg)}}' +
+                    '#xxt-v41-ziwei .zw-ai-out{margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--x-bg,#fff);box-shadow:inset 0 0 0 1px var(--x-line,#E5E9F0)}' +
+                    '#xxt-v41-ziwei .zw-ai-out h4{margin:10px 0 2px;font-size:12px;font-weight:600;color:var(--x-accent-text,#1D4ED8)}' +
+                    '#xxt-v41-ziwei .zw-ai-out h4:first-child{margin-top:0}' +
+                    '#xxt-v41-ziwei .zw-ai-out p{margin:2px 0 6px;font-size:12px;line-height:1.75;color:var(--x-text2,#374151)}' +
+                    '#xxt-v41-ziwei .zw-ai-tools{display:flex;justify-content:flex-end;margin-top:6px}' +
+                    '#xxt-v41-ziwei .zw-ai-key{margin-top:10px;font-size:12px;color:var(--x-text2,#374151)}' +
+                    '#xxt-v41-ziwei .zw-ai-key .zw-row{margin-top:6px}' +
+                    '#xxt-v41-ziwei .zw-ai-key input{flex:1;min-width:120px;height:30px;padding:0 8px;border-radius:8px;border:1px solid var(--x-line,#E5E9F0);background:var(--x-input,#FBFCFD)}' +
+                    '#xxt-v41-ziwei .zw-ai-key a{color:var(--x-accent-text,#1D4ED8);font-size:12px}' +
+                    '#xxt-v41-ziwei .zw-btn{height:30px;padding:0 12px;border-radius:8px;background:var(--x-accent,#3B82F6);color:var(--x-on-accent,#fff)}' +
                     '#xxt-v41-ziwei .zw-about{margin-top:10px;font-size:11px;line-height:1.6;color:var(--x-faint,#9CA3AF)}' +
                     '#xxt-v41-ziwei .zw-about a{color:inherit;text-decoration:underline}' +
                     '#xxt-v41-ziwei[data-theme="dark"] .zw-msg.err,#xxt-v41-ziwei[data-theme="dark"] .lv-caution{background:#3B1D1D;color:#FCA5A5}' +
                     '#xxt-v41-ziwei[data-theme="dark"] .lv-good{background:#14321F;color:#86EFAC}#xxt-v41-ziwei[data-theme="dark"] .lv-excellent{background:#3A2E12;color:#FCD34D}' +
                     '#xxt-v41-ziwei[data-theme="dark"] .zw-minor .sh{color:#FDBA74}' +
-                    '@media (prefers-reduced-motion:reduce){#xxt-v41-ziwei{transition:none}}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-ziwei{transition:none}#xxt-v41-ziwei .zw-spin{animation:none}}' +
                     '</style>' +
                     '<div class="zw-head"><b>紫微排盘</b><span data-z="status"></span><button type="button" class="zw-x" data-z="close" aria-label="关闭紫微排盘">×</button></div>' +
                     '<div class="zw-body" data-z="body">' +
@@ -5589,12 +5811,16 @@
                         const act = t.getAttribute('data-zact');
                         if (act === 'edit') { this._zwFormOpen = !this._zwFormOpen; this._renderZiwei(); }
                         else if (act === 'retry') { this._zwError = ''; this._loadZiwei().catch(() => {}); }
+                        else if (act === 'ai') this._zwAiRun(t.getAttribute('data-topic'));
+                        else if (act === 'airegen') this._zwAiRun(this._zwTopic, true);
+                        else if (act === 'aikeysave') this._zwSaveKey();
                         return;
                     }
                     const c = e.target.closest('[data-br]');
                     if (c) { this._zwSel = Number(c.getAttribute('data-br')); this._renderZiwei(); }
                 });
                 d.addEventListener('keydown', (e) => {
+                    if (e.target && e.target.getAttribute && e.target.getAttribute('data-z') === 'aikey' && e.key === 'Enter') { this._zwSaveKey(); return; }
                     const c = e.target.closest && e.target.closest('[data-br]');
                     if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.click(); }
                     if (e.key === 'Escape') this._showZiwei();
@@ -5604,6 +5830,16 @@
                 document.body.appendChild(d);
                 this._ziweiEl = d;
                 return d;
+            },
+            _zwSaveKey() {
+                const inp = this._ziweiEl && this._ziweiEl.querySelector('[data-z="aikey"]');
+                const v = inp ? inp.value.trim() : '';
+                if (!v) return;
+                if (!setDeepseekKey(v)) { this._zwError = 'Key 保存失败：浏览器不允许本地存储'; this._renderZiwei(); return; }
+                log('紫微排盘：已保存 DeepSeek Key（和答题辅助共用）', '#2196F3');
+                this._panelKey = '';
+                this._renderPanel();
+                if (this._zwTopic) this._zwAiRun(this._zwTopic); else this._renderZiwei();
             },
             _zwChartHtml() {
                 const z = this._zw;
@@ -5650,8 +5886,13 @@
                 for (const k of order) grid += k === 'C' ? center : cell(k);
                 const sp = byBr.get(sel);
                 const typeName = { major: '主星', lucky: '吉星', sha: '煞星', minor: '杂曜' };
+                const DESC = (window.XxtZiwei && window.XxtZiwei.STAR_DESCRIPTIONS) || {};
+                const starRow = (s) => `<div class="zw-star"><span>${esc(s.name)}${s.brightnessRaw ? `<i>${esc(s.brightnessRaw)}</i>` : ''}${hua(s)}</span>` +
+                    (DESC[s.name] ? `<small>${esc(DESC[s.name].keywords)} · ${esc(DESC[s.name].nature)} · 五行${esc(DESC[s.name].element)}</small>` : '') + '</div>';
+                const borrowedRows = sp && sp.isEmpty && sp.borrowedStars ? sp.borrowedStars.map((n) => DESC[n] ? `<div class="zw-star"><span>${esc(n)}<i>借</i></span><small>${esc(DESC[n].keywords)} · ${esc(DESC[n].nature)} · 五行${esc(DESC[n].element)}</small></div>` : '').join('') : '';
                 const groups = ['major', 'lucky', 'sha', 'minor'].map((t) => {
                     const ss = sp ? sp.stars.filter((s) => s.type === t) : [];
+                    if (t === 'major') return ss.length || borrowedRows ? `<div class="zw-dl">主星</div>${ss.map(starRow).join('')}${borrowedRows}` : '';
                     return ss.length ? `<div class="zw-dl">${typeName[t]}</div><div class="zw-dt">${ss.map((s) => `<span>${esc(s.name)}${s.brightnessRaw ? `<i>${esc(s.brightnessRaw)}</i>` : ''}${hua(s)}</span>`).join('')}</div>` : '';
                 }).join('');
                 const detail = sp ? '<div class="zw-detail">' +
@@ -5669,6 +5910,7 @@
                     `<button type="button" class="zw-link" data-zact="edit">${this._zwFormOpen ? '收起' : '修改出生信息'}</button></div>` +
                     `<div class="zw-grid">${grid}</div>` +
                     '<div class="zw-sec">宫位详情 <span style="font-weight:400;color:var(--x-faint,#9CA3AF)">（点盘上的宫位切换）</span></div>' + detail +
+                    '<div data-z="ai"></div>' +
                     `<div class="zw-sec">格局（${z.patterns.length}）</div>` + pats;
             },
             _renderZiwei() {
@@ -5689,7 +5931,13 @@
                     : (this._zwLoad === 'failed' && !loaded ? '<div class="zw-msg err">排盘引擎下载失败，请检查网络<button type="button" data-zact="retry">重试</button></div>' : '');
                 if (q('msg').innerHTML !== msg) q('msg').innerHTML = msg;
                 const key = this._zw ? `${this._zw.chart.birthInfo.year}-${this._zw.chart.birthInfo.month}-${this._zw.chart.birthInfo.day}-${this._zw.chart.birthInfo.hour}-${this._zw.chart.birthInfo.gender}|${this._zwSel}|${this._zwFormOpen}` : '';
-                if (this._zwKey !== key) { this._zwKey = key; q('result').innerHTML = this._zwChartHtml(); }
+                let fresh = false;
+                if (this._zwKey !== key) { this._zwKey = key; q('result').innerHTML = this._zwChartHtml(); fresh = true; }
+                const aiBox = q('ai');
+                if (aiBox) {
+                    const aiKey = `${this._zwAiId()}|${this._zwTopic || ''}|${this._zwAiVer || 0}|${!!deepseekKey()}`;
+                    if (fresh || this._zwAiKeyR !== aiKey) { this._zwAiKeyR = aiKey; aiBox.innerHTML = this._zwAiHtml(); }
+                }
                 try {
                     const el = this._panel, cs = getComputedStyle(el);
                     for (const v of ['--x-bg', '--x-fg', '--x-strong', '--x-text2', '--x-muted', '--x-faint', '--x-soft', '--x-soft2', '--x-line', '--x-input', '--x-accent', '--x-accent-strong', '--x-accent-soft', '--x-accent-softer', '--x-accent-ring', '--x-accent-text', '--x-on-accent']) {

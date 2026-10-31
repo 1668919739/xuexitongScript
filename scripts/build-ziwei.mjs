@@ -1,6 +1,6 @@
-// 把 Renhuai123/ziwei-doushu 的排盘引擎打包成浏览器可用的单文件 ziwei/ziwei-<上游提交号>.min.js。
+// 把 Renhuai123/ziwei-doushu 的排盘引擎打包成浏览器可用的单文件 ziwei/ziwei-<上游提交号>-<内容哈希>.min.js。
 // 浮窗里第一次打开「紫微排盘」时才从 jsDelivr 加载它，主脚本不变大。
-// 文件名带上游提交号：内容变了文件名就变，jsDelivr @master 的缓存不会让用户拿到旧引擎，也不用 purge。
+// 文件名带上游提交号和内容哈希：内容变了文件名就变，jsDelivr @master 的缓存不会让用户拿到旧引擎，也不用 purge。
 // 打包完会自动把 v3_optimized.js 里的 ZIWEI_ENGINE_FILE 改成新文件名，并删掉旧的引擎文件。
 //
 // 用法：
@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
+import { createHash } from 'node:crypto';
 
 const root = resolve(import.meta.dirname, '..');
 const src = resolve(root, process.env.ZIWEI_SRC || '../ziwei-doushu');
@@ -31,12 +32,12 @@ import { generateChart } from './lib/ziwei/algorithm';
 import { detectPatterns, getMingGongSummary } from './lib/ziwei/patterns';
 import { lunarToSolar, leapMonthOfLunarYear, lunarMonthDayCount } from './lib/ziwei/lunar-solar';
 import { shiftGregorianDate, isValidGregorianDate } from './lib/ziwei/true-solar-time';
-import { STEMS, BRANCHES } from './lib/ziwei/constants';
+import { STEMS, BRANCHES, STAR_DESCRIPTIONS } from './lib/ziwei/constants';
 globalThis.XxtZiwei = {
   version: ${JSON.stringify(commit.slice(0, 7))},
   generateChart, detectPatterns, getMingGongSummary,
   lunarToSolar, leapMonthOfLunarYear, lunarMonthDayCount,
-  shiftGregorianDate, isValidGregorianDate, STEMS, BRANCHES,
+  shiftGregorianDate, isValidGregorianDate, STEMS, BRANCHES, STAR_DESCRIPTIONS,
 };
 `;
 
@@ -45,13 +46,12 @@ const banner = `/*! 学习通助手 · 紫微排盘引擎（构建自 ziwei-dous
  * iztro ${iztroVer}  https://github.com/SylarLong/iztro  MIT License  Copyright (c) 2023 All Contributors
  * lunar-javascript ${lunarVer}  https://github.com/6tail/lunar-javascript  MIT License  Copyright (c) 2018 6tail
  * 完整许可文本见 ziwei/LICENSE-THIRD-PARTY.txt */`;
-const fileName = `ziwei-${commit.slice(0, 7)}.min.js`;
 
 const outDir = resolve(root, 'ziwei');
 mkdirSync(outDir, { recursive: true });
 const empty = resolve(outDir, '.empty.js');
 writeFileSync(empty, '');
-await build({
+const result = await build({
     stdin: { contents: entry, resolveDir: src, loader: 'ts', sourcefile: 'ziwei-entry.ts' },
     absWorkingDir: src,
     bundle: true,
@@ -66,9 +66,13 @@ await build({
         'server-only': empty,
         'lunar-typescript': resolve(src, 'node_modules/lunar-javascript'),
     },
-    outfile: resolve(outDir, fileName),
+    write: false,
+    outfile: resolve(outDir, 'ziwei.min.js'),
     logLevel: 'warning',
 });
+const bytes = result.outputFiles[0].contents;
+const fileName = `ziwei-${commit.slice(0, 7)}-${createHash('sha256').update(bytes).digest('hex').slice(0, 8)}.min.js`;
+writeFileSync(resolve(outDir, fileName), bytes);
 execFileSync('rm', ['-f', empty]);
 
 const lic = (p) => { try { return readFileSync(p, 'utf8').trim(); } catch (e) { return '(未找到许可文件)'; } };
@@ -80,7 +84,7 @@ writeFileSync(resolve(outDir, 'LICENSE-THIRD-PARTY.txt'), [
     `=== lunar-javascript ${lunarVer} (https://github.com/6tail/lunar-javascript) ===`, lic(resolve(src, 'node_modules/lunar-javascript/LICENSE')), '',
 ].join('\n'), 'utf8');
 
-for (const f of readdirSync(outDir)) if (/^ziwei(-\w+)?\.min\.js$/.test(f) && f !== fileName) unlinkSync(resolve(outDir, f));
+for (const f of readdirSync(outDir)) if (/^ziwei(-[\w-]+)?\.min\.js$/.test(f) && f !== fileName) unlinkSync(resolve(outDir, f));
 const mainPath = resolve(root, 'v3_optimized.js');
 const main = readFileSync(mainPath, 'utf8');
 const re = /const ZIWEI_ENGINE_FILE = '[^']*';/;

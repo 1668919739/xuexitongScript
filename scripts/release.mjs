@@ -96,7 +96,7 @@ for (const [mirror, build] of Object.entries(MIRRORS)) {
   }
 }
 
-// 3) 紫微排盘引擎：文件名带上游提交号，不需要 purge，只核对 CDN 上已经能下载到主脚本引用的那个文件
+// 3) 紫微排盘引擎：文件名带上游提交号和内容哈希，不需要 purge，只核对 CDN 上已经能下载到主脚本引用的那个文件
 const engineFile = (/const ZIWEI_ENGINE_FILE = '([^']+)';/.exec(fs.readFileSync(path.join(ROOT, 'v3_optimized.js'), 'utf8')) || [])[1];
 if (engineFile) {
   let ok = false, note = '';

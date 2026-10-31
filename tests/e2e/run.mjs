@@ -1660,6 +1660,81 @@ test('紫微排盘：引擎下载失败时提示并可重试，不影响刷课',
     await ctx.close();
 });
 
+test('紫微排盘 · 星曜含义与 AI 解读：没填 Key 时就地填写，按主题点了才调用 DeepSeek，结果缓存，可重新生成，出错可重试', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    const calls = [];
+    let mode = 'ok';
+    await ctx.route('https://api.deepseek.com/**', async (r) => {
+        const body = JSON.parse(r.request().postData() || '{}');
+        calls.push({ auth: r.request().headers().authorization, user: body.messages[1].content, system: body.messages[0].content, fmt: body.response_format });
+        const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
+        if (mode === '401') return r.fulfill({ status: 401, contentType: 'application/json', headers: H, body: JSON.stringify({ error: { message: 'Authentication Fails' } }) });
+        const n = calls.length;
+        return r.fulfill({ contentType: 'application/json', headers: H, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `【事业定性】\n官禄宫空宫借对宫，第${n}次生成。\n**【建议】** 稳中求进。` } }] }) });
+    });
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await inject(p); await sleep(1500);
+    await p.evaluate(() => { localStorage.setItem('xxt_v41_ziwei_form', JSON.stringify({ cal: 'solar', year: 1990, month: 5, day: 15, leap: false, hour: 6, gender: 'male' })); });
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei);
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    // 宫位详情里显示主星含义
+    const det = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-detail').textContent);
+    assert(/天梁陷[\s\S]*荫[\s\S]*五行土/.test(det), `命宫详情没有天梁含义：${det}`);
+    await p.click('#xxt-v41-ziwei .zw-cell[data-br="3"]'); await sleep(200);   // 官禄（卯）空宫
+    const det2 = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-detail').textContent);
+    assert(/天机借[\s\S]*智慧/.test(det2) && /巨门借/.test(det2), `空宫没有显示借星含义：${det2}`);
+    // 没填 Key：显示就地填写，点主题不调用
+    const ai0 = await p.evaluate(() => ({ note: document.querySelector('#xxt-v41-ziwei .zw-ai-note')?.textContent, key: !!document.querySelector('#xxt-v41-ziwei [data-z=aikey]'), chips: [...document.querySelectorAll('#xxt-v41-ziwei .zw-chip')].map((x) => x.textContent) }));
+    assert(/不是原网站校对过的断语/.test(ai0.note) && ai0.key && ai0.chips.join('') === '命格性格感情事业财运健康', `AI 区块初始状态不对：${JSON.stringify(ai0)}`);
+    await p.click('#xxt-v41-ziwei .zw-chip[data-topic=career]'); await sleep(300);
+    assert(calls.length === 0, '没填 Key 就调用了 DeepSeek');
+    // 填 Key 保存：和答题辅助共用同一个存储，保存后直接生成已选的主题
+    await p.fill('#xxt-v41-ziwei [data-z=aikey]', 'sk-test-ziwei-1234');
+    await p.click('#xxt-v41-ziwei [data-zact=aikeysave]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-ziwei .zw-ai-out'), null, { timeout: 8000 });
+    assert(await p.evaluate(() => localStorage.getItem('xxt-v41-deepseek-key')) === 'sk-test-ziwei-1234', 'Key 没有存到答题辅助共用的位置');
+    assert(calls.length === 1 && calls[0].auth === 'Bearer sk-test-ziwei-1234' && !calls[0].fmt, `调用不对：${JSON.stringify(calls.map((c) => c.auth))}`);
+    assert(/「事业」/.test(calls[0].user) && /官禄/.test(calls[0].user) && /不要编造古籍原文/.test(calls[0].system), '提示词不对');
+    const out1 = await p.evaluate(() => ({ h: [...document.querySelectorAll('#xxt-v41-ziwei .zw-ai-out h4')].map((x) => x.textContent), t: document.querySelector('#xxt-v41-ziwei .zw-ai-out').textContent }));
+    assert(out1.h.join('|') === '事业定性|建议' && /第1次生成/.test(out1.t) && !/\*\*/.test(out1.t), `解读渲染不对：${JSON.stringify(out1)}`);
+    // 切到别的宫位再回来、再点同一主题：用缓存，不重复调用
+    await p.click('#xxt-v41-ziwei .zw-cell[data-br="11"]'); await sleep(200);
+    await p.click('#xxt-v41-ziwei .zw-chip[data-topic=career]'); await sleep(300);
+    assert(calls.length === 1 && /第1次生成/.test(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-ai-out').textContent)), '同一主题重复调用了 DeepSeek');
+    assert(await p.evaluate(() => /✓/.test(document.querySelector('#xxt-v41-ziwei .zw-chip[data-topic=career]').textContent)), '已生成的主题没有打勾');
+    // 重新生成
+    await p.click('#xxt-v41-ziwei [data-zact=airegen]');
+    await p.waitForFunction(() => /第2次生成/.test(document.querySelector('#xxt-v41-ziwei .zw-ai-out')?.textContent || ''), null, { timeout: 8000 });
+    // 刷新页面后缓存还在（存在本机）
+    await p.reload(); await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei);
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    await p.click('#xxt-v41-ziwei .zw-chip[data-topic=career]'); await sleep(300);
+    assert(calls.length === 2 && /第2次生成/.test(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-ai-out')?.textContent || '')), '刷新后没有用缓存');
+    // 出错：显示原因和重试
+    mode = '401';
+    await p.click('#xxt-v41-ziwei .zw-chip[data-topic=love]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-ziwei [data-z=ai] .zw-msg.err'), null, { timeout: 8000 });
+    const err = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=ai] .zw-msg.err').textContent);
+    assert(/401/.test(err) && /Key 无效/.test(err), `错误提示不对：${err}`);
+    mode = 'ok';
+    await p.click('#xxt-v41-ziwei [data-z=ai] [data-zact=airegen]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-ziwei .zw-ai-out'), null, { timeout: 8000 });
+    assert(/「感情」/.test(calls[calls.length - 1].user), '重试的主题不对');
+    // 换一张盘：主题选择清空，不会把上一张盘的解读当成这张的
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    await p.fill('#xxt-v41-ziwei [data-z=year]', '1991');
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    const ai2 = await p.evaluate(() => ({ out: !!document.querySelector('#xxt-v41-ziwei .zw-ai-out'), on: document.querySelectorAll('#xxt-v41-ziwei .zw-chip.on').length, done: document.querySelectorAll('#xxt-v41-ziwei .zw-chip.done').length }));
+    assert(!ai2.out && ai2.on === 0 && ai2.done === 0, `换盘后还显示旧解读：${JSON.stringify(ai2)}`);
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();
