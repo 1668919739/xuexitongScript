@@ -938,7 +938,7 @@ test('唱片机：从浮窗右侧功能栏打开，添加本地音乐，点列�
     await ctx.close();
 });
 
-test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片机 / 更新记录 / 反馈；浮窗靠右时改到左侧', async (b) => {
+test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片机 / 紫微排盘 / 更新记录 / 反馈；浮窗靠右时改到左侧', async (b) => {
     const ctx = await newContext(b, { viewport: { width: 1200, height: 900 } });
     const p = await ctx.newPage();
     await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
@@ -955,7 +955,7 @@ test('侧边功能栏：浮窗右侧边缘的小把手点击拉出，含唱片�
     assert(s.show && !s.open && s.handleAtRight && s.trayOpacity === '0' && !s.headerMusic, `把手位置或默认状态不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=handle]'); await sleep(500);
     s = await st();
-    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|音频转换|更新记录|留言板|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
+    assert(s.open && s.trayOpacity === '1' && s.items.join('|') === '唱片机|音频转换|紫微排盘|更新记录|留言板|反馈问题', `拉出后不对：${JSON.stringify(s)}`);
     await p.click('#xxt-v41-side [data-s=history]'); await sleep(700);
     assert(await p.evaluate(() => document.querySelector('#xxt-v41-panel [data-k=history]').offsetParent !== null), '更新记录没打开');
     await p.click('#xxt-v41-side [data-s=feedback]'); await sleep(700);
@@ -1564,6 +1564,99 @@ test('格式转换：功能栏直达；FLAC + 音量统一 + 序号 + 同名歌�
         return { type: t.blob.type, ch: a.numberOfChannels };
     });
     assert(car.type === 'audio/mpeg' && car.ch === 2, `车载 MP3 不对：${JSON.stringify(car)}`);
+    await ctx.close();
+});
+
+// ---------- 紫微排盘 ----------
+test('紫微排盘：功能栏打开后才下载引擎，农历/晚子时换算后出 12 宫盘，点宫位看详情，和唱片机互斥', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    const engineReqs = [];
+    p.on('request', (r) => { if (r.url().includes('/ziwei/ziwei-')) engineReqs.push(r.url()); });
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await inject(p); await sleep(1500);
+    assert(engineReqs.length === 0 && !(await p.evaluate(() => !!window.XxtZiwei)), '没打开紫微排盘就下载了引擎');
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(400);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei && document.querySelector('#xxt-v41-ziwei.open'), null, { timeout: 8000 });
+    assert(engineReqs.length === 1, `引擎应只下载一次：${engineReqs.length}`);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-side [data-s=ziwei]').classList.contains('on')), '功能栏按钮没有高亮');
+    // 公历 1990-05-15 午时 男
+    await p.fill('#xxt-v41-ziwei [data-z=year]', '1990');
+    await p.selectOption('#xxt-v41-ziwei [data-z=month]', '5');
+    await p.selectOption('#xxt-v41-ziwei [data-z=day]', '15');
+    await p.selectOption('#xxt-v41-ziwei [data-z=hour]', '6');
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    const r1 = await p.evaluate(() => {
+        const d = document.getElementById('xxt-v41-ziwei');
+        return {
+            cells: d.querySelectorAll('.zw-cell[data-br]').length,
+            center: d.querySelector('.zw-center').textContent,
+            ming: d.querySelector('.zw-cell.sel .zw-foot b').textContent,
+            form: d.querySelector('[data-z=formwrap]').style.display,
+            pats: d.querySelectorAll('.zw-pat').length,
+            stars: [...d.querySelectorAll('.zw-cell[data-br="11"] .zw-major')].map((x) => x.textContent).join(''),
+        };
+    });
+    assert(r1.cells === 12 && /土五局/.test(r1.center) && /庚午 辛巳 庚辰 壬午/.test(r1.center), `盘面不对：${JSON.stringify(r1)}`);
+    assert(r1.ming === '命宫' && /天梁/.test(r1.stars) && r1.form === 'none' && r1.pats > 0, `命宫/格局不对：${JSON.stringify(r1)}`);
+    // 点财帛宫（未）：详情切换，三方四正高亮
+    await p.click('#xxt-v41-ziwei .zw-cell[data-br="7"]'); await sleep(200);
+    const r2 = await p.evaluate(() => {
+        const d = document.getElementById('xxt-v41-ziwei');
+        return { title: d.querySelector('.zw-detail b').textContent, tri: d.querySelectorAll('.zw-cell.tri').length, txt: d.querySelector('.zw-detail').textContent };
+    });
+    assert(r2.title === '财帛' && r2.tri === 3 && /太阳/.test(r2.txt) && /禄/.test(r2.txt), `宫位详情不对：${JSON.stringify(r2)}`);
+    // 农历闰月 + 晚子时：2023 年闰二月初一 23:30 → 公历 2023-03-23 子时
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    await p.click('#xxt-v41-ziwei [data-z=cal] [data-v=lunar]');
+    await p.fill('#xxt-v41-ziwei [data-z=year]', '2023');
+    await p.selectOption('#xxt-v41-ziwei [data-z=month]', '2');
+    await p.selectOption('#xxt-v41-ziwei [data-z=day]', '1');
+    await p.check('#xxt-v41-ziwei [data-z=leap]');
+    await p.selectOption('#xxt-v41-ziwei [data-z=hour]', '12');
+    await p.click('#xxt-v41-ziwei [data-z=gender] [data-v=female]');
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(400);
+    const r3 = await p.evaluate(() => ({ bi: app._zw.chart.birthInfo, bar: document.querySelector('#xxt-v41-ziwei .zw-who').textContent }));
+    assert(r3.bi.year === 2023 && r3.bi.month === 3 && r3.bi.day === 23 && r3.bi.hour === 0 && r3.bi.gender === 'female', `农历/晚子时换算不对：${JSON.stringify(r3)}`);
+    assert(/晚子时/.test(r3.bar), `没有提示晚子时换日：${r3.bar}`);
+    // 不存在的闰月：报错、不出新盘
+    await p.click('#xxt-v41-ziwei [data-zact=edit]'); await sleep(200);
+    await p.selectOption('#xxt-v41-ziwei [data-z=month]', '3');
+    await p.click('#xxt-v41-ziwei [data-z=go]'); await sleep(300);
+    const err = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-msg.err')?.textContent || '');
+    assert(/没有闰三月.*闰二月/.test(err), `闰月错误提示不对：${err}`);
+    // 输入记在本机，刷新后还在
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt_v41_ziwei_form')));
+    assert(saved.cal === 'lunar' && saved.year === 2023 && saved.month === 3 && saved.leap === true, `表单没有保存：${JSON.stringify(saved)}`);
+    // 打开唱片机会收起紫微排盘，反之亦然
+    await p.click('#xxt-v41-side [data-s=music]'); await sleep(300);
+    const m1 = await p.evaluate(() => ({ zw: document.querySelector('#xxt-v41-ziwei').classList.contains('open'), mu: document.querySelector('#xxt-v41-music').classList.contains('open') }));
+    assert(!m1.zw && m1.mu, `打开唱片机后紫微应收起：${JSON.stringify(m1)}`);
+    await p.click('#xxt-v41-side [data-s=ziwei]'); await sleep(300);
+    const m2 = await p.evaluate(() => ({ zw: document.querySelector('#xxt-v41-ziwei').classList.contains('open'), mu: document.querySelector('#xxt-v41-music').classList.contains('open') }));
+    assert(m2.zw && !m2.mu, `打开紫微后唱片机应收起：${JSON.stringify(m2)}`);
+    assert(engineReqs.length === 1, '再次打开不应重复下载引擎');
+    // 浮窗收起时一起隐藏
+    await p.click('#xxt-v41-panel [data-k=toggle]'); await sleep(500);
+    assert(!(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei').classList.contains('open'))), '浮窗收起后紫微面板还开着');
+    await ctx.close();
+});
+
+test('紫微排盘：引擎下载失败时提示并可重试，不影响刷课', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 }, ziwei: 'fail' });
+    const p = await ctx.newPage();
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await addFakeVideo(p);
+    await inject(p); await sleep(2000);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(400);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => app._zwLoad === 'failed', null, { timeout: 8000 });
+    const t = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-z=msg]').textContent);
+    assert(/下载失败/.test(t) && await p.$('#xxt-v41-ziwei [data-zact=retry]'), `失败提示不对：${t}`);
+    assert(!(await p.evaluate(() => __v.paused)), '引擎下载失败影响了视频播放');
+    await p.click('#xxt-v41-ziwei [data-zact=retry]');
+    await p.waitForFunction(() => app._zwLoad === 'failed', null, { timeout: 8000 });
     await ctx.close();
 });
 

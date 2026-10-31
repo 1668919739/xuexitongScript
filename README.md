@@ -70,6 +70,8 @@
   Tampermonkey 油猴版本
 - [scripts/build-userscript.mjs](scripts/build-userscript.mjs)
   根据控制台版本生成油猴版
+- [ziwei/](ziwei/)
+  紫微排盘引擎（由 [scripts/build-ziwei.mjs](scripts/build-ziwei.mjs) 从 ziwei-doushu 打包，文件名带上游提交号；第三方许可见 `ziwei/LICENSE-THIRD-PARTY.txt`）
 
 ## 当前脚本行为
 
@@ -131,7 +133,7 @@ configs: {
 - 学完一章时给出小结；倍速、主题和各项开关在齿轮设置里。
 - 浮窗可以按住标题栏拖动，拖动四边和四角可放大缩小（最大铺满整个页面），也可以用来遮住页面上不想被看到的位置；调过大小后标题栏会出现「还原大小」按钮；也可以双击右下角，或按 Alt+Shift+R 让浮窗回到默认位置和大小。
 - 齿轮设置里可以切换浮窗主题：清爽蓝、薄荷绿、樱花粉、星空紫、奶茶棕、夜间、跟随系统，或选「自定义」用调色盘自由调主色和深浅底色。
-- 浮窗右侧边缘有个小把手，点开是功能栏：唱片机（内置轻钢琴、雨声、海浪、篝火、粉红噪音 5 种实时合成的环境音；也能添加电脑里的音乐，音乐只存在本机浏览器；「格式转换」可把音频或视频转成 MP3、车载 MP3、FLAC、WAV，可音量统一、加序号、整文件夹导入，同名 .lrc 歌词随下载一起改名，全部在本机完成；功能栏的「音频转换」可直接打开）、更新记录、反馈问题。
+- 浮窗右侧边缘有个小把手，点开是功能栏：唱片机（内置轻钢琴、雨声、海浪、篝火、粉红噪音 5 种实时合成的环境音；也能添加电脑里的音乐，音乐只存在本机浏览器；「格式转换」可把音频或视频转成 MP3、车载 MP3、FLAC、WAV，可音量统一、加序号、整文件夹导入，同名 .lrc 歌词随下载一起改名，全部在本机完成；功能栏的「音频转换」可直接打开）；紫微排盘（公历 / 农历输入，出 12 宫盘、四化、格局；引擎来自开源项目 [ziwei-doushu](https://github.com/Renhuai123/ziwei-doushu)，第一次打开时才下载，全部在本机计算）、更新记录、留言板、反馈问题。
 - 笔记和学习记录只保存在本机浏览器，不上传任何地方。
 - 后台播放：延时动作由后台线程计时；页面转到后台时以极小音量播放（「后台防卡顿」，默认开启，可在设置里关闭），浏览器就不会给页面限速、暂停视频。若仍被浏览器限速，把 chaoxing.com 加入「始终保持活动」的网站（Edge：设置 › 系统和性能 › 睡眠标签页；Chrome：设置 › 性能 › 内存节省程序），并且不要最小化窗口。
 - 油猴版在学习通“课程”列表页也会显示浮窗：共几门课、已完成 / 进行中，以及一键“继续上次的课程”。
@@ -226,6 +228,15 @@ node tests/verify-v3.mjs            # 检查语法、两个入口同步、版本
 npm install
 npx playwright install chromium     # 首次需要
 npm run test:e2e
+```
+
+更新紫微排盘引擎（只在想跟进上游 ziwei-doushu 时需要）：
+
+```
+git clone https://github.com/Renhuai123/ziwei-doushu.git ../ziwei-doushu
+(cd ../ziwei-doushu && npm ci --ignore-scripts)
+ZIWEI_SRC=../ziwei-doushu npm run build:ziwei   # 生成 ziwei/ziwei-<提交号>.min.js，并改写主脚本里的文件名
+node tests/ziwei-engine.mjs                     # 结构、快照、农历换算
 ```
 
 发新版本时：修改源码顶部的 `VERSION`，在同一处的 `CHANGELOG` 和 `CHANGELOG.md` 里写一句更新说明，再运行上面的构建和检查。

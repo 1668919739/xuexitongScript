@@ -96,6 +96,19 @@ for (const [mirror, build] of Object.entries(MIRRORS)) {
   }
 }
 
+// 3) 紫微排盘引擎：文件名带上游提交号，不需要 purge，只核对 CDN 上已经能下载到主脚本引用的那个文件
+const engineFile = (/const ZIWEI_ENGINE_FILE = '([^']+)';/.exec(fs.readFileSync(path.join(ROOT, 'v3_optimized.js'), 'utf8')) || [])[1];
+if (engineFile) {
+  let ok = false, note = '';
+  try {
+    const t = await fetchText(MIRRORS.cdn(engineFile));
+    ok = t.includes('XxtZiwei');
+    note = ok ? `${(t.length / 1024).toFixed(0)} KB` : '内容不对';
+  } catch (e) { note = 'ERR ' + e.message; }
+  rows.push({ mirror: 'cdn', file: engineFile, got: note, ok });
+  console.log(`  ${ok ? '✓' : '×'} cdn  ${engineFile}  ${note}`);
+}
+
 const bad = rows.filter((r) => !r.ok);
 console.log(`\n${bad.length ? `❌ ${bad.length} 个链接还没拿到 ${expect}` : `✅ 全部 ${rows.length} 个链接已是 ${expect}`}`);
 if (bad.length) {

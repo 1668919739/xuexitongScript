@@ -4,11 +4,13 @@
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "test": "node tests/verify-v3.mjs",
-    "test:all": "node tests/verify-v3.mjs && node tests/ncm-verify.mjs && node tests/popup-recognize.mjs && node tests/popup-radio.mjs && node tests/task-blocker.mjs && node tests/rate-maintain.mjs && node tests/panel-status.mjs && node tests/changelog-talk.mjs && node tests/music-queue.mjs",
+    "test:all": "node tests/verify-v3.mjs && node tests/ncm-verify.mjs && node tests/popup-recognize.mjs && node tests/popup-radio.mjs && node tests/task-blocker.mjs && node tests/rate-maintain.mjs && node tests/panel-status.mjs && node tests/changelog-talk.mjs && node tests/music-queue.mjs && node tests/ziwei-engine.mjs",
     "test:e2e": "node tests/e2e/run.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "build:ziwei": "node scripts/build-ziwei.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.25.12",
     "jquery": "3.6.0",
     "jsdom": "^30.1.3",
     "lamejs": "^1.2.1",

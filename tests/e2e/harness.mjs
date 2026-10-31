@@ -36,13 +36,22 @@ export function coursePage({ nodes = ['2.1 第一部分', '2.2 第二部分'], a
  * latest: version.json 返回的版本号（默认等于当前版本，即“已是最新”）
  * remoteCode: 静默更新下载到的代码（默认就是 latest 版本的代码）
  */
-export async function newContext(browser, { routes = {}, latest = VERSION, remoteCode, versionDelay = 0, viewport = { width: 800, height: 700 } } = {}) {
+export async function newContext(browser, { routes = {}, latest = VERSION, remoteCode, versionDelay = 0, viewport = { width: 800, height: 700 }, ziwei = 'ok' } = {}) {
     const ctx = await browser.newContext({ viewport });
     const H = { 'access-control-allow-origin': '*' };
     const code = remoteCode ?? withVersion(latest);
     await ctx.route('https://code.jquery.com/**', (r) => r.fulfill({ body: JQUERY, contentType: 'text/javascript' }));
+    // 紫微排盘引擎：ziwei='ok' 返回本地打包好的引擎文件；'fail' 模拟所有 CDN 都下载失败
+    const serveZiwei = (r) => {
+        if (ziwei === 'fail') return r.abort();
+        const u = new URL(r.request().url());
+        const f = u.pathname.split('@master/')[1];
+        return r.fulfill({ contentType: 'application/javascript', headers: H, body: readFileSync(resolve(root, f), 'utf8') });
+    };
+    for (const h of ['fastly', 'testingcf']) await ctx.route(`https://${h}.jsdelivr.net/**`, serveZiwei);
     const serveRemote = async (r) => {
         const u = r.request().url();
+        if (u.includes('/ziwei/ziwei-')) return serveZiwei(r);
         if (u.includes('version.json')) {
             if (versionDelay) await sleep(versionDelay);
             return r.fulfill({ contentType: 'application/json', headers: H, body: JSON.stringify({ version: latest }) });
