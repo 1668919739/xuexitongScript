@@ -20,6 +20,7 @@
             '紫微斗数改用原站同款配色：白底、米色输入框、墨金强调色、深棕药丸形主按钮、墨金虚线时辰圆标、等宽字体的时间数字、宋体标题和标题下的四段填写进度；四化标记改为原站样式（彩色文字配浅底细边，禄绿、权蓝、科金、忌红）；不再跟着浮窗的彩色主题变色，浮窗为深色主题时换成原站的深色配色（藏青底、金色强调）',
             '紫微斗数新增「合盘」（顶部标签：命盘 / 合盘 / 小六壬）：关系可选感情、合伙、上下级、朋友；甲方、乙方各一套和命盘相同的表单，可从最近命盘直接选人。两张盘在本机排好后对照：命格兼容速判、夫妻宫与对方命宫是否对应（天作之合）、生年四化落入对方哪一宫、关键宫位对照（感情看命宫、夫妻、福德；合伙看官禄、兄弟、仆役等）、太阳太阴、夫妻宫传统断语、双方当前大限；对照依据原项目开源的合盘知识库。「开始 AI 深度解读」用合盘方法论作背景调用你的 DeepSeek，不引用原话、不做绝对化断言，生成过的保存在本机；可一键查看任一方的命盘',
             '紫微斗数新增「小六壬」：按原站的起课规则（月从大安起数农历月，日从月宫起数农历日，时从日宫起数时辰，子时为一；23 点以后仍按当天农历日；闰月按本月数），实时显示此刻的农历月日时，点「起课」后六宫依次点亮、月 / 日 / 时三块翻牌落宫，给出吉凶、概括、应期和建议；可写下想问的事，提示一事一课、一天不超过三次（各宫吉凶与含义对齐原站公开的六宫说明，文字为本脚本自写）',
+            '紫微合盘结果页顶部加上「感情 / 合伙 / 上下级 / 朋友」标签，和原站一样点一下就按新关系重新对照，不用返回重填；各关系的 AI 深度解读分开保存，切回来直接显示',
             '紫微斗数运限盘补上流曜：「流昌 / 流曲」按所选运限那一层的天干安，「小昌 / 小曲」按当年小限宫的宫干安，规则用原项目开源的流昌流曲表，并和原站 7 个运限视图逐宫核对一致；宫格里的十二神改为按名字换行，不再被省略号截断',
             '紫微斗数按原站补齐盘面与运限：宫名「仆役」改叫「交友」；每宫加上博士、将前、岁前十二神；运限从「本命 / 大限 / 流年」扩展为「本命 / 大限 / 流年 / 小限 / 流月 / 流日 / 流时」，流月、流日、流时可前后翻看（越界自动进位到上一级），默认是此刻；每个视图标出该层命宫和各宫在该层的宫名，四化逐层叠加（盘上每颗星只标最近三层，与原站相同），将前、岁前十二神随运限地支重排。规则全部用原项目开源代码（十二神、流月流日流时四化、童限），并用原站读到的 5 张盘和 7 个运限视图逐宫、逐星对拍一致',
         ] },
@@ -6094,6 +6095,7 @@
                     if (!act) return;
                     const a = act.getAttribute('data-hact');
                     if (a === 'back') { this._hm = null; this._zwRenderHm(); const b = this._ziweiEl.querySelector('[data-z="body"]'); if (b) b.scrollTop = 0; }
+                    else if (a === 'rel') this._zwHmSwitchRel(act.getAttribute('data-v'));
                     else if (a === 'ai') this._zwHmAi(false);
                     else if (a === 'airegen') this._zwHmAi(true);
                     else if (a === 'aikeysave') this._zwSaveKey();
@@ -6138,6 +6140,18 @@
                 } catch (e) { this._hmError = '合盘失败：' + (e && e.message ? e.message : e); }
                 this._zwRenderHm();
                 const b = this._ziweiEl.querySelector('[data-z="body"]'); if (b) b.scrollTop = 0;
+            },
+            // 结果页上切换「你们的关系」：双方命盘不变，只按新关系重算对照（与原站一样点一下就切换）；
+            // 该关系生成过的 AI 解读直接显示，没生成过的显示「开始 AI 深度解读」
+            _zwHmSwitchRel(rel) {
+                const h = this._hm, Z = window.XxtZiwei;
+                if (!h || !Z || rel === h.rel || !ZIWEI_REL.some((x) => x[0] === rel)) return;
+                this._hmRel = rel;
+                try { const facts = this._zwHmFacts(h.A, h.B, rel, Z); this._hm = { A: h.A, B: h.B, facts, rel: facts.rel }; } catch (e) { this._hmError = '合盘失败：' + (e && e.message ? e.message : e); }
+                this._hmAiErr = '';
+                this._hmAiWant = false;
+                try { localStorage.setItem(ZIWEI_HM_KEY, JSON.stringify({ A: h.A.f, B: h.B.f, rel })); } catch (e) { /* ignore */ }
+                this._zwRenderHm();
             },
             _zwHmId() {
                 const h = this._hm; if (!h) return '';
@@ -6215,6 +6229,7 @@
                     `<div class="zw-row"><input type="password" data-z="aikey" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key"><button type="button" class="zw-btn" data-hact="aikeysave">保存</button><a href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener">去申请 Key</a></div></div>`;
                 else ai = (this._hmAiErr ? `<div class="zw-msg err">${esc(this._hmAiErr)}</div>` : '') + `<button type="button" class="zw-go zw-aigo" data-hact="ai">${this._hmAiErr ? '重试' : '开始 AI 深度解读'}</button>`;
                 return `<div class="zw-bar"><button type="button" class="zw-back" data-hact="back" aria-label="返回合盘输入">‹ 返回</button><span class="zw-who">${sideName('A')} × ${sideName('B')} · ${esc(F.relLabel)}</span></div>` +
+                    `<div class="zw-tabs zw-hmtabs" role="tablist" aria-label="你们的关系">${ZIWEI_REL.map(([k, label]) => `<button type="button" role="tab" data-hact="rel" data-v="${k}" class="${F.rel === k ? 'on' : ''}" aria-selected="${F.rel === k}">${label}</button>`).join('')}</div>` +
                     `<div class="zw-hcards">${card(h.A, 'A')}<span class="zw-hx">×</span>${card(h.B, 'B')}</div>` +
                     [h.A, h.B].filter((X) => X.unknown).map((X) => `<div class="zw-tip warn">${X === h.A ? '甲方' : '乙方'}出生时间不详，按子时起盘，命宫、夫妻宫等位置可能不准。</div>`).join('') +
                     sec('命格兼容速判', compat, '只看双方命宫主星的组合，是传统说法的简化') +
@@ -6546,6 +6561,7 @@
                     '#xxt-v41-ziwei .zw-tabs button:focus-visible{outline:2px solid var(--x-accent-ring);outline-offset:2px}' +
                     '#xxt-v41-ziwei [data-z="body"]{padding-top:12px}' +
                     '#xxt-v41-ziwei .zw-hmrel .zw-chips{margin-top:6px}' +
+                    '#xxt-v41-ziwei .zw-hmtabs{padding:0 2px;margin:2px 0 12px}' +
                     '#xxt-v41-ziwei .zw-chip.on{background:var(--zw-btn);color:var(--zw-btn-fg);box-shadow:none}' +
                     '#xxt-v41-ziwei .zw-party{display:flex;flex-direction:column;gap:7px;margin-top:10px;padding:12px;border-radius:14px;background:var(--zw-panel);box-shadow:inset 0 0 0 1px var(--x-line)}' +
                     '#xxt-v41-ziwei .zw-party select,#xxt-v41-ziwei .zw-party .zw-in{background-color:var(--x-bg)}' +

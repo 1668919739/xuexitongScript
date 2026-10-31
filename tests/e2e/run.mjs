@@ -1968,6 +1968,16 @@ test('紫微斗数 · 合盘：三个标签切换；甲乙双方表单（可从�
     assert(calls.length === 1 && /「合伙」/.test(calls[0].user) && /【乙方（李四）】/.test(calls[0].user) && /不要按婚恋来解读/.test(calls[0].system), '合盘 AI 请求不对');
     const ai = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out h4')].map((x) => x.textContent).join('|'));
     assert(ai === '合作定性|相处建议', `合盘 AI 渲染不对：${ai}`);
+    // 结果页顶部直接切换关系：不回表单、双方不变，各关系的 AI 解读分开缓存
+    const tabsOf = () => p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-hmtabs button')].map((x) => x.textContent + (x.classList.contains('on') ? '*' : '')).join('|'));
+    assert(await tabsOf() === '感情|合伙*|上下级|朋友', `结果页关系标签不对：${await tabsOf()}`);
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] .zw-hmtabs [data-v=boss]'); await sleep(300);
+    const r4 = await p.evaluate(() => ({ forms: document.querySelector('#xxt-v41-ziwei [data-h=forms]').style.display, who: document.querySelector('#xxt-v41-ziwei [data-z=pane-hm] .zw-who').textContent, sec: [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-sec')].map((x) => x.firstChild.textContent.trim()).find((t) => t.startsWith('关键宫位对照')), ai: !!document.querySelector('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out'), go: !!document.querySelector('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=ai]') }));
+    assert(r4.forms === 'none' && /张三 × 乙方 李四 · 上下级/.test(r4.who) && r4.sec === '关键宫位对照（上下级）' && !r4.ai && r4.go && calls.length === 1 && await tabsOf() === '感情|合伙|上下级*|朋友', `切换到上下级不对：${JSON.stringify(r4)}`);
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] .zw-hmtabs [data-v=love]'); await sleep(300);
+    assert(await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-sec')].some((x) => x.firstChild.textContent.trim() === '夫妻宫传统断语')), '切回感情后没有夫妻宫断语');
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] .zw-hmtabs [data-v=partner]'); await sleep(300);
+    assert(calls.length === 1 && await p.$('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out'), '切回合伙后应直接显示已生成的 AI 解读');
     // 缓存：返回再合一次同样的盘，不重复调用
     await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=back]'); await sleep(150);
     await p.click('#xxt-v41-ziwei [data-h=go]'); await sleep(500);
