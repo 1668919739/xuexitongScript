@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         学习通自动刷课脚本 V4.1
 // @namespace    local.codex.xuexitong
-// @version      4.6.14
+// @version      4.7.0
 // @description  自动播放、卡顿分级恢复、防暂停拉扯、运行状态浮窗、课件自动翻看、直播回放保活、自动切换下一节、章节测验与视频弹题答题辅助（DeepSeek / 随机作答）、本机音频格式转换，并在页面结构异常时安全停止
 // @author       RouteCC
 // @match        *://mooc1.chaoxing.com/mycourse/studentstudy*
@@ -25,12 +25,12 @@
     if (window.top !== window && !IS_LIVE_PLAYER) return;
 
     // 版本号唯一来源：浮窗徽章和油猴 @version 都从这里读取，发版时只改这一处
-    const VERSION = '4.6.14';
+    const VERSION = '4.7.0';
     // 更新记录：更新后浮窗显示新增内容，设置里可以查看全部历史（同步记录在 CHANGELOG.md，新版本加在最上面）
     // date：发布日期；note：作者 RouteCC 的吐槽（可选）
     // 没有 v 的条目会单独显示为「作者吐槽」，不参与“新版本”判断
     const CHANGELOG = [
-        { v: '4.6.14', date: '2026-10-31', items: [
+        { v: '4.7.0', date: '2026-10-31', items: [
             '新增「紫微斗数」：右侧功能栏里的独立功能，和唱片机共用浮窗旁边的位置（打开一个就收起另一个）。支持公历 / 农历（含闰月）输入，23:00 后出生按晚子时归到次日；出 12 宫传统盘面（主星庙旺、生年四化、六吉六煞、大限岁数、身宫），点宫位看详情并标出三方四正，下面列出识别到的格局和古籍出处',
             '排盘引擎来自开源项目 ziwei-doushu（MIT，基于倪海厦《天纪》体系，核心 iztro），单独打包成约 570KB 的文件，第一次打开紫微斗数时才下载，不用这个功能就不会多下载；全部在本机浏览器计算，出生信息只保存在本机',
             '紫微斗数新增「AI 解读」：命格、性格、感情、事业、财运、健康六个主题，点哪个才生成哪个，用 DeepSeek（Key 与答题辅助共用，没填时可以在紫微面板里直接填）；只按本盘数据解读，不编造古籍原话，标明是 AI 生成、仅供参考；生成过的保存在本机，再看不重复扣费，可重新生成。宫位详情里加上主星的基本含义（关键词、吉凶、五行），空宫也显示借来的主星',
@@ -5492,7 +5492,7 @@
                 } catch (e) { /* ignore */ }
                 return def;
             },
-            // 4.6.14 早期按「选时辰」保存的记录（有 hour、没有 tmode 或 tmode=branch）换成该时辰里的一个钟点：
+            // 4.7.0（曾以 4.6.14 发布）早期按「选时辰」保存的记录（有 hour、没有 tmode 或 tmode=branch）换成该时辰里的一个钟点：
             // 早子时→00:30，晚子时→23:30，丑…亥→该时辰的中间整点（丑 02:00 … 亥 22:00）
             _zwMigrateForm(o) {
                 if ((o.tmode === 'branch' || o.tmode === undefined) && Number.isInteger(Number(o.hour)) && o.ch === undefined) {
