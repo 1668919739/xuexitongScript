@@ -1747,6 +1747,17 @@ test('紫微斗数 · 真太阳时与运限：按钟点+出生地换算时辰，
     await p.waitForFunction(() => window.XxtZiwei && document.querySelectorAll('#xxt-v41-ziwei [data-z=prov] option').length > 30);
     const title = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei .zw-head b').textContent);
     assert(title === '紫微斗数', `面板标题不对：${title}`);
+    // 配色固定用原站的（深棕主按钮、墨金强调），不随浮窗的彩色主题变；浮窗为深色主题时用原站深色
+    const look = () => p.evaluate(() => { const d = document.getElementById('xxt-v41-ziwei'); return { theme: d.getAttribute('data-theme'), go: getComputedStyle(d.querySelector('[data-z=go]')).backgroundColor, acc: getComputedStyle(d).getPropertyValue('--x-accent').trim() }; });
+    const l1 = await look();
+    assert(l1.theme === 'light' && l1.go === 'rgb(42, 37, 30)' && l1.acc === '#B8922A', `默认配色不是原站同款：${JSON.stringify(l1)}`);
+    await p.evaluate(() => app._setTheme('mint')); await sleep(300);
+    const l2 = await look();
+    assert(l2.theme === 'light' && l2.go === 'rgb(42, 37, 30)' && l2.acc === '#B8922A', `浮窗换成薄荷主题后紫微配色被带偏：${JSON.stringify(l2)}`);
+    await p.evaluate(() => app._setTheme('dark')); await sleep(300);
+    const l3 = await look();
+    assert(l3.theme === 'dark' && l3.go === 'rgb(212, 168, 67)' && l3.acc === '#D4A843', `深色主题下不是原站深色：${JSON.stringify(l3)}`);
+    await p.evaluate(() => app._setTheme('light')); await sleep(300);
     // 表单顺序与原站一致
     const labels = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei .zw-form1 .zw-lab')].map((x) => x.textContent));
     assert(labels.join('|') === '姓名（可选）|出生日期（公历）|出生时间（北京时间）|出生地点（用于真太阳时校正）|性别', `表单顺序不对：${labels.join('|')}`);
