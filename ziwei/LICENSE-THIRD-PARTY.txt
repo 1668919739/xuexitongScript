@@ -1,4 +1,4 @@
-ziwei-495b79e-320a4a63.min.js 由以下 MIT 开源项目打包而成（ziwei-doushu@495b79ecb3524b20b2edc026067d7d0b0f407319）。
+ziwei-495b79e-443b886b.min.js 由以下 MIT 开源项目打包而成（ziwei-doushu@495b79ecb3524b20b2edc026067d7d0b0f407319）。
 
 === ziwei-doushu (https://github.com/Renhuai123/ziwei-doushu) ===
 MIT License

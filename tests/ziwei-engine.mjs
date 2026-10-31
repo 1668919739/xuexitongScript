@@ -180,5 +180,79 @@ if (topicsSrc && pm) {
     ok(threw, '未知主题报错');
 }
 
+console.log('小六壬（_lrCast，按原站规则）');
+{
+    const m = /\n(\s*)_lrCast\(lunarMonth, lunarDay, branch\) \{[\s\S]*?\n\1\},/.exec(src);
+    const lr = (/\n    const ZIWEI_LIUREN = \[[\s\S]*?\n    \];/.exec(src) || [])[0];
+    ok(!!m && !!lr, '抽到 _lrCast 与 ZIWEI_LIUREN');
+    if (m && lr) {
+        const o = vm.runInNewContext(`${lr.trim()}\n({ L: ZIWEI_LIUREN, ${m[0].trim()} })`);
+        const N = (i) => o.L[i][0];
+        ok(o.L.map((x) => x[0]).join('') === '大安留连速喜赤口小吉空亡' && o.L.map((x) => x[1]).join(',') === '吉,不利,吉,凶,吉,凶', '六宫顺序与吉凶（与原站一致）');
+        // 手算：正月从大安起；三月→速喜；初五从速喜数到大安；辰时（第 5 位）从大安数到小吉
+        const a = o._lrCast(3, 5, 4);
+        ok(N(a.month) === '速喜' && N(a.day) === '大安' && N(a.hour) === '小吉', `三月初五辰时 → 速喜 / 大安 / 小吉：${N(a.month)}/${N(a.day)}/${N(a.hour)}`);
+        const b = o._lrCast(1, 1, 0);
+        ok(N(b.month) === '大安' && N(b.day) === '大安' && N(b.hour) === '大安', '正月初一子时：起点那一宫算第一位，全是大安');
+        const c = o._lrCast(9, 22, 6);
+        ok(N(c.month) === '速喜' && N(c.day) === '空亡' && N(c.hour) === '空亡', '九月廿二午时 → 速喜 / 空亡 / 空亡');
+        const d = o._lrCast(7, 30, 11);
+        ok(N(d.month) === '大安' && N(d.day) === '空亡' && N(d.hour) === '小吉', '七月三十亥时：数完一圈接着从大安数');
+        let all = true;
+        for (let mo = 1; mo <= 12; mo++) for (let dd = 1; dd <= 30; dd++) for (let br = 0; br < 12; br++) {
+            // 逐位掐数的模拟实现，和公式对拍
+            let pos = 0; for (let k = 1; k < mo; k++) pos = (pos + 1) % 6;
+            const pm = pos; for (let k = 1; k < dd; k++) pos = (pos + 1) % 6;
+            const pd = pos; for (let k = 0; k < br; k++) pos = (pos + 1) % 6;
+            const r = o._lrCast(mo, dd, br);
+            if (r.month !== pm || r.day !== pd || r.hour !== pos) all = false;
+        }
+        ok(all, '12 月 × 30 日 × 12 时辰全部与逐位掐数一致');
+    }
+    ok(JSON.stringify(Z.solarToLunar(2026, 10, 31)) === '{"year":2026,"month":9,"day":22,"leap":false}' && Z.solarToLunar(2023, 3, 22).leap === true && Z.solarToLunar(2023, 3, 22).month === 2, '公历转农历（闰月给本月序数 + leap）');
+}
+
+console.log('合盘（_zwHmFacts / _zwHmPrompt）');
+{
+    const rel = (/\n    const ZIWEI_REL = \[[\s\S]*?\n    \];/.exec(src) || [])[0];
+    const mf = /\n(\s*)_zwHmFacts\(A, B, rel, Z\) \{[\s\S]*?\n\1\},/.exec(src);
+    const mp = /\n(\s*)_zwHmPrompt\(A, B, facts, methodology\) \{[\s\S]*?\n\1\},/.exec(src);
+    ok(!!rel && !!mf && !!mp, '抽到 ZIWEI_REL、_zwHmFacts、_zwHmPrompt');
+    if (rel && mf && mp) {
+        const o = vm.runInNewContext(`${rel.trim()}\n({ REL: ZIWEI_REL, ${mf[0].trim()} ${mp[0].trim()} })`);
+        ok(o.REL.map((x) => x[1]).join('') === '感情合伙上下级朋友', '关系类型：感情 合伙 上下级 朋友（与原站一致）');
+        const A = { chart: Z.generateChart({ year: 1990, month: 5, day: 15, hour: 6, gender: 'male' }), name: '张三', unknown: false };
+        const B = { chart: Z.generateChart({ year: 1992, month: 8, day: 3, hour: 3, gender: 'female' }), name: '李四', unknown: false };
+        const f = o._zwHmFacts(A, B, 'love', Z);
+        // 四化互入：每颗星在对方盘上所在的宫，必须和对方盘一致
+        const where = (c, n) => (c.palaces.find((p) => p.stars.some((x) => x.name === n)) || {}).name;
+        ok(f.hua.aToB.length === 4 && f.hua.aToB.every((x) => x.palace === where(B.chart, x.star)) && f.hua.bToA.every((x) => x.palace === where(A.chart, x.star)), '生年四化互入：落宫与对方盘一致');
+        ok(f.hua.aToB.map((x) => x.h).join('') === '禄权科忌' && f.hua.aToB[0].star === '太阳', '甲方（庚年）四化按禄权科忌：太阳化禄');
+        ok(f.rows.map((r) => r.name).join() === '命宫,夫妻,福德' && f.rows[0].a.main.startsWith('天梁'), '感情看命宫、夫妻、福德');
+        ok(f.sunMoon.length === 2 && f.sunMoon[0].star === '太阴' && f.sunMoon[1].star === '太阳', '男命看太阴、女命看太阳');
+        ok(f.fuqi.length === 2 && f.fuqi.every((x) => Array.isArray(x.items)), '夫妻宫传统断语按双方列出');
+        ok(f.dx.length === 2 && f.dx[0].range === '35–44', '大限同步：双方当前大限');
+        // 速判表：构造一对紫微 + 天府命宫
+        const fake = (ming, fuqi) => ({ chart: { birthInfo: { gender: 'male' }, currentDaXianIndex: -1, currentAge: 1, daXians: [], palaces: [
+            { name: '命宫', branch: 0, stars: ming.map((n) => ({ name: n, type: 'major' })) },
+            { name: '夫妻', branch: 10, stars: fuqi.map((n) => ({ name: n, type: 'major' })) },
+            { name: '福德', branch: 2, stars: [] }] } });
+        const f2 = o._zwHmFacts(fake(['紫微'], ['天府']), fake(['天府'], ['紫微']), 'love', Z);
+        ok(f2.compat.some((x) => x.pair === '紫微 + 天府' && x.stars === 5), '速判表：紫微 + 天府 ★★★★★');
+        ok(f2.tianzuo.aToB.join() === '天府' && f2.tianzuo.bToA.join() === '紫微', '夫妻宫↔命宫双向对应（天作之合）');
+        const f3 = o._zwHmFacts(fake(['七杀'], []), fake(['天同'], []), 'love', Z);
+        ok(f3.compat.some((x) => x.pair === '杀破狼 + 机月同梁'), '速判表分组：七杀属杀破狼、天同属机月同梁');
+        const f4 = o._zwHmFacts(fake(['天相'], []), fake(['巨门'], []), 'love', Z);
+        ok(f4.compat.some((x) => x.pair === '天相 + 任何星'), '速判表：天相 + 任何星');
+        const fp = o._zwHmFacts(A, B, 'partner', Z);
+        ok(fp.rows.map((r) => r.name).join() === '命宫,官禄,兄弟,仆役,福德' && !fp.sunMoon.length && !fp.fuqi.length, '合伙看命宫、官禄、兄弟、仆役、福德，不看夫妻宫断语');
+        const pr = o._zwHmPrompt(A, B, fp, Z.HEMING_METHODOLOGY);
+        ok(/「合伙」/.test(pr.user) && /【甲方（张三）】/.test(pr.user) && /【乙方（李四）】/.test(pr.user) && /甲方生年四化落入乙方/.test(pr.user), '合盘提示词含双方命盘与对照结果');
+        ok(/不要按婚恋来解读/.test(pr.system) && /不要原样引用其中的引文/.test(pr.system) && /生离死别/.test(pr.system) && !/### 十、/.test(pr.system), '提示词规则：非感情不按婚恋解读、不引用原话、不做绝对化断言，背景去掉名言汇总');
+        const pl = o._zwHmPrompt({ ...A, unknown: true }, B, f, Z.HEMING_METHODOLOGY);
+        ok(/出生时辰不详/.test(pl.user) && !/不要按婚恋来解读/.test(pl.system), '感情关系 + 时辰不详提示');
+    }
+}
+
 if (failed) { console.log(`\n[ziwei-engine] ${failed} 项失败`); process.exit(1); }
 console.log('\n[ziwei-engine] 全部通过');

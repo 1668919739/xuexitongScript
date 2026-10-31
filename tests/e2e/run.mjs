@@ -1901,6 +1901,108 @@ test('紫微斗数 · 按原站：姓名、不知道出生时间（以子时起�
     await ctx.close();
 });
 
+test('紫微斗数 · 合盘：三个标签切换；甲乙双方表单（可从最近命盘选）、四种关系、对照结果、AI 深度解读、返回、查看单人命盘', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    const calls = [];
+    await ctx.route('https://api.deepseek.com/**', async (r) => {
+        const body = JSON.parse(r.request().postData() || '{}');
+        calls.push({ system: body.messages[0].content, user: body.messages[1].content });
+        return r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' }, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '【合作定性】\n双方官禄宫互补。\n【相处建议】\n分工明确。' } }] }) });
+    });
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await p.evaluate(() => {
+        localStorage.setItem('xxt_v41_ziwei_hist', JSON.stringify([{ f: { name: '李四', cal: 'solar', tmode: 'clock', year: 1992, month: 8, day: 3, leap: false, ch: 6, cm: 0, unknown: false, prov: '四川省', city: '成都', dst: false, gender: 'female' }, br: 3, unknown: false, ts: Date.now() }]));
+        localStorage.setItem('xxt_v41_ziwei_form', JSON.stringify({ name: '张三', cal: 'solar', tmode: 'clock', year: 1990, month: 5, day: 15, ch: 12, cm: 0, prov: '', city: '', gender: 'male' }));
+    });
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei);
+    const tabs = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei [data-ztab]')].map((x) => x.textContent + (x.classList.contains('on') ? '*' : '')).join('|'));
+    assert(tabs === '命盘*|合盘|小六壬', `标签不对：${tabs}`);
+    await p.click('#xxt-v41-ziwei [data-ztab=hm]'); await sleep(300);
+    const v1 = await p.evaluate(() => ({ ming: document.querySelector('#xxt-v41-ziwei [data-z=pane-ming]').style.display, hm: document.querySelector('#xxt-v41-ziwei [data-z=pane-hm]').style.display, rel: [...document.querySelectorAll('#xxt-v41-ziwei [data-h=rel] button')].map((x) => x.textContent + (x.classList.contains('on') ? '*' : '')).join('|'), aName: document.querySelector('.zw-party[data-side=A] [data-p=name]').value, provs: document.querySelectorAll('.zw-party[data-side=B] [data-p=prov] option').length, tipA: document.querySelector('.zw-party[data-side=A] [data-p=tip]').textContent }));
+    assert(v1.ming === 'none' && v1.hm === '' && v1.rel === '感情*|合伙|上下级|朋友' && v1.aName === '张三' && v1.provs > 30 && /午时/.test(v1.tipA), `合盘初始状态不对：${JSON.stringify(v1)}`);
+    // 乙方从最近命盘选李四
+    await p.selectOption('.zw-party[data-side=B] [data-p=pick]', '0'); await sleep(200);
+    const bF = await p.evaluate(() => ({ name: document.querySelector('.zw-party[data-side=B] [data-p=name]').value, y: document.querySelector('.zw-party[data-side=B] [data-p=year]').value, city: document.querySelector('.zw-party[data-side=B] [data-p=city]').value, tip: document.querySelector('.zw-party[data-side=B] [data-p=tip]').textContent, g: document.querySelector('.zw-party[data-side=B] [data-p=gender] .on').getAttribute('data-v') }));
+    assert(bF.name === '李四' && bF.y === '1992' && bF.city === '成都' && /真太阳时/.test(bF.tip) && bF.g === 'female', `从最近命盘选人不对：${JSON.stringify(bF)}`);
+    // 感情
+    await p.click('#xxt-v41-ziwei [data-h=go]'); await sleep(500);
+    const r1 = await p.evaluate(() => ({ forms: document.querySelector('#xxt-v41-ziwei [data-h=forms]').style.display, who: document.querySelector('#xxt-v41-ziwei [data-z=pane-hm] .zw-who').textContent, secs: [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-sec')].map((x) => x.firstChild.textContent.trim()), rows: [...document.querySelectorAll('#xxt-v41-ziwei .zw-htable tbody th')].map((x) => x.textContent).join(), cards: document.querySelectorAll('#xxt-v41-ziwei .zw-hcard').length }));
+    assert(r1.forms === 'none' && /甲方 张三 × 乙方 李四 · 感情/.test(r1.who) && r1.cards === 2, `合盘结果头部不对：${JSON.stringify(r1)}`);
+    assert(['命格兼容速判', '夫妻宫 ↔ 命宫', '生年四化互入', '关键宫位对照（感情）', '太阳 / 太阴', '夫妻宫传统断语', '大限同步', 'AI 深度解读'].every((x) => r1.secs.includes(x)) && r1.rows === '命宫,夫妻,福德', `感情合盘的分节不对：${JSON.stringify(r1.secs)} ${r1.rows}`);
+    // 返回，改成合伙
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=back]'); await sleep(200);
+    assert(await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-h=forms]').style.display === ''), '返回后没看到双方表单');
+    await p.click('#xxt-v41-ziwei [data-h=rel] [data-v=partner]'); await sleep(100);
+    await p.click('#xxt-v41-ziwei [data-h=go]'); await sleep(500);
+    const r2 = await p.evaluate(() => ({ secs: [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-sec')].map((x) => x.firstChild.textContent.trim()), rows: [...document.querySelectorAll('#xxt-v41-ziwei .zw-htable tbody th')].map((x) => x.textContent).join() }));
+    assert(r2.rows === '命宫,官禄,兄弟,仆役,福德' && !r2.secs.includes('夫妻宫传统断语') && !r2.secs.includes('夫妻宫 ↔ 命宫'), `合伙合盘不对：${JSON.stringify(r2)}`);
+    // AI：没填 Key 时就地填，填完自动生成
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=ai]'); await sleep(200);
+    assert(calls.length === 0 && await p.$('#xxt-v41-ziwei [data-z=pane-hm] [data-z=aikey]'), '没填 Key 时应先让填 Key');
+    await p.fill('#xxt-v41-ziwei [data-z=pane-hm] [data-z=aikey]', 'sk-hm-1');
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=aikeysave]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out'), null, { timeout: 8000 });
+    assert(calls.length === 1 && /「合伙」/.test(calls[0].user) && /【乙方（李四）】/.test(calls[0].user) && /不要按婚恋来解读/.test(calls[0].system), '合盘 AI 请求不对');
+    const ai = await p.evaluate(() => [...document.querySelectorAll('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out h4')].map((x) => x.textContent).join('|'));
+    assert(ai === '合作定性|相处建议', `合盘 AI 渲染不对：${ai}`);
+    // 缓存：返回再合一次同样的盘，不重复调用
+    await p.click('#xxt-v41-ziwei [data-z=pane-hm] [data-hact=back]'); await sleep(150);
+    await p.click('#xxt-v41-ziwei [data-h=go]'); await sleep(500);
+    assert(calls.length === 1 && await p.$('#xxt-v41-ziwei [data-z=pane-hm] .zw-ai-out'), '同样的合盘重复调用了 DeepSeek');
+    // 查看单人命盘：跳到「命盘」标签并打开乙方
+    await p.click('#xxt-v41-ziwei .zw-hcard [data-hact=open][data-side=B]'); await sleep(500);
+    const r3 = await p.evaluate(() => ({ tab: document.querySelector('#xxt-v41-ziwei [data-ztab].on').textContent, name: app._zw && app._zw.name }));
+    assert(r3.tab === '命盘' && r3.name === '李四', `查看乙方命盘不对：${JSON.stringify(r3)}`);
+    // 合盘双方都记进最近命盘、表单被记住
+    const hist = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt_v41_ziwei_hist')).map((x) => x.f.name).join());
+    const hm = await p.evaluate(() => JSON.parse(localStorage.getItem('xxt_v41_ziwei_hm')));
+    assert(/张三/.test(hist) && /李四/.test(hist) && hm.rel === 'partner' && hm.B.name === '李四', `合盘记录不对：${hist} ${JSON.stringify(hm && hm.rel)}`);
+    await ctx.close();
+});
+
+test('紫微斗数 · 小六壬：按此刻的农历月日时起课，三块翻牌依次落宫，显示吉凶 / 应期 / 建议，计今天起课次数', async (b) => {
+    const ctx = await newContext(b, { viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    // 2026-10-31 12:30 → 农历九月廿二午时：九月落速喜，廿二落空亡，午时（第 7 位）落空亡
+    await p.clock.setFixedTime(new Date(2026, 9, 31, 12, 30, 0));
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await inject(p); await sleep(1500);
+    await p.click('#xxt-v41-side [data-s=handle]'); await sleep(300);
+    await p.click('#xxt-v41-side [data-s=ziwei]');
+    await p.waitForFunction(() => window.XxtZiwei);
+    await p.click('#xxt-v41-ziwei [data-ztab=lr]'); await sleep(1200);
+    const now = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-l=now]').textContent);
+    assert(/2026-10-31 12:30/.test(now) && /农历九月廿二 · 午时/.test(now), `此刻显示不对：${now}`);
+    await p.fill('#xxt-v41-ziwei [data-l=q]', '这周的面试能过吗');
+    await p.click('#xxt-v41-ziwei [data-l=cast]');
+    await p.waitForFunction(() => document.querySelector('#xxt-v41-ziwei .zw-lrres'), null, { timeout: 5000 });
+    const r = await p.evaluate(() => ({
+        cards: [...document.querySelectorAll('#xxt-v41-ziwei .zw-lrcard')].map((x) => x.querySelector('b').textContent + '/' + x.querySelector('i').textContent),
+        name: document.querySelector('#xxt-v41-ziwei .zw-lrname b').textContent, jx: document.querySelector('#xxt-v41-ziwei .zw-lrname em').textContent,
+        text: document.querySelector('#xxt-v41-ziwei .zw-lrres').textContent, on: document.querySelector('#xxt-v41-ziwei .zw-lrring span.on').textContent,
+    }));
+    assert(r.cards.join('|') === '速喜/九月 · 数 9|空亡/廿二 · 数 22|空亡/午时 · 数 7', `翻牌不对：${r.cards.join('|')}`);
+    assert(r.name === '空亡' && r.jx === '凶' && r.on === '空亡' && /所问：这周的面试能过吗/.test(r.text) && /应期/.test(r.text) && /建议/.test(r.text), `结果不对：${JSON.stringify(r)}`);
+    // 23 点以后仍按当天农历日（不换到次日），时辰为子时
+    await p.clock.setFixedTime(new Date(2026, 9, 31, 23, 20, 0)); await sleep(1100);
+    const late = await p.evaluate(() => document.querySelector('#xxt-v41-ziwei [data-l=now]').textContent);
+    assert(/农历九月廿二 · 子时/.test(late), `23 点以后应仍是当天农历日、子时：${late}`);
+    await p.click('#xxt-v41-ziwei [data-l=cast]'); await sleep(300);
+    await p.click('#xxt-v41-ziwei [data-l=cast]'); await sleep(300);
+    await p.click('#xxt-v41-ziwei [data-l=cast]'); await sleep(300);
+    const cnt = await p.evaluate(() => ({ rules: document.querySelector('#xxt-v41-ziwei .zw-lrrules').textContent, res: document.querySelector('#xxt-v41-ziwei .zw-lrres small').textContent, hour: document.querySelectorAll('#xxt-v41-ziwei .zw-lrcard')[2].querySelector('b').textContent }));
+    assert(/今天已起 4 课，传统上一天不超过三次/.test(cnt.rules) && /今天已起课 4 次/.test(cnt.res) && cnt.hour === '空亡', `起课次数提示不对：${JSON.stringify(cnt)}`);
+    // 离开小六壬标签后停止每秒刷新
+    await p.click('#xxt-v41-ziwei [data-ztab=ming]'); await sleep(200);
+    assert(await p.evaluate(() => !app._lrTimer), '离开小六壬后计时器没停');
+    await ctx.close();
+});
+
 // ---------- 运行 ----------
 const only = process.argv[2];
 const browser = await chromium.launch();

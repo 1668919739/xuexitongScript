@@ -18,6 +18,8 @@
             '紫微斗数补上真太阳时和运限：出生时间默认填「几点几分 + 出生地」（全国省市区经度），按真太阳时（经度修正 + 均时差）定时辰，填写时实时显示会按哪个时辰排盘；出生日在中国大陆夏令时期间（1935–1991 年间的历年夏令时）会提示，勾选才扣 1 小时，不自动改；仍可改回直接选时辰。盘面上方可切换「本命 / 大限 / 流年」，大限按大限宫干、流年按年干把四化用虚线标在盘上，并标出大限命宫、流年命宫，大限和流年都能前后翻看',
             '紫微斗数的输入表单按原站 ouranic.cn 重排：姓名（可选）→ 出生日期（公历 / 农历）→ 出生时间（北京时间，下面实时显示「北京时间 / 真太阳时 → 几点几分 · 某时（时段）」）→「不知道出生时间，以子时（23:00–01:00）起盘」→ 出生地点（用于真太阳时校正）→ 性别 →「立即起盘 · 查看命盘解析」；去掉原站没有的「选时辰」，以前按时辰保存的记录自动换成该时辰里的钟点，排出来的盘不变。新增「最近命盘」：本机保存最近 10 张，显示姓名、日期、时辰、出生地、性别和多久以前，点一下直接打开，可单条删除或清空全部（点两次确认）；命盘页左上角有「‹ 返回」，回到输入页和最近命盘，往下滚也一直看得到',
             '紫微斗数改用原站同款配色：白底、米色输入框、墨金强调色、深棕药丸形主按钮、墨金虚线时辰圆标、等宽字体的时间数字、宋体标题和标题下的四段填写进度；四化标记改为原站样式（彩色文字配浅底细边，禄绿、权蓝、科金、忌红）；不再跟着浮窗的彩色主题变色，浮窗为深色主题时换成原站的深色配色（藏青底、金色强调）',
+            '紫微斗数新增「合盘」（顶部标签：命盘 / 合盘 / 小六壬）：关系可选感情、合伙、上下级、朋友；甲方、乙方各一套和命盘相同的表单，可从最近命盘直接选人。两张盘在本机排好后对照：命格兼容速判、夫妻宫与对方命宫是否对应（天作之合）、生年四化落入对方哪一宫、关键宫位对照（感情看命宫、夫妻、福德；合伙看官禄、兄弟、仆役等）、太阳太阴、夫妻宫传统断语、双方当前大限；对照依据原项目开源的合盘知识库。「开始 AI 深度解读」用合盘方法论作背景调用你的 DeepSeek，不引用原话、不做绝对化断言，生成过的保存在本机；可一键查看任一方的命盘',
+            '紫微斗数新增「小六壬」：按原站的起课规则（月从大安起数农历月，日从月宫起数农历日，时从日宫起数时辰，子时为一；23 点以后仍按当天农历日；闰月按本月数），实时显示此刻的农历月日时，点「起课」后六宫依次点亮、月 / 日 / 时三块翻牌落宫，给出吉凶、概括、应期和建议；可写下想问的事，提示一事一课、一天不超过三次（说明文字为本脚本自写）',
         ] },
         { v: '4.6.13', date: '2026-10-31', items: [
             '修复：仍然卡在「当前章节还有任务点未完成」——上一版加了按文案兜底，但只要页面上存在别的 dialog/modal，兜底就被跳过了；而且兜底会挑中「只有文案、没有按钮」的那层（按钮在文案的兄弟节点里），点不到任何东西。现在兜底始终参与，并优先挑带按钮的容器',
@@ -189,10 +191,28 @@
     const SCRIPT_CDN_URL = 'https://cdn.jsdelivr.net/gh/1668919739/xuexitongScript@master/v3_optimized.js';
     // 紫微斗数引擎：单独打包（scripts/build-ziwei.mjs），第一次打开「紫微斗数」时才下载，不打开就不加载。
     // 文件名带上游 ziwei-doushu 的提交号和内容哈希，由打包脚本自动改写，不要手改
-    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-320a4a63.min.js';
+    const ZIWEI_ENGINE_FILE = 'ziwei/ziwei-495b79e-443b886b.min.js';
     const ZIWEI_ENGINE_URLS = ['cdn', 'fastly', 'testingcf'].map((h) => `https://${h}.jsdelivr.net/gh/1668919739/xuexitongScript@master/${ZIWEI_ENGINE_FILE}`);
     const ZIWEI_FORM_KEY = 'xxt_v41_ziwei_form';
     const ZIWEI_HIST_KEY = 'xxt_v41_ziwei_hist';   // 最近命盘：只保存在本机，最多 10 张
+    const ZIWEI_HM_KEY = 'xxt_v41_ziwei_hm';       // 合盘：上次填的甲乙双方和关系
+    const ZIWEI_LR_KEY = 'xxt_v41_ziwei_lr';       // 小六壬：今天起了几课
+    // 合盘关系（与原站一致：感情、合伙、上下级、朋友）：key、名称、重点宫位（按原项目合盘方法论：感情看命宫+夫妻+福德；合作看官禄、兄弟/仆役、福德）
+    const ZIWEI_REL = [
+        ['love', '感情', ['命宫', '夫妻', '福德']],
+        ['partner', '合伙', ['命宫', '官禄', '兄弟', '仆役', '福德']],
+        ['boss', '上下级', ['命宫', '官禄', '仆役', '父母']],
+        ['friend', '朋友', ['命宫', '仆役', '福德']],
+    ];
+    // 小六壬六宫：名称、吉凶、概括、应期、建议（说明文字为本脚本自写）
+    const ZIWEI_LIUREN = [
+        ['大安', '吉', '事情偏稳，所求多能成，但不宜急进；人在原处、物在近处。', '来得不快，约一周内外。', '按部就班地推进，守住现有的就好。'],
+        ['留连', '不利', '事情拖延反复，等的人迟迟不来，办的事一再卡住。', '拖得较久，短期难有结果。', '先放一放，多留余地，别在这时候催。'],
+        ['速喜', '吉', '有喜讯或好消息临近，事情推进得快。', '很快见结果，多在几天之内。', '趁势早点行动，机会不等人。'],
+        ['赤口', '凶', '容易起口舌、争执和是非，沟通中易生误会。', '近期需要留意。', '说话留三分，少争论，重要的事写清楚。'],
+        ['小吉', '吉', '小有收获，人和事顺，找人帮忙多能得助。', '约两周内外。', '与人合作、请人帮忙都合适。'],
+        ['空亡', '凶', '所求容易落空，消息未必属实，事情难有着落。', '难有结果。', '暂缓决定，换个方向或重新规划。'],
+    ];
     const ZIWEI_AI_KEY = 'xxt_v41_ziwei_ai';   // AI 解读缓存：同一张盘同一主题只调用一次 DeepSeek，保留最近 5 张盘
     // AI 解读的主题：key、按钮文字、重点宫位、要回答的内容
     const ZIWEI_TOPICS = [
@@ -5797,6 +5817,539 @@
                     '<div class="zw-ai"><div class="zw-ai-note">由 AI（DeepSeek）根据本盘数据生成，不是原网站校对过的断语，可能有误，仅供传统文化学习参考。</div>' +
                     `<div class="zw-chips" role="group" aria-label="解读主题">${chips}</div>${body}</div>`;
             },
+            // ================= 紫微斗数 · 合盘 =================
+            // 与原站一致：甲方 / 乙方各填一套出生信息，关系可选感情 / 合伙 / 上下级 / 朋友。
+            // 两张盘都在本机排；对照项按原项目的合盘知识库（ziwei-doushu lib/ziwei/heming-knowledge.ts）计算：
+            // 命格兼容速判、夫妻宫↔命宫对应（天作之合）、生年四化互入对方哪一宫、关键宫位对照、太阳太阴、大限同步。
+            // 「AI 深度解读」用原项目的合盘方法论作背景，调用用户自己的 DeepSeek（原站该接口未开源）。
+            // 纯函数：两张盘 → 对照结论（tests/ziwei-engine.mjs 抽出来单测）
+            _zwHmFacts(A, B, rel, Z) {
+                const R = ZIWEI_REL.find((x) => x[0] === rel) || ZIWEI_REL[0];
+                const BR = '子丑寅卯辰巳午未申酉戌亥';
+                const pal = (c, name) => c.palaces.find((p) => p.name === name);
+                const majors = (p) => p ? p.stars.filter((s) => s.type === 'major').map((s) => s.name) : [];
+                const majorsOrBorrowed = (p) => { const m = majors(p); return m.length ? m : (p && p.borrowedStars) || []; };
+                const starTxt = (s) => s.name + (s.brightnessRaw ? `(${s.brightnessRaw})` : '') + (s.siHua ? `化${s.siHua}` : '');
+                const palTxt = (p) => {
+                    if (!p) return { main: '-', sub: '' };
+                    const m = p.stars.filter((s) => s.type === 'major');
+                    const main = m.length ? m.map(starTxt).join(' ') : `空宫${p.borrowedStars && p.borrowedStars.length ? `（借${p.borrowedStars.join('')}）` : ''}`;
+                    const sub = p.stars.filter((s) => s.type === 'lucky' || s.type === 'sha').map(starTxt).join(' ');
+                    return { main, sub, branch: BR[p.branch] };
+                };
+                // 1) 命格兼容速判：解析原项目方法论里的速判表（| 甲 + 乙 | ★… | 说明 |）
+                const GROUP = { 杀破狼: ['七杀', '破军', '贪狼'], 机月同梁: ['天机', '太阴', '天同', '天梁'] };
+                const term = (t) => {
+                    t = t.trim();
+                    if (t === '任何星') return () => true;
+                    if (GROUP[t]) return (set) => GROUP[t].some((x) => set.has(x));
+                    if (t.includes('/')) { const xs = t.split('/'); return (set) => xs.some((x) => set.has(x)); }
+                    if (t === '紫破') return (set) => set.has('紫微') && set.has('破军');
+                    if (t === '廉府') return (set) => set.has('廉贞') && set.has('天府');
+                    return (set) => set.has(t);
+                };
+                const mA = new Set(majorsOrBorrowed(pal(A.chart, '命宫'))), mB = new Set(majorsOrBorrowed(pal(B.chart, '命宫')));
+                const compat = [];
+                for (const line of String((Z && Z.HEMING_METHODOLOGY) || '').split('\n')) {
+                    const m = /^\|\s*([^|]+?)\s*\+\s*([^|]+?)\s*\|\s*(★+)\s*\|\s*([^|]+?)\s*\|/.exec(line);
+                    if (!m) continue;
+                    const p1 = term(m[1]), p2 = term(m[2]);
+                    if ((p1(mA) && p2(mB)) || (p1(mB) && p2(mA))) compat.push({ pair: `${m[1]} + ${m[2]}`, stars: m[3].length, desc: m[4] });
+                }
+                // 2) 夫妻宫 ↔ 命宫（天作之合）：甲方夫妻宫主星是否就是乙方命宫主星，反之亦然
+                const inter = (a, b) => a.filter((x) => b.has(x));
+                const fqA = majorsOrBorrowed(pal(A.chart, '夫妻')), fqB = majorsOrBorrowed(pal(B.chart, '夫妻'));
+                const tianzuo = { aToB: inter(fqA, mB), bToA: inter(fqB, mA) };
+                // 3) 生年四化互入：甲方的化禄/权/科/忌星，落在乙方盘上的哪一宫（以及反向）
+                const huaOf = (c) => {
+                    const out = [];
+                    for (const p of c.palaces) for (const s of p.stars) if (s.siHua) out.push({ h: s.siHua, star: s.name });
+                    return out.sort((x, y) => '禄权科忌'.indexOf(x.h) - '禄权科忌'.indexOf(y.h));
+                };
+                const into = (from, to) => huaOf(from).map((x) => {
+                    const p = to.palaces.find((q) => q.stars.some((s) => s.name === x.star));
+                    return { h: x.h, star: x.star, palace: p ? p.name : '' };
+                });
+                const hua = { aToB: into(A.chart, B.chart), bToA: into(B.chart, A.chart) };
+                // 4) 关键宫位对照
+                const rows = R[2].map((name) => ({ name, a: palTxt(pal(A.chart, name)), b: palTxt(pal(B.chart, name)) }));
+                // 5) 太阳 / 太阴（感情）：女命看太阳（代表丈夫），男命看太阴（代表妻子）
+                const sunMoon = [];
+                if (rel === 'love') {
+                    for (const [side, X] of [['A', A], ['B', B]]) {
+                        const female = X.chart.birthInfo.gender === 'female';
+                        const nm = female ? '太阳' : '太阴';
+                        const p = X.chart.palaces.find((q) => q.stars.some((s) => s.name === nm));
+                        const s = p && p.stars.find((q) => q.name === nm);
+                        sunMoon.push({ side, star: nm, palace: p ? p.name : '', bright: (s && s.brightnessRaw) || '', hua: (s && s.siHua) || '', role: female ? '丈夫' : '妻子' });
+                    }
+                }
+                // 6) 夫妻宫传统断语（感情）：主星、四化入夫妻宫、婚恋星
+                const fuqi = [];
+                if (rel === 'love') {
+                    for (const [side, X] of [['A', A], ['B', B]]) {
+                        const p = pal(X.chart, '夫妻');
+                        const ms = majorsOrBorrowed(p);
+                        const kb = (Z && Z.STAR_IN_FUQI_GU) || {};
+                        const items = ms.filter((n) => kb[n]).map((n) => ({ star: n, summary: kb[n].summary, traits: kb[n].spouse_traits, good: kb[n].good, bad: kb[n].bad }));
+                        const huaIn = p ? p.stars.filter((s) => s.siHua).map((s) => ({ star: s.name, h: s.siHua, text: ((Z && Z.SIHUA_IN_FUQI_GU) || {})['化' + s.siHua] || '' })) : [];
+                        const ms2 = (Z && Z.MARRIAGE_STARS_BRIEF) || {};
+                        const marks = [];
+                        for (const pn of ['命宫', '夫妻']) { const q = pal(X.chart, pn); if (q) for (const s of q.stars) if (ms2[s.name]) marks.push({ star: s.name, palace: pn, text: ms2[s.name] }); }
+                        fuqi.push({ side, borrowed: !majors(p).length, items, huaIn, marks });
+                    }
+                }
+                // 7) 大限同步：双方当前大限
+                const dx = [['A', A], ['B', B]].map(([side, X]) => {
+                    const c = X.chart, d = c.daXians[c.currentDaXianIndex];
+                    if (!d) return { side, none: true, age: c.currentAge };
+                    const p = c.palaces.find((q) => q.branch === d.palaceBranch);
+                    return { side, range: `${d.startAge}–${d.endAge}`, palace: d.palaceName, main: palTxt(p).main, age: c.currentAge };
+                });
+                return { rel: R[0], relLabel: R[1], compat, tianzuo, hua, rows, sunMoon, fuqi, dx };
+            },
+            // 纯函数：合盘 AI 提示词
+            _zwHmPrompt(A, B, facts, methodology) {
+                const BR = '子丑寅卯辰巳午未申酉戌亥', ST = '甲乙丙丁戊己庚辛壬癸';
+                const brief = (X, who) => {
+                    const c = X.chart, L = c.lunarInfo;
+                    const star = (s) => s.name + (s.brightnessRaw ? `(${s.brightnessRaw})` : '') + (s.siHua ? `化${s.siHua}` : '');
+                    const ordered = [...c.palaces].sort((a, b) => ((a.branch - c.mingGongBranch + 12) % 12) - ((b.branch - c.mingGongBranch + 12) % 12));
+                    return [
+                        `【${who}${X.name ? '（' + X.name + '）' : ''}】${c.birthInfo.gender === 'female' ? '女' : '男'}命，${c.yinYangGender || ''}，${c.wuxingJuName}，四柱 ${(L.fourPillars || []).join(' ')}，今年虚岁 ${c.currentAge}` + (X.unknown ? '；出生时辰不详，按子时起盘，命宫/身宫/大限可能不准' : ''),
+                        ...ordered.map((p) => {
+                            const g = (t) => p.stars.filter((s) => s.type === t).map(star).join('、');
+                            return `- ${p.name}（${ST[p.stem] || ''}${BR[p.branch]}${p.isShenGong ? '，身宫' : ''}${p.daXianAge ? `，大限 ${p.daXianAge[0]}–${p.daXianAge[1]}` : ''}）：主星 ${g('major') || (p.borrowedStars && p.borrowedStars.length ? `无（借对宫 ${p.borrowedStars.join('、')}）` : '无')}${g('lucky') ? '；吉星 ' + g('lucky') : ''}${g('sha') ? '；煞星 ' + g('sha') : ''}`;
+                        }),
+                    ].join('\n');
+                };
+                const huaLine = (xs) => xs.map((x) => `化${x.h} ${x.star}→${x.palace || '未见'}`).join('；');
+                const focus = (ZIWEI_REL.find((x) => x[0] === facts.rel) || ZIWEI_REL[0]);
+                const bg = String(methodology || '').split(/\n### 十、/)[0];
+                const system = [
+                    '你是紫微斗数合盘讲解助手，按倪海厦《天纪》体系和《紫微斗数全书》的通行规则，对两个人的命盘做关系参考分析。',
+                    '规则：',
+                    '1. 只依据用户给出的两张命盘和对照结果，不要自行重新排盘，也不要假设数据里没有的星曜或四化。',
+                    '2. 背景资料只用来推理，不要原样引用其中的引文、口诀或「倪师说」；不要编造古籍原文或任何人的原话，不写带引号的引文。',
+                    '3. 不评价任何一方的品行与私生活；不谈理财、子女、健康；不做「生离死别」「克夫克妻」「必离」这类绝对化断言，用「倾向」「容易」「宜」「需留意」表达，并给出双方可以怎么相处的具体建议。',
+                    `4. 这是「${focus[1]}」关系，重点看 ${focus[2].join('、')}${facts.rel === 'love' ? '' : '；不要按婚恋来解读'}。`,
+                    '5. 用简体中文，800–1100 字。每一段用【小标题】开头单独成行，正文是普通段落；不要用 Markdown 符号（#、*、表格）。',
+                    '6. 每个判断都要点出依据（谁的哪一宫、哪颗星、四化落在对方哪一宫、速判表哪一行）。',
+                    '',
+                    '背景资料（原项目合盘方法论，节选）：',
+                    bg,
+                ].join('\n');
+                const user = [
+                    `请分析甲乙双方的「${focus[1]}」关系：双方各自的特点、互动模式、彼此的助力与摩擦点、当前大限的节奏，以及相处建议。`,
+                    '',
+                    brief(A, '甲方'),
+                    '',
+                    brief(B, '乙方'),
+                    '',
+                    '【对照结果】（本地规则计算）',
+                    `- 命格兼容速判：${facts.compat.length ? facts.compat.map((x) => `${x.pair}（${'★'.repeat(x.stars)}，${x.desc}）`).join('；') : '速判表中没有对应组合'}`,
+                    `- 夫妻宫↔命宫：甲方夫妻宫主星与乙方命宫主星${facts.tianzuo.aToB.length ? '相同：' + facts.tianzuo.aToB.join('、') : '不同'}；乙方夫妻宫主星与甲方命宫主星${facts.tianzuo.bToA.length ? '相同：' + facts.tianzuo.bToA.join('、') : '不同'}`,
+                    `- 甲方生年四化落入乙方：${huaLine(facts.hua.aToB)}`,
+                    `- 乙方生年四化落入甲方：${huaLine(facts.hua.bToA)}`,
+                    `- 当前大限：${facts.dx.map((d) => `${d.side === 'A' ? '甲方' : '乙方'} ${d.none ? '尚未起大限' : `${d.range} 岁（${d.palace}，${d.main}）`}`).join('；')}`,
+                ].join('\n');
+                return { system, user };
+            },
+            _zwHmDefault(side) {
+                const base = { name: '', cal: 'solar', tmode: 'clock', year: 2000, month: 1, day: 1, leap: false, ch: 12, cm: 0, unknown: false, prov: '', city: '', dst: false, gender: side === 'A' ? 'male' : 'female' };
+                return side === 'A' ? Object.assign(base, this._zwSaved()) : base;
+            },
+            _zwHmSaved() {
+                try { const o = JSON.parse(localStorage.getItem(ZIWEI_HM_KEY) || 'null'); if (o && o.A && o.B) return { A: this._zwMigrateForm(o.A), B: this._zwMigrateForm(o.B), rel: o.rel || 'love' }; } catch (e) { /* ignore */ }
+                return { A: this._zwHmDefault('A'), B: this._zwHmDefault('B'), rel: 'love' };
+            },
+            _zwPartyHtml(side) {
+                const opt = (n, f) => Array.from({ length: n }, (_, i) => `<option value="${i}">${f(i)}</option>`).join('');
+                return `<div class="zw-party" data-side="${side}">` +
+                    `<div class="zw-phead"><b>${side === 'A' ? '甲方' : '乙方'}</b><select data-p="pick" aria-label="从最近命盘选择${side === 'A' ? '甲方' : '乙方'}"></select></div>` +
+                    '<input type="text" class="zw-in" data-p="name" maxlength="20" placeholder="姓名（可选）" autocomplete="off">' +
+                    '<div class="zw-labrow"><span class="zw-lab" data-p="datelab">出生日期（公历）</span><span class="zw-seg" data-p="cal"><button type="button" data-v="solar">公历</button><button type="button" data-v="lunar">农历</button></span></div>' +
+                    `<div class="zw-row3"><select data-p="year">${Array.from({ length: 201 }, (_, i) => `<option value="${1900 + i}">${1900 + i} 年</option>`).join('')}</select><select data-p="month"></select><select data-p="day"></select></div>` +
+                    '<label class="zw-leap" data-p="leapwrap"><input type="checkbox" data-p="leap">闰月</label>' +
+                    `<span class="zw-lab">出生时间（北京时间）</span><div class="zw-row2"><select data-p="ch">${opt(24, (i) => String(i).padStart(2, '0') + ' 时')}</select><select data-p="cm">${opt(60, (i) => String(i).padStart(2, '0') + ' 分')}</select></div>` +
+                    '<label class="zw-unk"><input type="checkbox" data-p="unknown">不知道出生时间，以子时（23:00–01:00）起盘</label>' +
+                    '<div class="zw-row2"><select data-p="prov" aria-label="出生省份"></select><select data-p="city" aria-label="出生城市"></select></div>' +
+                    '<div class="zw-gender" data-p="gender"><button type="button" data-v="male">♂ 男</button><button type="button" data-v="female">♀ 女</button></div>' +
+                    '<div class="zw-ptip" data-p="tip"></div></div>';
+            },
+            _zwPartyQ(side, k) { return this._ziweiEl.querySelector(`.zw-party[data-side="${side}"] [data-p="${k}"]`); },
+            _zwPartyMonthDay(side, m, dd) {
+                const q = (k) => this._zwPartyQ(side, k);
+                const lunar = !!q('cal').querySelector('.on[data-v="lunar"]');
+                m = m || q('month').value || 1; dd = dd || q('day').value || 1;
+                const MS = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+                const DS = (n) => n === 10 ? '初十' : n === 20 ? '二十' : n === 30 ? '三十' : ['初', '十', '廿'][Math.floor(n / 10)] + '一二三四五六七八九'[n % 10 - 1];
+                q('month').innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${lunar ? MS[i] + '月' : (i + 1) + ' 月'}</option>`).join('');
+                q('day').innerHTML = Array.from({ length: lunar ? 30 : 31 }, (_, i) => `<option value="${i + 1}">${lunar ? DS(i + 1) : (i + 1) + ' 日'}</option>`).join('');
+                q('month').value = String(m); q('day').value = String(Math.min(Number(dd), lunar ? 30 : 31));
+                q('leapwrap').style.display = lunar ? '' : 'none';
+                q('datelab').textContent = lunar ? '出生日期（农历）' : '出生日期（公历）';
+            },
+            _zwPartyCities(side, want) {
+                const Z = window.XxtZiwei, q = (k) => this._zwPartyQ(side, k);
+                const pv = Z && Z.PROVINCES && Z.PROVINCES.find((p) => p.name === q('prov').value);
+                q('city').innerHTML = pv ? pv.cities.map((c) => `<option value="${this._esc(c.name)}">${this._esc(c.name)}（${c.longitude.toFixed(1)}°E）</option>`).join('') : '';
+                q('city').style.display = pv ? '' : 'none';
+                q('prov').style.gridColumn = pv ? '' : '1 / -1';
+                if (pv && want && pv.cities.some((c) => c.name === want)) q('city').value = want;
+            },
+            _zwPartyFill(side, f) {
+                f = this._zwMigrateForm(Object.assign({}, f));
+                const q = (k) => this._zwPartyQ(side, k);
+                const seg = (k, v) => { for (const b of q(k).querySelectorAll('button')) b.classList.toggle('on', b.getAttribute('data-v') === v); };
+                q('name').value = f.name || '';
+                seg('cal', f.cal === 'lunar' ? 'lunar' : 'solar');
+                seg('gender', f.gender === 'female' ? 'female' : 'male');
+                q('year').value = String(Math.min(2100, Math.max(1900, Number(f.year) || 2000)));
+                this._zwPartyMonthDay(side, f.month, f.day);
+                q('leap').checked = !!f.leap;
+                q('ch').value = String(f.ch); q('cm').value = String(f.cm);
+                q('unknown').checked = !!f.unknown;
+                this._hmDst = this._hmDst || {};
+                this._hmDst[side] = !!f.dst;
+                const Z = window.XxtZiwei;
+                this._hmPending = this._hmPending || {};
+                this._hmPending[side] = Z && Z.PROVINCES ? null : { prov: f.prov || '', city: f.city || '' };
+                q('prov').innerHTML = '<option value="">选择出生地（用于真太阳时校正）</option>' + (Z && Z.PROVINCES ? Z.PROVINCES.map((p) => `<option value="${this._esc(p.name)}">${this._esc(p.name)}</option>`).join('') : '');
+                q('prov').value = f.prov && Z && Z.PROVINCES && Z.PROVINCES.some((p) => p.name === f.prov) ? f.prov : '';
+                this._zwPartyCities(side, f.city);
+                this._zwPartyTip(side);
+            },
+            _zwPartyRead(side) {
+                const q = (k) => this._zwPartyQ(side, k);
+                const seg = (k, def) => { const b = q(k).querySelector('.on'); return b ? b.getAttribute('data-v') : def; };
+                return {
+                    name: q('name').value.trim().slice(0, 20), cal: seg('cal', 'solar'), tmode: 'clock',
+                    year: Number(q('year').value), month: Number(q('month').value), day: Number(q('day').value), leap: !!q('leap').checked,
+                    ch: Number(q('ch').value), cm: Number(q('cm').value), unknown: !!q('unknown').checked,
+                    prov: q('prov').value || '', city: q('prov').value ? q('city').value || '' : '',
+                    dst: !!(this._hmDst && this._hmDst[side]), gender: seg('gender', 'male'),
+                };
+            },
+            _zwPartyTip(side) {
+                const q = (k) => this._zwPartyQ(side, k);
+                const Z = window.XxtZiwei;
+                const unknown = q('unknown').checked;
+                for (const k of ['ch', 'cm']) q(k).disabled = unknown;
+                if (!Z || !Z.calculateTrueSolarTime) { q('tip').textContent = ''; return; }
+                const r = this._ziweiResolveInput(this._zwPartyRead(side), Z);
+                const BR = '子丑寅卯辰巳午未申酉戌亥';
+                const pad = (n) => String(n).padStart(2, '0');
+                const dst = r.dstDay ? ` <label class="zw-pdst"><input type="checkbox" data-p="dst"${this._hmDst && this._hmDst[side] ? ' checked' : ''}>夏令时期间，扣 1 小时</label>` : '';
+                q('tip').innerHTML = !r.ok ? `<span class="err">${this._esc(r.error)}</span>`
+                    : r.unknown ? '时辰不详 · 以<b>子时</b>起盘'
+                        : `${this._esc(r.time ? r.time.label : '北京时间')} → <span class="zw-tnum">${pad(r.time ? r.time.hh : 0)}:${pad(r.time ? r.time.mm : 0)}</span> · <b>${BR[r.birth.hour]}时</b>${dst}`;
+            },
+            _zwPartyPicks() {
+                const list = this._zwHist();
+                const BR = '子丑寅卯辰巳午未申酉戌亥';
+                const opts = '<option value="">从最近命盘选择…</option>' + list.map((x, i) => {
+                    const f = x.f;
+                    return `<option value="${i}">${this._esc((f.name ? f.name + ' · ' : '') + `${f.year}-${f.month}-${f.day}` + (x.unknown ? ' · 时辰不详' : ` · ${BR[x.br] || ''}时`) + (f.gender === 'female' ? ' · 女' : ' · 男'))}</option>`;
+                }).join('');
+                for (const side of ['A', 'B']) { const s = this._zwPartyQ(side, 'pick'); if (s) { s.innerHTML = opts; s.style.display = list.length ? '' : 'none'; } }
+            },
+            _zwEnsureHm() {
+                const box = this._ziweiEl.querySelector('[data-z="pane-hm"]');
+                if (box.getAttribute('data-ready') === '1') return box;
+                box.setAttribute('data-ready', '1');
+                box.innerHTML =
+                    '<div data-h="forms"><div class="zw-form1">' +
+                      '<div class="zw-ftitle">—— 紫微合盘 ——</div>' +
+                      '<div class="zw-hmrel"><span class="zw-lab">你们的关系</span><div class="zw-chips" data-h="rel">' +
+                        ZIWEI_REL.map(([k, label]) => `<button type="button" class="zw-chip" data-v="${k}">${label}</button>`).join('') + '</div></div>' +
+                      this._zwPartyHtml('A') + this._zwPartyHtml('B') +
+                      '<button type="button" class="zw-go" data-h="go">开始合盘 · 查看双方对照</button>' +
+                    '</div>' +
+                    '<div class="zw-hmnote">不评价任何一方的品行与私生活，不涉及理财、子女与健康；结果仅供传统文化学习参考，不构成婚姻、投资、法律或人事建议。</div></div>' +
+                    '<div data-h="msg"></div><div data-h="result"></div>';
+                const saved = this._zwHmSaved();
+                this._hmRel = saved.rel;
+                this._zwPartyFill('A', saved.A);
+                this._zwPartyFill('B', saved.B);
+                this._zwPartyPicks();
+                box.addEventListener('click', (e) => {
+                    const segBtn = e.target.closest('.zw-party [data-p="cal"] button, .zw-party [data-p="gender"] button');
+                    if (segBtn) {
+                        const party = segBtn.closest('.zw-party'), side = party.getAttribute('data-side');
+                        const grp = segBtn.parentElement;
+                        for (const b of grp.querySelectorAll('button')) b.classList.toggle('on', b === segBtn);
+                        if (grp.getAttribute('data-p') === 'cal') this._zwPartyMonthDay(side);
+                        this._zwPartyTip(side);
+                        return;
+                    }
+                    const relBtn = e.target.closest('[data-h="rel"] button');
+                    if (relBtn) { this._hmRel = relBtn.getAttribute('data-v'); this._zwRenderHm(); return; }
+                    if (e.target.closest('[data-h="go"]')) { this._zwHmRun(); return; }
+                    const act = e.target.closest('[data-hact]');
+                    if (!act) return;
+                    const a = act.getAttribute('data-hact');
+                    if (a === 'back') { this._hm = null; this._zwRenderHm(); const b = this._ziweiEl.querySelector('[data-z="body"]'); if (b) b.scrollTop = 0; }
+                    else if (a === 'ai') this._zwHmAi(false);
+                    else if (a === 'airegen') this._zwHmAi(true);
+                    else if (a === 'aikeysave') this._zwSaveKey();
+                    else if (a === 'open') {
+                        const X = this._hm && this._hm[act.getAttribute('data-side')];
+                        if (X) { this._zwTab = 'ming'; this._zwFillForm(X.f); this._zwSubmit(); }
+                    }
+                });
+                box.addEventListener('change', (e) => {
+                    const party = e.target.closest('.zw-party');
+                    if (!party) return;
+                    const side = party.getAttribute('data-side'), k = e.target.getAttribute('data-p');
+                    if (k === 'pick') {
+                        const x = this._zwHist()[Number(e.target.value)];
+                        if (x && x.f) this._zwPartyFill(side, x.f);
+                        e.target.value = '';
+                        return;
+                    }
+                    if (k === 'prov') this._zwPartyCities(side, '');
+                    if (k === 'dst') { this._hmDst = this._hmDst || {}; this._hmDst[side] = e.target.checked; }
+                    this._zwPartyTip(side);
+                });
+                return box;
+            },
+            async _zwHmRun() {
+                const fA = this._zwPartyRead('A'), fB = this._zwPartyRead('B');
+                try { localStorage.setItem(ZIWEI_HM_KEY, JSON.stringify({ A: fA, B: fB, rel: this._hmRel || 'love' })); } catch (e) { /* ignore */ }
+                this._hmError = '';
+                let Z;
+                try { Z = await this._loadZiwei(); } catch (e) { this._hmError = e.message; this._zwRenderHm(); return; }
+                const rA = this._ziweiResolveInput(fA, Z), rB = this._ziweiResolveInput(fB, Z);
+                if (!rA.ok || !rB.ok) { this._hmError = !rA.ok ? '甲方：' + rA.error : '乙方：' + rB.error; this._zwRenderHm(); return; }
+                try {
+                    const A = { chart: Z.generateChart(rA.birth), f: fA, unknown: !!rA.unknown, name: fA.name, note: rA.note };
+                    const B = { chart: Z.generateChart(rB.birth), f: fB, unknown: !!rB.unknown, name: fB.name, note: rB.note };
+                    const facts = this._zwHmFacts(A, B, this._hmRel || 'love', Z);
+                    this._hm = { A, B, facts, rel: facts.rel };
+                    this._zwHistAdd(fA, rA.birth.hour, rA.unknown);
+                    this._zwHistAdd(fB, rB.birth.hour, rB.unknown);
+                    this._zwPartyPicks();
+                    log(`紫微斗数：合盘（${facts.relLabel}）`, '#2196F3');
+                } catch (e) { this._hmError = '合盘失败：' + (e && e.message ? e.message : e); }
+                this._zwRenderHm();
+                const b = this._ziweiEl.querySelector('[data-z="body"]'); if (b) b.scrollTop = 0;
+            },
+            _zwHmId() {
+                const h = this._hm; if (!h) return '';
+                const k = (X) => { const b = X.chart.birthInfo; return `${b.year}-${b.month}-${b.day}-${b.hour}-${b.gender}`; };
+                return `hm:${k(h.A)}|${k(h.B)}|${h.rel}`;
+            },
+            async _zwHmAi(force) {
+                const h = this._hm; if (!h) return;
+                const id = this._zwHmId();
+                this._hmAiWant = true;
+                if (this._hmAiBusy === id) return;
+                const cached = !force && ((this._zwAiMem && this._zwAiMem[id]) || ((this._zwAiStore()[id] || {}).t || {}).hm);
+                if (cached) { this._zwAiMem = this._zwAiMem || {}; this._zwAiMem[id] = cached; this._zwRenderHm(); return; }
+                const key = deepseekKey();
+                if (!key) { this._zwRenderHm(); return; }
+                this._hmAiErr = ''; this._hmAiBusy = id; this._zwRenderHm();
+                try {
+                    const { system, user } = this._zwHmPrompt(h.A, h.B, h.facts, (window.XxtZiwei && window.XxtZiwei.HEMING_METHODOLOGY) || '');
+                    const text = await deepseekText(system, user, key, typeof AbortController !== 'undefined' ? new AbortController() : null);
+                    this._zwAiMem = this._zwAiMem || {}; this._zwAiMem[id] = text;
+                    this._zwAiStore([id, 'hm', text]);
+                    log('紫微斗数：合盘 AI 深度解读已生成', '#2196F3');
+                } catch (e) {
+                    this._hmAiErr = e && e.message ? e.message : String(e);
+                    log('紫微斗数：合盘 AI 深度解读失败 ' + this._hmAiErr, '#FF9800', 'warn');
+                } finally { this._hmAiBusy = ''; this._zwRenderHm(); }
+            },
+            _zwAiTextHtml(text) {
+                const esc = (t) => this._esc(t);
+                return '<div class="zw-ai-out">' + text.split(/\n+/).map((ln) => ln.trim()).filter(Boolean).map((ln) => {
+                    const m = /^[#*\s]*【([^】]{1,24})】\s*(.*)$/.exec(ln);
+                    const clean = (x) => esc(x.replace(/\*\*|^#+\s*/g, ''));
+                    return m ? `<h4>${clean(m[1])}</h4>${m[2] ? `<p>${clean(m[2])}</p>` : ''}` : `<p>${clean(ln)}</p>`;
+                }).join('') + '</div>';
+            },
+            _zwHmResultHtml() {
+                const h = this._hm; if (!h) return '';
+                const esc = (t) => this._esc(t), F = h.facts;
+                const who = (X, side) => `${side === 'A' ? '甲方' : '乙方'}${X.name ? ' ' + esc(X.name) : ''}`;
+                const sideName = (s) => who(h[s], s);
+                const huaTag = (x) => `<span class="zw-hua h-${esc(x.h)}">${esc(x.h)}</span>`;
+                const card = (X, side) => {
+                    const c = X.chart, ming = c.palaces.find((p) => p.name === '命宫');
+                    const ms = ming ? ming.stars.filter((s) => s.type === 'major').map((s) => s.name).join('') || ('借' + (ming.borrowedStars || []).join('')) : '';
+                    return `<div class="zw-hcard"><div class="zw-hcname">${who(X, side)}</div>` +
+                        `<div>${c.birthInfo.gender === 'female' ? '女' : '男'} · ${esc(c.yinYangGender || '')} · ${esc(c.wuxingJuName)}</div>` +
+                        `<div>命宫 <b>${esc(ms)}</b> · 命主 ${esc(c.mingZhu || '-')}</div>` +
+                        `<div class="zw-hcsub">${esc((c.lunarInfo.fourPillars || []).join(' '))}${X.unknown ? ' · 时辰不详' : ''}</div>` +
+                        `<button type="button" class="zw-link" data-hact="open" data-side="${side}">查看命盘 ›</button></div>`;
+                };
+                const sec = (t, body, note) => `<div class="zw-sec">${t}${note ? ` <span class="zw-secnote">${note}</span>` : ''}</div>${body}`;
+                const compat = F.compat.length
+                    ? F.compat.map((x) => `<div class="zw-hrow"><b>${esc(x.pair)}</b> <span class="zw-star5">${'★'.repeat(x.stars)}<i>${'★'.repeat(5 - x.stars)}</i></span><p>${esc(x.desc)}</p></div>`).join('')
+                    : '<div class="zw-hrow muted">双方命宫主星的组合不在速判表里，看下面的四化互入和宫位对照</div>';
+                const tz = F.tianzuo;
+                const tzBody = `<div class="zw-hrow">${tz.aToB.length && tz.bToA.length ? '<b class="good">双向对应</b>：互为对方夫妻宫的主星，原项目方法论称为「天作之合」的最高级匹配'
+                    : tz.aToB.length || tz.bToA.length ? '<b class="good">单向对应</b>：一方夫妻宫主星就是另一方命宫主星，属次级良配' : '双方夫妻宫主星与对方命宫主星没有对应'}` +
+                    `<p>${sideName('A')}夫妻宫与${sideName('B')}命宫${tz.aToB.length ? '同为 ' + esc(tz.aToB.join('、')) : '不同'}；${sideName('B')}夫妻宫与${sideName('A')}命宫${tz.bToA.length ? '同为 ' + esc(tz.bToA.join('、')) : '不同'}</p></div>`;
+                const huaList = (xs, from, to) => `<div class="zw-hrow"><b>${from} → ${to}</b><div class="zw-hlist">${xs.map((x) => `<span>${huaTag(x)}${esc(x.star)} 入${esc(x.palace || '?')}${x.palace && !/宫$/.test(x.palace) ? '宫' : ''}</span>`).join('')}</div></div>`;
+                const rows = '<table class="zw-htable"><thead><tr><th></th><th>' + sideName('A') + '</th><th>' + sideName('B') + '</th></tr></thead><tbody>' +
+                    F.rows.map((r) => `<tr><th>${esc(r.name)}</th><td><b>${esc(r.a.main)}</b>${r.a.sub ? `<small>${esc(r.a.sub)}</small>` : ''}</td><td><b>${esc(r.b.main)}</b>${r.b.sub ? `<small>${esc(r.b.sub)}</small>` : ''}</td></tr>`).join('') + '</tbody></table>';
+                const sunMoon = F.sunMoon.length ? sec('太阳 / 太阴', F.sunMoon.map((x) => `<div class="zw-hrow"><b>${sideName(x.side)}</b>（${x.star === '太阳' ? '女命看太阳，代表丈夫' : '男命看太阴，代表妻子'}）：${esc(x.star)}在${esc(x.palace)}${x.bright ? '，' + esc(x.bright) : ''}${x.hua ? '，化' + esc(x.hua) : ''}</div>`).join('')) : '';
+                const fuqi = F.fuqi.length ? sec('夫妻宫传统断语', F.fuqi.map((x) => `<div class="zw-hrow"><b>${sideName(x.side)}</b>${x.borrowed ? '（夫妻宫空宫，借对宫主星）' : ''}` +
+                    x.items.map((it) => `<p><span class="zw-kw">${esc(it.star)}</span>${esc(it.summary)}。配偶：${esc(it.traits)}</p><p class="sub">吉：${esc(it.good)}</p><p class="sub">忌：${esc(it.bad)}</p>`).join('') +
+                    x.huaIn.map((it) => `<p>${huaTag(it)}${esc(it.star)}化${esc(it.h)}在夫妻宫：${esc(it.text)}</p>`).join('') +
+                    (x.marks.length ? `<p class="sub">婚恋星：${x.marks.map((m) => `${esc(m.star)}（${esc(m.palace === '夫妻' ? '夫妻宫' : m.palace)}）${esc(m.text)}`).join('；')}</p>` : '') + '</div>').join(''), '原项目合盘知识库，传统说法，仅供学习') : '';
+                const dx = sec('大限同步', F.dx.map((d) => `<div class="zw-hrow"><b>${sideName(d.side)}</b> 虚岁 ${d.age}：${d.none ? '尚未起大限' : `行 ${esc(d.range)} 岁大限（${esc(d.palace)}，${esc(d.main)}）`}</div>`).join(''));
+                // AI
+                const id = this._zwHmId();
+                const text = (this._zwAiMem && this._zwAiMem[id]) || ((this._zwAiStore()[id] || {}).t || {}).hm || '';
+                let ai;
+                if (this._hmAiBusy === id) ai = '<div class="zw-ai-hint"><span class="zw-spin"></span>正在生成，一般需要 30–90 秒…</div>';
+                else if (text) ai = this._zwAiTextHtml(text) + '<div class="zw-ai-tools"><button type="button" class="zw-link" data-hact="airegen">重新生成</button></div>';
+                else if (this._hmAiWant && !deepseekKey()) ai = '<div class="zw-ai-key"><div>AI 深度解读用你自己的 DeepSeek Key（和答题辅助共用，只保存在本机浏览器），按 DeepSeek 的价格计费。</div>' +
+                    `<div class="zw-row"><input type="password" data-z="aikey" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key"><button type="button" class="zw-btn" data-hact="aikeysave">保存</button><a href="${DEEPSEEK_KEY_PAGE}" target="_blank" rel="noopener">去申请 Key</a></div></div>`;
+                else ai = (this._hmAiErr ? `<div class="zw-msg err">${esc(this._hmAiErr)}</div>` : '') + `<button type="button" class="zw-go zw-aigo" data-hact="ai">${this._hmAiErr ? '重试' : '开始 AI 深度解读'}</button>`;
+                return `<div class="zw-bar"><button type="button" class="zw-back" data-hact="back" aria-label="返回合盘输入">‹ 返回</button><span class="zw-who">${sideName('A')} × ${sideName('B')} · ${esc(F.relLabel)}</span></div>` +
+                    `<div class="zw-hcards">${card(h.A, 'A')}<span class="zw-hx">×</span>${card(h.B, 'B')}</div>` +
+                    [h.A, h.B].filter((X) => X.unknown).map((X) => `<div class="zw-tip warn">${X === h.A ? '甲方' : '乙方'}出生时间不详，按子时起盘，命宫、夫妻宫等位置可能不准。</div>`).join('') +
+                    sec('命格兼容速判', compat, '只看双方命宫主星的组合，是传统说法的简化') +
+                    (F.rel === 'love' ? sec('夫妻宫 ↔ 命宫', tzBody) : '') +
+                    sec('生年四化互入', huaList(F.hua.aToB, sideName('A'), sideName('B')) + huaList(F.hua.bToA, sideName('B'), sideName('A')), '一方的化禄 / 权 / 科 / 忌星落在对方盘上的哪一宫') +
+                    sec(`关键宫位对照（${esc(F.relLabel)}）`, rows) +
+                    sunMoon + fuqi + dx +
+                    sec('AI 深度解读', `<div class="zw-ai"><div class="zw-ai-note">由 AI（DeepSeek）根据双方命盘和上面的对照结果生成，不是原网站的断语，可能有误，仅供传统文化学习参考。</div>${ai}</div>`) +
+                    '<div class="zw-hmnote">不评价任何一方的品行与私生活，不涉及理财、子女与健康；结果仅供传统文化学习参考，不构成婚姻、投资、法律或人事建议。</div>';
+            },
+            _zwRenderHm() {
+                const box = this._zwEnsureHm();
+                const q = (k) => box.querySelector(`[data-h="${k}"]`);
+                for (const b of q('rel').querySelectorAll('button')) { const on = b.getAttribute('data-v') === (this._hmRel || 'love'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+                q('forms').style.display = this._hm ? 'none' : '';
+                q('msg').innerHTML = this._hmError ? `<div class="zw-msg err">${this._esc(this._hmError)}</div>` : '';
+                const go = q('go');
+                const loading = this._zwLoad === 'loading' && !window.XxtZiwei;
+                go.disabled = loading;
+                go.textContent = loading ? '正在下载排盘引擎（约 630KB，只需一次）…' : '开始合盘 · 查看双方对照';
+                const key = this._hm ? `${this._zwHmId()}|${this._hmAiBusy}|${this._hmAiErr}|${!!(this._zwAiMem && this._zwAiMem[this._zwHmId()])}|${this._hmAiWant}|${!!deepseekKey()}` : '';
+                if (this._hmKey !== key) { this._hmKey = key; q('result').innerHTML = this._zwHmResultHtml(); }
+            },
+
+            // ================= 紫微斗数 · 小六壬 =================
+            // 按原站说明的规则起课（原站该功能未开源，规则为传统掐指法，本脚本自行实现，说明文字自写）：
+            // 月从大安起数农历月（闰月按本月序数），日从月落的宫起数农历日，时从日落的宫起数时辰（子时为一）；
+            // 23 点以后仍按当天的农历日；只取设备当前时间。
+            // 纯函数：返回月 / 日 / 时各落在六宫的第几位（0=大安 … 5=空亡）
+            _lrCast(lunarMonth, lunarDay, branch) {
+                const month = ((lunarMonth - 1) % 6 + 6) % 6;
+                const day = (month + lunarDay - 1) % 6;
+                const hour = (day + branch) % 6;
+                return { month, day, hour };
+            },
+            _lrBranch(d) { const h = d.getHours(); return h === 23 || h === 0 ? 0 : Math.floor((h + 1) / 2); },
+            _lrNowInfo(Z) {
+                const d = new Date();
+                const BR = '子丑寅卯辰巳午未申酉戌亥';
+                const MS = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+                const DS = (n) => n === 10 ? '初十' : n === 20 ? '二十' : n === 30 ? '三十' : ['初', '十', '廿'][Math.floor(n / 10)] + '一二三四五六七八九'[n % 10 - 1];
+                const pad = (n) => String(n).padStart(2, '0');
+                const lunar = Z && Z.solarToLunar ? Z.solarToLunar(d.getFullYear(), d.getMonth() + 1, d.getDate()) : null;
+                const br = this._lrBranch(d);
+                return {
+                    d, br, lunar,
+                    text: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+                        (lunar ? ` · 农历${lunar.leap ? '闰' : ''}${MS[lunar.month - 1]}月${DS(lunar.day)} · ${BR[br]}时` : ''),
+                    labels: lunar ? [`${lunar.leap ? '闰' : ''}${MS[lunar.month - 1]}月`, DS(lunar.day), `${BR[br]}时`] : [],
+                };
+            },
+            _lrToday() {
+                const d = new Date(), k = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+                try { const o = JSON.parse(localStorage.getItem(ZIWEI_LR_KEY) || '{}'); return o.day === k ? o.n || 0 : 0; } catch (e) { return 0; }
+            },
+            _lrBump() {
+                const d = new Date(), k = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+                const n = this._lrToday() + 1;
+                try { localStorage.setItem(ZIWEI_LR_KEY, JSON.stringify({ day: k, n })); } catch (e) { /* ignore */ }
+                return n;
+            },
+            _zwEnsureLr() {
+                const box = this._ziweiEl.querySelector('[data-z="pane-lr"]');
+                if (box.getAttribute('data-ready') === '1') return box;
+                box.setAttribute('data-ready', '1');
+                box.innerHTML =
+                    '<div class="zw-form1 zw-lr">' +
+                      '<div class="zw-ftitle">—— 小六壬 ——</div>' +
+                      '<div class="zw-lrdesc">心里默想一件事，按此刻的农历月、日、时起课。传统上用左手拇指在食指、中指、无名指的指节上掐数。</div>' +
+                      '<textarea class="zw-in zw-lrq" data-l="q" maxlength="60" rows="2" placeholder="想问的事（可不填）"></textarea>' +
+                      '<div class="zw-lrnow"><span>此刻</span><b data-l="now"></b></div>' +
+                      '<button type="button" class="zw-go" data-l="cast">起课</button>' +
+                      `<div class="zw-lrring" data-l="ring">${ZIWEI_LIUREN.map((x, i) => `<span data-i="${i}" class="${x[1] === '吉' ? 'ji' : x[1] === '凶' ? 'xiong' : 'mid'}">${x[0]}</span>`).join('')}</div>` +
+                      '<div class="zw-lrcards" data-l="cards">' + ['月', '日', '时'].map((t, i) => `<div class="zw-lrcard" data-c="${i}"><small>${t}</small><b>？</b><i></i></div>`).join('') + '</div>' +
+                      '<div data-l="res"></div>' +
+                    '</div>' +
+                    '<div class="zw-lrrules">一事一课，同一件事不要反复起课；不诚不占、不疑不占、不义不占。<span data-l="count"></span></div>';
+                box.addEventListener('click', (e) => { if (e.target.closest('[data-l="cast"]')) this._lrCastNow(); });
+                return box;
+            },
+            _lrTick() {
+                const box = this._ziweiEl && this._ziweiEl.querySelector('[data-z="pane-lr"]');
+                if (!box || box.getAttribute('data-ready') !== '1') return;
+                const info = this._lrNowInfo(window.XxtZiwei);
+                box.querySelector('[data-l="now"]').textContent = info.text;
+                const n = this._lrToday();
+                box.querySelector('[data-l="count"]').textContent = n ? ` 今天已起 ${n} 课${n >= 3 ? '，传统上一天不超过三次' : ''}。` : '';
+            },
+            async _lrCastNow() {
+                const box = this._zwEnsureLr();
+                if (this._lrBusy) return;
+                let Z;
+                try { Z = await this._loadZiwei(); } catch (e) { box.querySelector('[data-l="res"]').innerHTML = `<div class="zw-msg err">${this._esc(e.message)}</div>`; return; }
+                const info = this._lrNowInfo(Z);
+                const pos = this._lrCast(info.lunar.month, info.lunar.day, info.br);
+                const counts = [info.lunar.month, info.lunar.day, info.br + 1];
+                const starts = [0, pos.month, pos.day];
+                const ends = [pos.month, pos.day, pos.hour];
+                const q = (k) => box.querySelector(`[data-l="${k}"]`);
+                const ring = [...q('ring').children];
+                const cards = [...q('cards').children];
+                const question = q('q').value.trim();
+                this._lrBusy = true;
+                q('cast').disabled = true;
+                q('res').innerHTML = '';
+                for (const c of cards) { c.classList.remove('flip'); c.querySelector('b').textContent = '？'; c.querySelector('i').textContent = ''; }
+                const light = (i) => ring.forEach((x, j) => x.classList.toggle('on', j === i));
+                const reduce = (() => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
+                const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+                for (let k = 0; k < 3; k++) {
+                    if (!reduce) {
+                        const step = Math.max(40, Math.min(160, Math.floor(900 / counts[k])));
+                        for (let n = 0; n < counts[k]; n++) { light((starts[k] + n) % 6); await wait(step); }
+                    }
+                    light(ends[k]);
+                    cards[k].classList.add('flip');
+                    cards[k].querySelector('b').textContent = ZIWEI_LIUREN[ends[k]][0];
+                    cards[k].querySelector('i').textContent = `${info.labels[k]} · 数 ${counts[k]}`;
+                    if (!reduce) await wait(260);
+                }
+                const [name, jx, gist, when, adv] = ZIWEI_LIUREN[pos.hour];
+                const n = this._lrBump();
+                const esc = (t) => this._esc(t);
+                q('res').innerHTML = `<div class="zw-lrres ${jx === '吉' ? 'ji' : jx === '凶' ? 'xiong' : 'mid'}">` +
+                    `<div class="zw-lrname"><b>${name}</b><em>${jx}</em></div>` +
+                    (question ? `<div class="zw-lrask">所问：${esc(question)}</div>` : '') +
+                    `<p>${esc(gist)}</p><p><span class="zw-kw">应期</span>${esc(when)}</p><p><span class="zw-kw">建议</span>${esc(adv)}</p>` +
+                    `<small>起课时间 ${esc(info.text)}${n > 3 ? ' · 今天已起课 ' + n + ' 次，传统上一天不超过三次' : ''}</small></div>`;
+                this._lrBusy = false;
+                q('cast').disabled = false;
+                this._lrTick();
+                log(`紫微斗数：小六壬 ${info.labels.join(' ')} → ${name}`, '#2196F3');
+            },
+            _zwSetTab(t) {
+                this._zwTab = t;
+                this._renderZiwei();
+                const b = this._ziweiEl && this._ziweiEl.querySelector('[data-z="body"]'); if (b) b.scrollTop = 0;
+            },
+
             _ensureZiwei() {
                 if (this._ziweiEl && this._ziweiEl.isConnected) return this._ziweiEl;
                 const d = document.createElement('div');
@@ -5970,6 +6523,79 @@
                     '#xxt-v41-ziwei .zw-ai-key input{flex:1;min-width:120px;height:30px;padding:0 8px;border-radius:8px;border:1px solid var(--x-line,#E5E9F0);background:var(--x-input,#FBFCFD)}' +
                     '#xxt-v41-ziwei .zw-ai-key a{color:var(--x-accent-text,#1D4ED8);font-size:12px}' +
                     '#xxt-v41-ziwei .zw-btn{height:30px;padding:0 14px;border-radius:15px;background:var(--zw-btn);color:var(--zw-btn-fg)}' +
+                    '#xxt-v41-ziwei .zw-tabs{display:flex;gap:18px;padding:0 16px;box-shadow:inset 0 -1px 0 var(--x-line)}' +
+                    '#xxt-v41-ziwei .zw-tabs button{position:relative;padding:6px 2px 9px;font-size:13px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-tabs button.on{color:var(--x-strong);font-weight:700}' +
+                    '#xxt-v41-ziwei .zw-tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:1px;background:var(--x-accent)}' +
+                    '#xxt-v41-ziwei .zw-tabs button:focus-visible{outline:2px solid var(--x-accent-ring);outline-offset:2px}' +
+                    '#xxt-v41-ziwei [data-z="body"]{padding-top:12px}' +
+                    '#xxt-v41-ziwei .zw-hmrel .zw-chips{margin-top:6px}' +
+                    '#xxt-v41-ziwei .zw-chip.on{background:var(--zw-btn);color:var(--zw-btn-fg);box-shadow:none}' +
+                    '#xxt-v41-ziwei .zw-party{display:flex;flex-direction:column;gap:7px;margin-top:10px;padding:12px;border-radius:14px;background:var(--zw-panel);box-shadow:inset 0 0 0 1px var(--x-line)}' +
+                    '#xxt-v41-ziwei .zw-party select,#xxt-v41-ziwei .zw-party .zw-in{background-color:var(--x-bg)}' +
+                    '#xxt-v41-ziwei .zw-phead{display:flex;align-items:center;gap:8px}' +
+                    '#xxt-v41-ziwei .zw-phead b{font-family:var(--zw-serif);font-size:15px;letter-spacing:2px;color:var(--x-accent-text)}' +
+                    '#xxt-v41-ziwei .zw-phead select{margin-left:auto;max-width:230px;height:30px;font-size:12px}' +
+                    '#xxt-v41-ziwei .zw-party .zw-lab{margin-top:2px}' +
+                    '#xxt-v41-ziwei .zw-ptip{font-size:12px;color:var(--x-text2)}' +
+                    '#xxt-v41-ziwei .zw-ptip .zw-tnum{font-family:var(--zw-mono);font-weight:700;color:var(--x-accent-strong)}' +
+                    '#xxt-v41-ziwei .zw-ptip b{color:var(--x-accent-strong)}' +
+                    '#xxt-v41-ziwei .zw-ptip .err{color:#B42318}' +
+                    '#xxt-v41-ziwei .zw-pdst{display:inline-flex;align-items:center;gap:3px;margin-left:6px;color:#8A5A00}' +
+                    '#xxt-v41-ziwei .zw-hmnote{margin-top:10px;font-size:11px;line-height:1.6;color:var(--x-faint)}' +
+                    '#xxt-v41-ziwei .zw-hcards{display:flex;align-items:stretch;gap:6px}' +
+                    '#xxt-v41-ziwei .zw-hcard{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:var(--zw-panel);box-shadow:inset 0 0 0 1px var(--x-line);font-size:12px;color:var(--x-text2)}' +
+                    '#xxt-v41-ziwei .zw-hcard b{color:var(--x-strong)}' +
+                    '#xxt-v41-ziwei .zw-hcname{font-family:var(--zw-serif);font-size:15px;font-weight:700;color:var(--x-accent-text)}' +
+                    '#xxt-v41-ziwei .zw-hcsub{font-size:11px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-hcard .zw-link{align-self:flex-start;margin-top:2px}' +
+                    '#xxt-v41-ziwei .zw-hx{align-self:center;font-family:var(--zw-serif);font-size:18px;color:var(--x-accent)}' +
+                    '#xxt-v41-ziwei .zw-secnote{font-weight:400;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-ziwei .zw-hrow{padding:8px 10px;margin-bottom:6px;border-radius:10px;background:var(--x-soft);font-size:12px;line-height:1.65;color:var(--x-text2)}' +
+                    '#xxt-v41-ziwei .zw-hrow.muted{color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-hrow b{color:var(--x-strong)}' +
+                    '#xxt-v41-ziwei .zw-hrow b.good{color:var(--zw-lu)}' +
+                    '#xxt-v41-ziwei .zw-hrow p{margin:3px 0 0}' +
+                    '#xxt-v41-ziwei .zw-hrow p.sub{font-size:11px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-star5{color:var(--x-accent);letter-spacing:1px}#xxt-v41-ziwei .zw-star5 i{font-style:normal;color:var(--x-line)}' +
+                    '#xxt-v41-ziwei .zw-hlist{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px}' +
+                    '#xxt-v41-ziwei .zw-kw{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;font-size:11px;background:var(--x-accent-soft);color:var(--x-accent-text)}' +
+                    '#xxt-v41-ziwei .zw-htable{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--x-line)}' +
+                    '#xxt-v41-ziwei .zw-htable th,#xxt-v41-ziwei .zw-htable td{padding:6px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--x-line)}' +
+                    '#xxt-v41-ziwei .zw-htable tr:last-child th,#xxt-v41-ziwei .zw-htable tr:last-child td{border-bottom:0}' +
+                    '#xxt-v41-ziwei .zw-htable thead th{background:var(--x-soft2);color:var(--x-accent-text);font-weight:600}' +
+                    '#xxt-v41-ziwei .zw-htable tbody th{width:44px;color:var(--x-muted);font-weight:500;white-space:nowrap}' +
+                    '#xxt-v41-ziwei .zw-htable td b{color:var(--x-strong);font-weight:600}' +
+                    '#xxt-v41-ziwei .zw-htable small{display:block;font-size:11px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-aigo{width:100%;margin-top:4px}' +
+                    '#xxt-v41-ziwei .zw-lrdesc{font-size:12px;line-height:1.6;color:var(--x-muted);text-align:center}' +
+                    '#xxt-v41-ziwei .zw-lrq{height:auto;padding:8px 12px;resize:none;font:inherit;line-height:1.5}' +
+                    '#xxt-v41-ziwei .zw-lrnow{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-lrnow b{font-family:var(--zw-mono);font-weight:600;color:var(--x-accent-strong);font-size:12px}' +
+                    '#xxt-v41-ziwei .zw-lr .zw-go{height:44px;border-radius:22px;letter-spacing:4px}' +
+                    '#xxt-v41-ziwei .zw-lrring{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:6px}' +
+                    '#xxt-v41-ziwei .zw-lrring span{padding:6px 0;text-align:center;border-radius:8px;font-family:var(--zw-serif);font-size:13px;background:var(--zw-panel);color:var(--x-muted);box-shadow:inset 0 0 0 1px var(--x-line);transition:background .12s,color .12s,transform .12s}' +
+                    '#xxt-v41-ziwei .zw-lrring span.on{background:var(--x-accent);color:var(--x-on-accent);box-shadow:none;transform:translateY(-1px)}' +
+                    '#xxt-v41-ziwei .zw-lrcards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}' +
+                    '#xxt-v41-ziwei .zw-lrcard{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border-radius:12px;background:var(--x-soft2);color:var(--x-faint);transition:transform .35s cubic-bezier(.22,1,.36,1),background .35s}' +
+                    '#xxt-v41-ziwei .zw-lrcard small{font-size:11px}' +
+                    '#xxt-v41-ziwei .zw-lrcard b{font-family:var(--zw-serif);font-size:18px;color:var(--x-faint)}' +
+                    '#xxt-v41-ziwei .zw-lrcard i{font-style:normal;font-size:11px;min-height:16px}' +
+                    '#xxt-v41-ziwei .zw-lrcard.flip{background:var(--x-bg);box-shadow:inset 0 0 0 1px var(--x-accent-ring);color:var(--x-muted);animation:zw-flip .45s cubic-bezier(.22,1,.36,1)}' +
+                    '#xxt-v41-ziwei .zw-lrcard.flip b{color:var(--x-accent-strong)}' +
+                    '@keyframes zw-flip{0%{transform:rotateY(90deg)}100%{transform:none}}' +
+                    '#xxt-v41-ziwei .zw-lrres{margin-top:4px;padding:14px;border-radius:14px;background:var(--zw-panel);box-shadow:inset 0 0 0 1px var(--x-line);font-size:12px;line-height:1.7;color:var(--x-text2)}' +
+                    '#xxt-v41-ziwei .zw-lrres p{margin:4px 0 0}' +
+                    '#xxt-v41-ziwei .zw-lrres small{display:block;margin-top:8px;font-size:11px;color:var(--x-faint)}' +
+                    '#xxt-v41-ziwei .zw-lrname{display:flex;align-items:baseline;gap:8px}' +
+                    '#xxt-v41-ziwei .zw-lrname b{font-family:var(--zw-serif);font-size:24px;letter-spacing:4px;color:var(--x-strong)}' +
+                    '#xxt-v41-ziwei .zw-lrname em{font-style:normal;font-size:11px;padding:1px 8px;border-radius:999px}' +
+                    '#xxt-v41-ziwei .zw-lrres.ji .zw-lrname em{color:var(--zw-lu);background:color-mix(in srgb,var(--zw-lu) 10%,transparent)}' +
+                    '#xxt-v41-ziwei .zw-lrres.xiong .zw-lrname em{color:var(--zw-ji);background:color-mix(in srgb,var(--zw-ji) 10%,transparent)}' +
+                    '#xxt-v41-ziwei .zw-lrres.mid .zw-lrname em{color:var(--zw-ke);background:color-mix(in srgb,var(--zw-ke) 12%,transparent)}' +
+                    '#xxt-v41-ziwei .zw-lrask{margin-top:2px;color:var(--x-muted)}' +
+                    '#xxt-v41-ziwei .zw-lrrules{margin-top:10px;font-size:11px;line-height:1.6;color:var(--x-faint);text-align:center}' +
+                    '@media (prefers-reduced-motion:reduce){#xxt-v41-ziwei .zw-lrcard,#xxt-v41-ziwei .zw-lrring span{transition:none;animation:none!important}}' +
                     '#xxt-v41-ziwei .zw-about{margin-top:10px;font-size:11px;line-height:1.6;color:var(--x-faint,#9CA3AF)}' +
                     '#xxt-v41-ziwei .zw-about a{color:inherit;text-decoration:underline}' +
                     '#xxt-v41-ziwei[data-theme="dark"] .zw-msg.err,#xxt-v41-ziwei[data-theme="dark"] .lv-caution{background:#3B1D1D;color:#FCA5A5}' +
@@ -5978,7 +6604,9 @@
                     '@media (prefers-reduced-motion:reduce){#xxt-v41-ziwei{transition:none}#xxt-v41-ziwei .zw-spin{animation:none}}' +
                     '</style>' +
                     '<div class="zw-head"><b>紫微斗数</b><span data-z="status"></span><button type="button" class="zw-x" data-z="close" aria-label="关闭紫微斗数">×</button></div>' +
+                    '<div class="zw-tabs" data-z="tabs" role="tablist" aria-label="紫微斗数功能"><button type="button" role="tab" data-ztab="ming">命盘</button><button type="button" role="tab" data-ztab="hm">合盘</button><button type="button" role="tab" data-ztab="lr">小六壬</button></div>' +
                     '<div class="zw-body" data-z="body">' +
+                      '<div data-z="pane-ming">' +
                       '<div data-z="formwrap"><div class="zw-form1">' +
                         '<div class="zw-ftitle">—— 输入生辰八字 ——</div>' +
                         '<div class="zw-steps" data-z="steps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>' +
@@ -6003,8 +6631,11 @@
                       '</div><div data-z="hist"></div></div>' +
                       '<div data-z="msg"></div>' +
                       '<div data-z="result"></div>' +
+                      '</div>' +
+                      '<div data-z="pane-hm"></div>' +
+                      '<div data-z="pane-lr"></div>' +
                       '<div class="zw-about">排盘引擎来自开源项目 <a href="https://github.com/Renhuai123/ziwei-doushu" target="_blank" rel="noopener">ziwei-doushu</a>（MIT，基于倪海厦《天纪》体系，排盘核心 <a href="https://github.com/SylarLong/iztro" target="_blank" rel="noopener">iztro</a>）。' +
-                        '全部在本机浏览器里计算，出生信息只保存在本机。内容仅供传统文化学习参考。</div>' +
+                        '全部在本机浏览器里计算，出生信息只保存在本机；合盘对照依据原项目合盘知识库，小六壬按传统掐指法起课。内容仅供传统文化学习参考。</div>' +
                     '</div>';
                 const q = (k) => d.querySelector(`[data-z="${k}"]`);
                 const saved = this._zwSaved();
@@ -6029,6 +6660,7 @@
                 q('go').addEventListener('click', () => this._zwSubmit());
                 q('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') this._zwSubmit(); });
                 q('close').addEventListener('click', () => this._showZiwei());
+                q('tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-ztab]'); if (b) this._zwSetTab(b.getAttribute('data-ztab')); });
                 d.addEventListener('click', (e) => {
                     const t = e.target.closest('[data-zact]');
                     if (t) {
@@ -6068,6 +6700,7 @@
                 });
                 d.addEventListener('keydown', (e) => {
                     if (e.target && e.target.getAttribute && e.target.getAttribute('data-z') === 'aikey' && e.key === 'Enter') { this._zwSaveKey(); return; }
+                    if (e.target && e.target.getAttribute && e.target.getAttribute('data-l') === 'q') return;
                     const c = e.target.closest && (e.target.closest('[data-br]') || (e.target.classList && e.target.classList.contains('zw-hitem') ? e.target : null));
                     if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.click(); }
                     if (e.key === 'Escape') this._showZiwei();
@@ -6189,13 +6822,14 @@
                 if (first) { try { first.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
             },
             _zwSaveKey() {
-                const inp = this._ziweiEl && this._ziweiEl.querySelector('[data-z="aikey"]');
+                const inp = this._ziweiEl && [...this._ziweiEl.querySelectorAll('[data-z="aikey"]')].find((x) => x.value.trim());
                 const v = inp ? inp.value.trim() : '';
                 if (!v) return;
                 if (!setDeepseekKey(v)) { this._zwError = 'Key 保存失败：浏览器不允许本地存储'; this._renderZiwei(); return; }
                 log('紫微斗数：已保存 DeepSeek Key（和答题辅助共用）', '#2196F3');
                 this._panelKey = '';
                 this._renderPanel();
+                if ((this._zwTab || 'ming') === 'hm') { if (this._hmAiWant && this._hm) this._zwHmAi(false); else this._zwRenderHm(); return; }
                 if (this._zwTopic) this._zwAiRun(this._zwTopic); else this._renderZiwei();
             },
             // 当前运限视图的四化叠加：{ tag: '限'|'年', map: 星名→禄权科忌, palace: 大限宫/流年命宫的地支, stem, ... }；本命视图返回 null
@@ -6326,7 +6960,23 @@
                 d.setAttribute('aria-hidden', String(!open));
                 if (open) d.removeAttribute('inert'); else d.setAttribute('inert', '');
                 const loaded = !!(window.XxtZiwei && window.XxtZiwei.generateChart);
-                if (loaded && this._zwTipLoaded !== d) { this._zwTipLoaded = d; this._zwFillPlaces(); this._zwTimeTip(); }
+                if (loaded && this._zwTipLoaded !== d) {
+                    this._zwTipLoaded = d; this._zwFillPlaces(); this._zwTimeTip();
+                    for (const side of ['A', 'B']) {
+                        const pend = this._hmPending && this._hmPending[side];
+                        if (pend && d.querySelector('[data-z="pane-hm"]').getAttribute('data-ready') === '1') this._zwPartyFill(side, Object.assign(this._zwPartyRead(side), pend));
+                    }
+                }
+                const tab = this._zwTab || 'ming';
+                for (const b of q('tabs').querySelectorAll('[data-ztab]')) { const on = b.getAttribute('data-ztab') === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
+                q('pane-ming').style.display = tab === 'ming' ? '' : 'none';
+                q('pane-hm').style.display = tab === 'hm' ? '' : 'none';
+                q('pane-lr').style.display = tab === 'lr' ? '' : 'none';
+                if (tab === 'hm') this._zwRenderHm();
+                if (tab === 'lr') this._zwEnsureLr();
+                const ticking = open && tab === 'lr';
+                if (ticking && !this._lrTimer) { this._lrTick(); this._lrTimer = setInterval(() => this._lrTick(), 1000); }
+                if (!ticking && this._lrTimer) { clearInterval(this._lrTimer); this._lrTimer = null; }
                 q('status').textContent = loaded ? `引擎 ${window.XxtZiwei.version || ''}` : this._zwLoad === 'loading' ? '正在下载排盘引擎…' : this._zwLoad === 'failed' ? '引擎未加载' : '';
                 q('go').disabled = this._zwLoad === 'loading' && !loaded;
                 q('go').textContent = this._zwLoad === 'loading' && !loaded ? '正在下载排盘引擎（约 600KB，只需一次）…' : '立即起盘 · 查看命盘解析';
@@ -6359,6 +7009,7 @@
                 d.style.maxHeight = (window.innerHeight - 16) + 'px';
             },
             _removeZiwei() {
+                if (this._lrTimer) { clearInterval(this._lrTimer); this._lrTimer = null; }
                 if (this._ziweiEl) { try { this._ziweiEl.remove(); } catch (e) { /* ignore */ } }
                 this._ziweiEl = null;
             },
